@@ -1,0 +1,632 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>DropNet Web</title>
+    <style>
+      :root {
+        color-scheme: dark light;
+        --bg: #071113;
+        --bg-elevated: #0f1d23;
+        --card: #122026;
+        --card-soft: #15262d;
+        --text: #e8f2f1;
+        --muted: #a6bdbc;
+        --accent: #7fded4;
+        --accent-strong: #41c1b5;
+        --ring: color-mix(in oklab, var(--accent), transparent 64%);
+      }
+      @media (prefers-color-scheme: light) {
+        :root {
+          --bg: #f2f8f7;
+          --bg-elevated: #ecf6f5;
+          --card: #ffffff;
+          --card-soft: #f8fcfb;
+          --text: #0e1b1f;
+          --muted: #4f6668;
+          --accent: #158b85;
+          --accent-strong: #0f746f;
+          --ring: color-mix(in oklab, var(--accent), transparent 76%);
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: Inter, Segoe UI, sans-serif;
+        background:
+          radial-gradient(1000px 520px at 8% -12%, color-mix(in oklab, var(--accent), transparent 92%), transparent 72%),
+          radial-gradient(700px 420px at 98% 0%, color-mix(in oklab, var(--accent-strong), transparent 95%), transparent 74%),
+          linear-gradient(180deg, var(--bg-elevated) 0%, var(--bg) 48%);
+        color: var(--text);
+        min-height: 100vh;
+      }
+      .wrap { max-width: 980px; margin: 0 auto; padding: 18px 16px 26px; }
+      .card {
+        background:
+          linear-gradient(180deg, color-mix(in oklab, var(--card), transparent 0%), color-mix(in oklab, var(--card-soft), transparent 0%));
+        border: 1px solid color-mix(in oklab, var(--muted), transparent 78%);
+        border-radius: 20px;
+        padding: 16px;
+        margin-bottom: 12px;
+        box-shadow:
+          0 1px 0 color-mix(in oklab, black, transparent 94%),
+          0 12px 28px color-mix(in oklab, black, transparent 92%);
+        transition: border-color .2s ease, transform .2s ease;
+      }
+      .title { margin: 0 0 8px 0; font-size: 1.05rem; letter-spacing: .1px; }
+      .muted { color: var(--muted); font-size: 0.93rem; }
+      .row { display: flex; gap: 8px; flex-wrap: wrap; }
+      .spacer { height: 10px; }
+      .hidden { display: none; }
+      .status-line {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 10px;
+        border-radius: 999px;
+        border: 1px solid color-mix(in oklab, var(--muted), transparent 72%);
+        background: color-mix(in oklab, var(--card-soft), transparent 0%);
+        font-size: .86rem;
+      }
+      .status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: var(--accent);
+        box-shadow: 0 0 0 5px var(--ring);
+      }
+      button {
+        border: none;
+        border-radius: 12px;
+        padding: 10px 14px;
+        cursor: pointer;
+        background: var(--accent);
+        color: #042524;
+        font-weight: 700;
+        transition: transform .14s ease, filter .14s ease, box-shadow .2s ease;
+      }
+      button:hover:not(:disabled) {
+        transform: translateY(-1px);
+        filter: brightness(1.03);
+        box-shadow: 0 7px 16px color-mix(in oklab, var(--accent), transparent 78%);
+      }
+      button:active:not(:disabled) {
+        transform: translateY(0);
+      }
+      button:focus-visible,
+      input:focus-visible,
+      textarea:focus-visible,
+      .tab:focus-visible {
+        outline: none;
+        box-shadow: 0 0 0 4px var(--ring);
+      }
+      button:disabled { opacity: 0.6; cursor: default; }
+      .secondary {
+        background: color-mix(in oklab, var(--card-soft), transparent 0%);
+        border: 1px solid color-mix(in oklab, var(--muted), transparent 40%);
+        color: var(--text);
+      }
+      input, textarea {
+        border-radius: 10px;
+        border: 1px solid color-mix(in oklab, var(--muted), transparent 40%);
+        background: color-mix(in oklab, var(--card-soft), transparent 4%);
+        color: var(--text);
+        padding: 10px;
+      }
+      input[type="text"] { min-width: 220px; }
+      textarea { width: 100%; min-height: 90px; }
+      .device-list { display: grid; gap: 8px; }
+      .device-option {
+        border: 1px solid color-mix(in oklab, var(--muted), transparent 40%);
+        border-radius: 12px;
+        padding: 11px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        background: color-mix(in oklab, var(--card-soft), transparent 0%);
+        transition: border-color .2s ease, background .2s ease;
+      }
+      .device-option:has(input:checked) {
+        border-color: color-mix(in oklab, var(--accent), transparent 30%);
+        background: color-mix(in oklab, var(--accent), transparent 90%);
+      }
+      .tabs { display: flex; gap: 8px; margin-bottom: 8px; }
+      .tab {
+        padding: 9px 12px;
+        border-radius: 12px;
+        border: 1px solid color-mix(in oklab, var(--muted), transparent 40%);
+        background: color-mix(in oklab, var(--card-soft), transparent 0%);
+        color: var(--text);
+      }
+      .tab.active {
+        background: var(--accent);
+        color: #042524;
+        border-color: transparent;
+      }
+      .file-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+        padding: 10px;
+        border-radius: 12px;
+        border: 1px solid color-mix(in oklab, var(--muted), transparent 78%);
+        background: color-mix(in oklab, var(--card-soft), transparent 0%);
+        margin-bottom: 6px;
+      }
+      .pill {
+        display: inline-block;
+        border-radius: 999px;
+        padding: 4px 10px;
+        font-size: 0.86rem;
+        border: 1px solid color-mix(in oklab, var(--muted), transparent 68%);
+        background: color-mix(in oklab, var(--muted), transparent 84%);
+      }
+      .dropzone {
+        border: 2px dashed color-mix(in oklab, var(--muted), transparent 25%);
+        border-radius: 14px;
+        padding: 16px;
+        text-align: center;
+        transition: border-color .2s ease, background .2s ease;
+      }
+      .dropzone:hover {
+        border-color: color-mix(in oklab, var(--accent), transparent 20%);
+        background: color-mix(in oklab, var(--accent), transparent 92%);
+      }
+      .selected-list { margin-top: 8px; }
+      .selected-item {
+        font-size: 0.9rem;
+        padding: 8px 10px;
+        border-radius: 10px;
+        border: 1px solid color-mix(in oklab, var(--muted), transparent 78%);
+        background: color-mix(in oklab, var(--card-soft), transparent 0%);
+        margin-bottom: 4px;
+      }
+      a { color: var(--accent); text-decoration: none; font-weight: 600; }
+      a:hover { text-decoration: underline; }
+      progress {
+        width: 100%;
+        height: 10px;
+        border-radius: 999px;
+        overflow: hidden;
+      }
+      progress::-webkit-progress-bar {
+        background: color-mix(in oklab, var(--muted), transparent 82%);
+      }
+      progress::-webkit-progress-value {
+        background: linear-gradient(90deg, var(--accent), var(--accent-strong));
+      }
+
+      .overlay {
+        position: fixed;
+        inset: 0;
+        background: color-mix(in oklab, black, transparent 32%);
+        backdrop-filter: blur(5px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 18px;
+        z-index: 9999;
+      }
+      .overlay.hidden { display: none; }
+      .overlay-card {
+        width: min(640px, 100%);
+        background: var(--card);
+        border-radius: 20px;
+        border: 1px solid color-mix(in oklab, var(--muted), transparent 76%);
+        padding: 18px;
+      }
+      @media (max-width: 640px) {
+        .wrap { padding: 14px 12px 22px; }
+        .card { border-radius: 16px; padding: 14px; }
+        .row > input[type="text"] { width: 100%; min-width: 0; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div id="connectCard" class="card">
+        <h2 class="title">Connect to DropNet</h2>
+        <div class="muted">Step 1: pick one app device. Step 2: request host approval.</div>
+        <div class="spacer"></div>
+        <div id="deviceList" class="device-list"></div>
+        <div class="spacer"></div>
+        <div class="row">
+          <input id="clientName" type="text" placeholder="Your web device name" />
+          <button onclick="connectPeer()">Request Connection</button>
+        </div>
+        <div class="spacer"></div>
+        <div id="connectStatus" class="muted"></div>
+      </div>
+
+      <div id="mainPanel" class="hidden">
+        <div class="card">
+          <h2 class="title">Web Session</h2>
+          <div class="row" style="align-items:center; justify-content:space-between;">
+            <div class="row">
+              <span class="pill" id="sessionDevice"></span>
+              <span class="pill" id="sessionState">Connected</span>
+            </div>
+            <span class="status-line"><span class="status-dot"></span>Secure local session</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="tabs">
+            <button id="tabSend" class="tab active" onclick="showTab('send')">Send</button>
+            <button id="tabReceive" class="tab" onclick="showTab('receive')">Receive</button>
+          </div>
+
+          <div id="sendPanel">
+            <h3 class="title">Selection</h3>
+            <div class="row">
+              <button class="secondary" onclick="pickFiles('all')">File</button>
+              <button class="secondary" onclick="pickFiles('media')">Media</button>
+              <button class="secondary" onclick="openTextDialog()">Text</button>
+              <button class="secondary" onclick="pickFolder()">Folder</button>
+            </div>
+            <div class="spacer"></div>
+            <div id="dropzone" class="dropzone">Drag and drop files/folders here</div>
+            <input id="pickerAll" class="hidden" type="file" multiple />
+            <input id="pickerMedia" class="hidden" type="file" accept="image/*,video/*" multiple />
+            <input id="pickerFolder" class="hidden" type="file" webkitdirectory directory multiple />
+            <div class="spacer"></div>
+            <div id="selectedSummary" class="muted">Selected: 0 item(s)</div>
+            <div id="selectedList" class="selected-list"></div>
+            <div class="spacer"></div>
+            <div class="row">
+              <button onclick="uploadSelected()">Send</button>
+              <button class="secondary" onclick="clearSelected()">Clear</button>
+            </div>
+            <div class="spacer"></div>
+            <progress id="progress" max="100" value="0"></progress>
+          </div>
+
+          <div id="receivePanel" class="hidden">
+            <h3 class="title">Incoming from app</h3>
+            <div class="row">
+              <button class="secondary" onclick="refreshOfferAndFiles(true)">Refresh</button>
+              <button class="secondary" onclick="endCurrentSession()">End Session</button>
+            </div>
+            <div class="spacer"></div>
+            <div id="files"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="incomingOverlay" class="overlay hidden">
+      <div class="overlay-card">
+        <h2 class="title">Incoming Transfer Request</h2>
+        <div id="incomingDetails" class="muted"></div>
+        <div class="spacer"></div>
+        <div id="incomingFiles"></div>
+        <div class="spacer"></div>
+        <div class="row">
+          <button class="secondary" onclick="respondIncomingOffer(false)">Reject</button>
+          <button onclick="respondIncomingOffer(true)">Accept</button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const token = new URLSearchParams(location.search).get('token') || '';
+      const connectCard = document.getElementById('connectCard');
+      const mainPanel = document.getElementById('mainPanel');
+      const connectStatusEl = document.getElementById('connectStatus');
+      const clientNameInput = document.getElementById('clientName');
+      const sessionDeviceEl = document.getElementById('sessionDevice');
+      const sessionStateEl = document.getElementById('sessionState');
+      const filesEl = document.getElementById('files');
+      const progressEl = document.getElementById('progress');
+      const selectedSummaryEl = document.getElementById('selectedSummary');
+      const selectedListEl = document.getElementById('selectedList');
+      const dropzone = document.getElementById('dropzone');
+      const incomingOverlay = document.getElementById('incomingOverlay');
+      const incomingDetails = document.getElementById('incomingDetails');
+      const incomingFiles = document.getElementById('incomingFiles');
+
+      let peerId = '';
+      let selectedTargetDeviceId = '';
+      let selectedTargetDeviceName = '';
+      let selectedItems = [];
+      let pendingOffer = null;
+      let activeOfferId = '';
+
+      function api(path) {
+        const q = new URLSearchParams({ token, peerId }).toString();
+        return `${path}?${q}`;
+      }
+
+      function detectBrowserDeviceName() {
+        try {
+          const ua = navigator.userAgent || '';
+          const androidBuildModel = ua.match(/Android\s[\d.]+;\s*([^;\)]+?)\s+Build\//i);
+          if (androidBuildModel && androidBuildModel[1]) {
+            const raw = androidBuildModel[1].trim();
+            const token = raw.split(/[\s,_-]+/).find((part) => /^[A-Za-z]\d{2,}[A-Za-z0-9]*$/i.test(part));
+            if (token) {
+              return token;
+            }
+            if (raw) {
+              return raw;
+            }
+          }
+
+          const uaData = navigator.userAgentData;
+          const platform = uaData?.platform || navigator.platform || 'Unknown';
+          const isMobile = uaData?.mobile ?? /Android|iPhone|iPad|Mobile/i.test(ua);
+          const brand = (uaData?.brands && uaData.brands.length) ? uaData.brands[0].brand : (navigator.vendor || 'Browser');
+          const modelMatch = ua.match(/SM-[A-Z0-9]+|Pixel\s\d+[A-Za-z ]*|iPhone|iPad|M\d{4}[A-Z0-9]*/i);
+          const model = modelMatch ? modelMatch[0].trim() : '';
+          if (model) return `${brand} ${model}`.trim();
+          const androidDevice = ua.match(/Android\s[\d.]+;\s([^;\)]+)/i);
+          if (androidDevice && androidDevice[1]) {
+            const raw = androidDevice[1].trim();
+            const token = raw.split(/[\s,_-]+/).find((part) => /^[A-Za-z]\d{2,}[A-Za-z0-9]*$/i.test(part));
+            return (token || raw);
+          }
+          return `${brand} ${platform}${isMobile ? ' Mobile' : ''}`.trim();
+        } catch (_) {
+          return 'Web Browser Device';
+        }
+      }
+
+      function showTab(tab) {
+        const sendPanel = document.getElementById('sendPanel');
+        const receivePanel = document.getElementById('receivePanel');
+        const tabSend = document.getElementById('tabSend');
+        const tabReceive = document.getElementById('tabReceive');
+        if (tab === 'send') {
+          sendPanel.classList.remove('hidden');
+          receivePanel.classList.add('hidden');
+          tabSend.classList.add('active');
+          tabReceive.classList.remove('active');
+        } else {
+          receivePanel.classList.remove('hidden');
+          sendPanel.classList.add('hidden');
+          tabReceive.classList.add('active');
+          tabSend.classList.remove('active');
+        }
+      }
+
+      async function loadAvailableDevices() {
+        const res = await fetch(`/api/available-devices?token=${encodeURIComponent(token)}`);
+        if (!res.ok) {
+          connectStatusEl.textContent = 'Invalid or expired web link.';
+          return;
+        }
+        const data = await res.json();
+        const deviceList = document.getElementById('deviceList');
+        deviceList.innerHTML = '';
+        for (const device of data.devices || []) {
+          const row = document.createElement('label');
+          row.className = 'device-option';
+          row.innerHTML = `<input type="radio" name="target-device" value="${device.id}" /><span>${device.name}</span>`;
+          row.querySelector('input').addEventListener('change', () => {
+            selectedTargetDeviceId = device.id;
+            selectedTargetDeviceName = device.name;
+          });
+          deviceList.appendChild(row);
+        }
+      }
+
+      async function connectPeer() {
+        const clientName = (clientNameInput.value || '').trim() || detectBrowserDeviceName();
+        if (!selectedTargetDeviceId) {
+          connectStatusEl.textContent = 'Select a device first.';
+          return;
+        }
+
+        connectStatusEl.textContent = 'Waiting for host approval...';
+        const res = await fetch(`/api/connect-request?token=${encodeURIComponent(token)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: clientName, targetDeviceId: selectedTargetDeviceId }),
+        });
+
+        if (!res.ok) {
+          connectStatusEl.textContent = 'Connection rejected or link expired.';
+          return;
+        }
+
+        const body = await res.json();
+        peerId = body.peerId;
+        connectCard.classList.add('hidden');
+        mainPanel.classList.remove('hidden');
+        sessionDeviceEl.textContent = `Device: ${selectedTargetDeviceName}`;
+        sessionStateEl.textContent = 'Connected';
+        await refreshOfferAndFiles(true);
+      }
+
+      function addSelectedFiles(files) {
+        for (const file of files) {
+          const relativePath = file.webkitRelativePath && file.webkitRelativePath.length > 0 ? file.webkitRelativePath : file.name;
+          selectedItems.push({ file, relativePath });
+        }
+        renderSelected();
+      }
+
+      function renderSelected() {
+        selectedSummaryEl.textContent = `Selected: ${selectedItems.length} item(s)`;
+        selectedListEl.innerHTML = '';
+        for (const item of selectedItems.slice(0, 30)) {
+          const row = document.createElement('div');
+          row.className = 'selected-item';
+          row.textContent = item.relativePath;
+          selectedListEl.appendChild(row);
+        }
+        if (selectedItems.length > 30) {
+          const more = document.createElement('div');
+          more.className = 'muted';
+          more.textContent = `+ ${selectedItems.length - 30} more`;
+          selectedListEl.appendChild(more);
+        }
+      }
+
+      function clearSelected() {
+        selectedItems = [];
+        progressEl.value = 0;
+        renderSelected();
+      }
+
+      function pickFiles(kind) {
+        if (kind === 'media') {
+          document.getElementById('pickerMedia').click();
+          return;
+        }
+        document.getElementById('pickerAll').click();
+      }
+
+      function pickFolder() {
+        document.getElementById('pickerFolder').click();
+      }
+
+      async function uploadSelected() {
+        if (!peerId || !selectedItems.length) return;
+        for (let i = 0; i < selectedItems.length; i++) {
+          const item = selectedItems[i];
+          const bytes = await item.file.arrayBuffer();
+          const response = await fetch(`${api('/api/upload')}&name=${encodeURIComponent(item.relativePath)}`, {
+            method: 'POST',
+            body: bytes,
+          });
+          if (!response.ok) {
+            alert('Host rejected or timed out for one of the files.');
+            break;
+          }
+          progressEl.value = ((i + 1) / selectedItems.length) * 100;
+        }
+        clearSelected();
+      }
+
+      async function openTextDialog() {
+        const text = prompt('Enter text to send');
+        if (!text || !text.trim()) return;
+
+        const response = await fetch(api('/api/upload_text'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: text.trim(), name: `note_${Date.now()}` }),
+        });
+        if (!response.ok) {
+          alert('Host rejected text transfer or request timed out.');
+        }
+      }
+
+      async function refreshOfferAndFiles(forceSwitchToReceive = false) {
+        if (!peerId) return;
+
+        const sessionRes = await fetch(api('/api/session'));
+        if (!sessionRes.ok) {
+          sessionStateEl.textContent = 'Disconnected';
+          return;
+        }
+
+        const offerRes = await fetch(api('/api/incoming-offer'));
+        if (offerRes.ok) {
+          const offer = await offerRes.json();
+          const offerFiles = Array.isArray(offer.files) ? offer.files : [];
+          if (offer.hasOffer && offer.pendingDecision && offerFiles.length > 0) {
+            pendingOffer = offer;
+            showIncomingOverlay(offer);
+          } else if (offer.hasOffer && offer.active) {
+            activeOfferId = offer.offerId;
+            incomingOverlay.classList.add('hidden');
+            if (forceSwitchToReceive) {
+              showTab('receive');
+            }
+          } else {
+            activeOfferId = '';
+            incomingOverlay.classList.add('hidden');
+          }
+        }
+
+        await refreshFilesOnly();
+      }
+
+      async function refreshFilesOnly() {
+        filesEl.innerHTML = '';
+        if (!activeOfferId) {
+          filesEl.innerHTML = '<div class="muted">No active incoming session.</div>';
+          return;
+        }
+
+        const filesRes = await fetch(api('/api/files'));
+        if (!filesRes.ok) return;
+        const data = await filesRes.json();
+
+        if (!data.files || !data.files.length) {
+          filesEl.innerHTML = '<div class="muted">No files in current session.</div>';
+          return;
+        }
+
+        for (const name of data.files) {
+          const row = document.createElement('div');
+          row.className = 'file-item';
+          row.innerHTML = `<span>${name}</span><a href="/api/download?token=${encodeURIComponent(token)}&peerId=${encodeURIComponent(peerId)}&name=${encodeURIComponent(name)}">Download</a>`;
+          filesEl.appendChild(row);
+        }
+      }
+
+      function showIncomingOverlay(offer) {
+        incomingDetails.textContent = 'App wants to send files to this web device.';
+        incomingFiles.innerHTML = '';
+        for (const fileName of offer.files || []) {
+          const row = document.createElement('div');
+          row.className = 'selected-item';
+          row.textContent = fileName;
+          incomingFiles.appendChild(row);
+        }
+        incomingOverlay.classList.remove('hidden');
+      }
+
+      async function respondIncomingOffer(accepted) {
+        if (!pendingOffer) {
+          return;
+        }
+
+        await fetch(api('/api/incoming-offer/decision'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ offerId: pendingOffer.offerId, accepted }),
+        });
+
+        if (accepted) {
+          activeOfferId = pendingOffer.offerId;
+          showTab('receive');
+        } else {
+          activeOfferId = '';
+        }
+        pendingOffer = null;
+        incomingOverlay.classList.add('hidden');
+        await refreshFilesOnly();
+      }
+
+      async function endCurrentSession() {
+        if (!peerId) return;
+        await fetch(api('/api/end-session'), { method: 'POST' });
+        activeOfferId = '';
+        filesEl.innerHTML = '<div class="muted">Session ended.</div>';
+      }
+
+      dropzone.addEventListener('dragover', (event) => {
+        event.preventDefault();
+      });
+
+      dropzone.addEventListener('drop', (event) => {
+        event.preventDefault();
+        addSelectedFiles(Array.from(event.dataTransfer.files || []));
+      });
+
+      document.getElementById('pickerAll').addEventListener('change', (event) => addSelectedFiles(Array.from(event.target.files || [])));
+      document.getElementById('pickerMedia').addEventListener('change', (event) => addSelectedFiles(Array.from(event.target.files || [])));
+      document.getElementById('pickerFolder').addEventListener('change', (event) => addSelectedFiles(Array.from(event.target.files || [])));
+
+      clientNameInput.value = detectBrowserDeviceName();
+      loadAvailableDevices();
+      setInterval(() => refreshOfferAndFiles(false), 2000);
+    </script>
+  </body>
+</html>
