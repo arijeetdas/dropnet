@@ -30,7 +30,7 @@ It enables fast, reliable, and seamless device-to-device file transfers with a c
 
 ### 1. Clone the repository
 
-git clone https://github.com/YOUR_USERNAME/dropnet.git  
+git clone https://github.com/arijeetdas/dropnet.git  
 cd dropnet
 
 ### 2. Install dependencies
