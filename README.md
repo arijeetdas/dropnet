@@ -1,64 +1,71 @@
-🚀 DropNet
+# 🚀 DropNet
 
-Fast. Simple. Seamless.
+> Fast. Simple. Seamless.
 
-DropNet is a modern cross-platform file sharing application built with Flutter, designed for fast and secure device-to-device transfers with a clean Material 3 inspired interface.
+DropNet is a modern cross-platform file sharing application built with Flutter.  
+It enables fast, reliable, and seamless device-to-device file transfers with a clean Material 3 inspired interface.
 
-✨ Overview
+---
 
-DropNet makes file sharing effortless.
-No complex setup. No clutter. Just smooth, high-speed transfers wrapped in a minimal and intuitive UI.
+## ✨ Features
 
-Built with performance, stability, and simplicity in mind.
+- ⚡ High-speed file transfers
+- 🎨 Clean Material 3 design
+- 📱 Smooth and responsive UI
+- 🔄 Cross-platform architecture
+- 🪶 Lightweight and optimized performance
+- 🛡 Stable and reliable transfer handling
 
-🌟 Features
+---
 
-⚡ High-speed file transfers
+## 🛠 Tech Stack
 
-🎨 Clean Material 3 design
+- Flutter
+- Dart
+- Material 3 Design System
 
-📱 Responsive and smooth UI
+---
 
-🔄 Cross-platform architecture
+## 📦 Getting Started
 
-🪶 Lightweight & optimized
+### 1. Clone the repository
 
-🛡 Reliable transfer handling
-
-🛠 Built With
-
-Flutter
-
-Dart
-
-Material 3 Design System
-
-📦 Installation
-1️⃣ Clone the repository
-git clone https://github.com/YOUR_USERNAME/dropnet.git
+git clone https://github.com/YOUR_USERNAME/dropnet.git  
 cd dropnet
-2️⃣ Install dependencies
+
+### 2. Install dependencies
+
 flutter pub get
-3️⃣ Run the app
+
+### 3. Run the app
+
 flutter run
 
-🎯 Vision
+---
 
-DropNet aims to become a powerful, reliable, and beautifully designed alternative for everyday file transfers — built with scalability and performance at its core.
+## 🎯 Vision
 
-This is just the beginning.
+DropNet aims to provide a fast, minimal, and beautifully designed file-sharing experience without unnecessary complexity.
 
-📌 Version
+This is the foundation release (v1.0.0).  
+More features and performance improvements are coming soon.
 
-Current Version: 1.0.0
-Release Type: Stable Initial Release
+---
 
-🤝 Contributing
+## 📌 Version
 
-Contributions, issues, and feature requests are welcome.
+Current Version: 1.0.0  
+Release Type: Stable Initial Release  
 
-Feel free to fork the project and submit a pull request.
+---
 
-📄 License
+## 🤝 Contributing
+
+Contributions, issues, and feature requests are welcome.  
+Feel free to fork the repository and submit a pull request.
+
+---
+
+## 📄 License
 
 This project is licensed under the MIT License.
