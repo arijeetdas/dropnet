@@ -32,6 +32,15 @@ class FTPCommandHandler {
       case 'PORT':
         handlePort(argument, session);
         break;
+      case 'AUTH':
+        handleAuth(argument, session);
+        break;
+      case 'PBSZ':
+        handlePbsz(argument, session);
+        break;
+      case 'PROT':
+        handleProt(argument, session);
+        break;
       case 'LIST':
       case 'NLST':
         handleList(argument, session);
@@ -136,6 +145,49 @@ class FTPCommandHandler {
 
   void handlePort(String argument, FtpSession session) {
     session.enterActiveMode(argument);
+  }
+
+  void handleAuth(String argument, FtpSession session) {
+    final mode = argument.trim().toUpperCase();
+    if (mode == 'TLS' || mode == 'SSL') {
+      if (session.tlsSecurityContext != null) {
+        session.sendResponse('234 TLS already enabled');
+      } else {
+        session.sendResponse('534 TLS is not available on this server');
+      }
+      return;
+    }
+    session.sendResponse('504 Unsupported AUTH mode');
+  }
+
+  void handlePbsz(String argument, FtpSession session) {
+    if (session.tlsSecurityContext == null) {
+      session.sendResponse('503 TLS is required before PBSZ');
+      return;
+    }
+    if (argument.trim() != '0') {
+      session.sendResponse('200 PBSZ=0 accepted');
+      return;
+    }
+    session.sendResponse('200 PBSZ=0 accepted');
+  }
+
+  void handleProt(String argument, FtpSession session) {
+    if (session.tlsSecurityContext == null) {
+      session.sendResponse('503 TLS is required before PROT');
+      return;
+    }
+
+    final level = argument.trim().toUpperCase();
+    if (level == 'P') {
+      session.sendResponse('200 Data channel protection set to Private');
+      return;
+    }
+    if (level == 'C') {
+      session.sendResponse('536 Clear data channel is disabled on this server');
+      return;
+    }
+    session.sendResponse('504 Unsupported PROT level');
   }
 
   void handleList(String argument, FtpSession session) {

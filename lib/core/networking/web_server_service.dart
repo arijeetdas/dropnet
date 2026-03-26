@@ -1,16 +1,19 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_router/shelf_router.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../models/transfer_model.dart';
+import '../security/local_tls_certificate_service.dart';
 import '../utils/file_utils.dart';
 
 class WebPeer {
@@ -74,26 +77,30 @@ class WebShareState {
     required this.host,
     required this.port,
     required this.token,
+    required this.pin,
   });
 
   final bool running;
   final String host;
   final int port;
   final String token;
+  final String pin; // empty = no pin
 
-  String get url => running ? 'http://$host:$port/?token=$token' : '';
+  String get url => running ? 'https://$host:$port/' : '';
 
   WebShareState copyWith({
     bool? running,
     String? host,
     int? port,
     String? token,
+    String? pin,
   }) {
     return WebShareState(
       running: running ?? this.running,
       host: host ?? this.host,
       port: port ?? this.port,
       token: token ?? this.token,
+      pin: pin ?? this.pin,
     );
   }
 
@@ -102,6 +109,7 @@ class WebShareState {
         host: '',
         port: 8080,
         token: '',
+        pin: '',
       );
 }
 
@@ -150,6 +158,11 @@ class _PendingUploadPayload {
 }
 
 class WebServerService {
+  WebServerService({LocalTlsCertificateService? tlsCertificateService})
+    : _tlsCertificates =
+          tlsCertificateService ?? LocalTlsCertificateService();
+
+  final LocalTlsCertificateService _tlsCertificates;
   final _controller = StreamController<WebShareState>.broadcast();
   final _pendingPeerRequestsController = StreamController<List<WebPeerConnectRequest>>.broadcast();
   final _connectedPeersController = StreamController<List<WebPeer>>.broadcast();
@@ -160,6 +173,8 @@ class WebServerService {
   HttpServer? _server;
   String _rootDirectory = '';
   String _hostDeviceName = 'DropNet Device';
+  String _webPin = '';
+  final Set<String> _validPinSessions = {};
 
   final Map<String, WebPeerConnectRequest> _pendingPeerRequests = {};
   final Map<String, Completer<bool>> _pendingPeerDecisions = {};
@@ -177,28 +192,70 @@ class WebServerService {
 
   WebShareState get currentState => _state;
 
+  static String generatePin() {
+    const chars =
+        'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#\$%&*';
+    final rng = Random.secure();
+    return List.generate(8, (_) => chars[rng.nextInt(chars.length)]).join();
+  }
+
   Future<void> start({
     required String rootDirectory,
     required String hostDeviceName,
     int port = 8080,
+    String pin = '',
   }) async {
     await stop();
     _rootDirectory = rootDirectory;
     _hostDeviceName = hostDeviceName.trim().isEmpty ? 'DropNet Device' : hostDeviceName.trim();
+    _webPin = pin.trim();
+    _validPinSessions.clear();
 
     final host = await _resolveLocalIp();
     final token = _generateToken();
 
     final router = Router()
       ..get('/', (Request request) async {
-        if (!_isTokenValid(request.url.queryParameters['token'])) {
-          return Response.forbidden('Invalid token');
+        if (_webPin.isNotEmpty) {
+          final cookie = request.headers['cookie'] ?? '';
+          if (!_isValidPinSession(cookie)) {
+            return Response.ok(
+              _renderWebPinGatePage(),
+              headers: {'content-type': 'text/html; charset=utf-8'},
+            );
+          }
         }
         final html = await rootBundle.loadString('assets/web/index.html');
-        return Response.ok(html, headers: {'content-type': 'text/html; charset=utf-8'});
+        final hydrated = html.replaceFirst(
+          '</head>',
+          '<script>window.__DROPNET_TOKEN=${jsonEncode(token)};</script></head>',
+        );
+        return Response.ok(
+          hydrated,
+          headers: {'content-type': 'text/html; charset=utf-8'},
+        );
+      })
+      ..post('/verify-pin', (Request request) async {
+        final body = await request.readAsString();
+        final submitted = Uri.splitQueryString(body)['pin'] ?? '';
+        if (!_constantTimeEquals(submitted, _webPin)) {
+          return Response.ok(
+            _renderWebPinGatePage(error: true),
+            headers: {'content-type': 'text/html; charset=utf-8'},
+          );
+        }
+        final sid = _createPinSession();
+        return Response(
+          302,
+          headers: {
+            'location': '/',
+            'set-cookie':
+                'wsid=$sid; Path=/; HttpOnly; Secure; SameSite=Strict',
+          },
+        );
       })
       ..get('/api/available-devices', (Request request) async {
-        if (!_isTokenValid(request.url.queryParameters['token'])) {
+        if (!_isAuthorizedRequest(request)) {
           return Response.forbidden('Invalid token');
         }
         return Response.ok(
@@ -211,7 +268,7 @@ class WebServerService {
         );
       })
       ..post('/api/connect-request', (Request request) async {
-        if (!_isTokenValid(request.url.queryParameters['token'])) {
+        if (!_isAuthorizedRequest(request)) {
           return Response.forbidden('Invalid token');
         }
 
@@ -253,8 +310,7 @@ class WebServerService {
         return Response.ok(jsonEncode({'connected': true, 'peerId': id}), headers: {'content-type': 'application/json'});
       })
       ..get('/api/session', (Request request) async {
-        final peerId = request.url.queryParameters['peerId'];
-        if (!_isTokenValid(request.url.queryParameters['token']) || peerId == null || !_connectedPeers.containsKey(peerId)) {
+        if (!_isAuthorizedPeer(request)) {
           return Response.forbidden('Not connected');
         }
         return Response.ok(jsonEncode({'connected': true}), headers: {'content-type': 'application/json'});
@@ -340,13 +396,21 @@ class WebServerService {
         }
 
         final bytes = await request.read().expand((chunk) => chunk).toList();
-        final accepted = await _queueIncomingUpload(
-          peer: peer,
-          requestedName: fileName,
-          bytes: bytes,
-          kind: 'upload',
-          fromIp: _remoteIp(request),
-        );
+        bool accepted;
+        try {
+          accepted = await _queueIncomingUpload(
+            peer: peer,
+            requestedName: fileName,
+            bytes: bytes,
+            kind: 'upload',
+            fromIp: _remoteIp(request),
+          );
+        } catch (_) {
+          return Response.internalServerError(
+            body: jsonEncode({'ok': false, 'reason': 'save_failed'}),
+            headers: {'content-type': 'application/json'},
+          );
+        }
 
         if (!accepted) {
           return Response.forbidden(jsonEncode({'ok': false, 'reason': 'rejected'}));
@@ -376,13 +440,21 @@ class WebServerService {
             : 'message_${DateTime.now().millisecondsSinceEpoch}.txt';
         final fileName = name.endsWith('.txt') ? name : '$name.txt';
 
-        final accepted = await _queueIncomingUpload(
-          peer: peer,
-          requestedName: fileName,
-          bytes: utf8.encode(text.trim()),
-          kind: 'upload_text',
-          fromIp: _remoteIp(request),
-        );
+        bool accepted;
+        try {
+          accepted = await _queueIncomingUpload(
+            peer: peer,
+            requestedName: fileName,
+            bytes: utf8.encode(text.trim()),
+            kind: 'upload_text',
+            fromIp: _remoteIp(request),
+          );
+        } catch (_) {
+          return Response.internalServerError(
+            body: jsonEncode({'ok': false, 'reason': 'save_failed'}),
+            headers: {'content-type': 'application/json'},
+          );
+        }
 
         if (!accepted) {
           return Response.forbidden(jsonEncode({'ok': false, 'reason': 'rejected'}));
@@ -428,6 +500,7 @@ class WebServerService {
           direction: TransferDirection.sent,
           status: TransferStatus.completed,
           duration: const Duration(seconds: 1),
+          localPath: filePath,
         );
 
         return Response.ok(
@@ -440,7 +513,17 @@ class WebServerService {
       });
 
     final handler = const Pipeline().addMiddleware(logRequests()).addHandler(router.call);
-    _server = await shelf_io.serve(handler, InternetAddress.anyIPv4, port);
+    final tlsContext = await _tlsCertificates.createServerContext(
+      commonName: 'DropNet Web Server',
+      subjectAlternativeNames: <String>[host],
+    );
+
+    _server = await shelf_io.serve(
+      handler,
+      InternetAddress.anyIPv4,
+      port,
+      securityContext: tlsContext,
+    );
 
     _update(
       _state.copyWith(
@@ -448,6 +531,7 @@ class WebServerService {
         host: host,
         port: port,
         token: token,
+        pin: _webPin,
       ),
     );
   }
@@ -481,11 +565,13 @@ class WebServerService {
     _connectedPeers.clear();
     _pendingIncomingUploads.clear();
     _requestLogs.clear();
+    _webPin = '';
+    _validPinSessions.clear();
 
     _emitPendingPeerRequests();
     _emitConnectedPeers();
     _emitIncomingUploadRequests();
-    _update(_state.copyWith(running: false, token: ''));
+    _update(_state.copyWith(running: false, token: '', pin: ''));
   }
 
   Future<int> offerFilesToPeers({required List<String> filePaths, required List<String> peerIds}) async {
@@ -507,15 +593,22 @@ class WebServerService {
       await sessionDir.create(recursive: true);
 
       final names = <String>[];
+      final seenNames = <String>{};
       for (final sourcePath in filePaths) {
         final source = File(sourcePath);
         if (!await source.exists()) {
           continue;
         }
-        final name = await _uniqueNameInDirectory(sessionDir.path, p.basename(sourcePath));
+        final name = p.basename(sourcePath);
         final targetPath = FileUtils.safeJoin(sessionDir.path, name);
+        final targetFile = File(targetPath);
+        if (await targetFile.exists()) {
+          await targetFile.delete();
+        }
         await source.copy(targetPath);
-        names.add(name);
+        if (seenNames.add(name)) {
+          names.add(name);
+        }
         copied++;
       }
 
@@ -538,8 +631,12 @@ class WebServerService {
     return copied;
   }
 
+  bool _isAuthorizedRequest(Request request) {
+    return _isTokenValid(_extractBearerToken(request));
+  }
+
   bool _isAuthorizedPeer(Request request) {
-    if (!_isTokenValid(request.url.queryParameters['token'])) {
+    if (!_isAuthorizedRequest(request)) {
       return false;
     }
     final peerId = request.url.queryParameters['peerId'];
@@ -550,7 +647,106 @@ class WebServerService {
     if (!_state.running || _state.token.isEmpty) {
       return false;
     }
-    return candidate == _state.token;
+    if (candidate == null || candidate.isEmpty) {
+      return false;
+    }
+    return _constantTimeEquals(candidate, _state.token);
+  }
+
+  String? _extractBearerToken(Request request) {
+    final raw = request.headers['authorization'];
+    if (raw == null || raw.trim().isEmpty) {
+      return null;
+    }
+
+    final trimmed = raw.trim();
+    if (trimmed.length < 8) {
+      return null;
+    }
+
+    if (!trimmed.toLowerCase().startsWith('bearer ')) {
+      return null;
+    }
+
+    final token = trimmed.substring(7).trim();
+    return token.isEmpty ? null : token;
+  }
+
+  bool _constantTimeEquals(String a, String b) {
+    final aBytes = utf8.encode(a);
+    final bBytes = utf8.encode(b);
+    if (aBytes.length != bBytes.length) {
+      return false;
+    }
+
+    var diff = 0;
+    for (var index = 0; index < aBytes.length; index++) {
+      diff |= aBytes[index] ^ bBytes[index];
+    }
+    return diff == 0;
+  }
+
+  String _createPinSession() {
+    final rng = Random.secure();
+    final bytes = List<int>.generate(24, (_) => rng.nextInt(256));
+    final sid = base64Url.encode(bytes);
+    _validPinSessions.add(sid);
+    return sid;
+  }
+
+  bool _isValidPinSession(String cookieHeader) {
+    for (final segment in cookieHeader.split(';')) {
+      final trimmed = segment.trim();
+      if (trimmed.startsWith('wsid=')) {
+        return _validPinSessions.contains(trimmed.substring(5));
+      }
+    }
+    return false;
+  }
+
+  String _renderWebPinGatePage({bool error = false}) {
+    final errorHtml = error
+        ? '<p class="err">Incorrect PIN. Please try again.</p>'
+        : '';
+    return '''
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DropNet Web — PIN Required</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap');
+    :root{--bg:#030712;--card:rgba(17,24,39,0.7);--border:rgba(255,255,255,0.08);--text:#f9fafb;--muted:#9ca3af;--accent:#2dd4bf;}
+    *{box-sizing:border-box;}
+    body{font-family:'Plus Jakarta Sans',sans-serif;margin:0;background-color:var(--bg);color:var(--text);min-height:100vh;display:flex;align-items:center;justify-content:center;}
+    .card{background:var(--card);backdrop-filter:blur(20px);border-radius:28px;padding:40px;border:1px solid var(--border);box-shadow:0 25px 50px -12px rgba(0,0,0,.5);width:100%;max-width:400px;margin:24px;}
+    h1{margin:0 0 8px;font-size:1.5rem;font-weight:800;letter-spacing:-0.03em;}
+    .sub{color:var(--muted);margin:0 0 24px;font-size:.9rem;}
+    label{display:block;font-size:.85rem;color:var(--muted);margin-bottom:8px;}
+    input[type=password]{width:100%;background:rgba(255,255,255,.06);border:1px solid var(--border);border-radius:12px;padding:12px 16px;color:var(--text);font-size:1.1rem;font-family:inherit;outline:none;letter-spacing:.18em;}
+    input:focus{border-color:var(--accent);}
+    button{margin-top:16px;width:100%;background:var(--accent);color:#003d35;border:none;border-radius:12px;padding:13px;font-size:1rem;font-weight:700;font-family:inherit;cursor:pointer;transition:filter .2s;}
+    button:hover{filter:brightness(1.1);}
+    .lock{font-size:2.5rem;margin-bottom:16px;user-select:none;}
+    .err{color:#f87171;margin-top:10px;font-size:.88rem;}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="lock">🔒</div>
+    <h1>PIN Required</h1>
+    <p class="sub">This web server is PIN-protected. Enter the PIN to continue.</p>
+    <form method="POST" action="/verify-pin">
+      <label for="pin">PIN</label>
+      <input type="password" id="pin" name="pin" autocomplete="one-time-code" autofocus required />
+      $errorHtml
+      <button type="submit">Unlock</button>
+    </form>
+  </div>
+</body>
+</html>
+''';
   }
 
   void approvePeerRequest(String id) {
@@ -584,6 +780,11 @@ class WebServerService {
   Future<void> clearHistory() async {
     _history.clear();
     _historyController.add(const <TransferHistoryEntry>[]);
+  }
+
+  Future<void> clearHistoryByDirection(TransferDirection direction) async {
+    _history.removeWhere((entry) => entry.direction == direction);
+    _historyController.add(List<TransferHistoryEntry>.unmodifiable(_history));
   }
 
   Future<void> removeHistoryEntry(TransferHistoryEntry target) async {
@@ -648,40 +849,67 @@ class WebServerService {
       return false;
     }
 
-    final targetDir = Directory(FileUtils.safeJoin(_rootDirectory, 'web_received/${peer.id}'));
-    await targetDir.create(recursive: true);
-    final uniqueName = await _uniqueNameInDirectory(targetDir.path, safeBase);
-    final targetPath = FileUtils.safeJoin(targetDir.path, uniqueName);
-    await tempFile.rename(targetPath);
+    final targetDir = await _resolveWritableIncomingDirectory();
+    final targetPath = FileUtils.safeJoin(targetDir.path, safeBase);
+    final targetFile = File(targetPath);
+    if (await targetFile.exists()) {
+      await targetFile.delete();
+    }
+    await _moveFileWithFallback(tempFile, targetFile);
 
     _appendRequestLog(
       kind: kind,
-      fileName: uniqueName,
+      fileName: safeBase,
       size: bytes.length,
       from: fromIp,
       status: 'received',
     );
     _appendHistory(
-      fileName: uniqueName,
+      fileName: safeBase,
       size: bytes.length,
       deviceName: peer.name,
       direction: TransferDirection.received,
       status: TransferStatus.completed,
       duration: DateTime.now().difference(request.requestedAt),
+      localPath: targetPath,
     );
     return true;
   }
 
-  Future<String> _uniqueNameInDirectory(String directoryPath, String desiredName) async {
-    final ext = p.extension(desiredName);
-    final base = p.basenameWithoutExtension(desiredName);
-    var candidate = desiredName;
-    var i = 1;
-    while (await File(FileUtils.safeJoin(directoryPath, candidate)).exists()) {
-      candidate = '${base}_$i$ext';
-      i++;
+  Future<void> _moveFileWithFallback(File source, File target) async {
+    try {
+      await source.rename(target.path);
+      return;
+    } on FileSystemException {
+      // Some platforms/storage providers cannot rename across volumes.
     }
-    return candidate;
+
+    await source.copy(target.path);
+    if (await source.exists()) {
+      await source.delete();
+    }
+  }
+
+  Future<Directory> _resolveWritableIncomingDirectory() async {
+    final normalizedRoot = _rootDirectory.trim();
+    if (normalizedRoot.isNotEmpty) {
+      final preferred = Directory(normalizedRoot);
+      try {
+        await preferred.create(recursive: true);
+        return preferred;
+      } catch (_) {}
+    }
+
+    Directory fallbackBase;
+    try {
+      fallbackBase = await getApplicationDocumentsDirectory();
+    } catch (_) {
+      fallbackBase = Directory.systemTemp;
+    }
+
+    final fallback = Directory(fallbackBase.path);
+    await fallback.create(recursive: true);
+    return fallback;
   }
 
   String _generateToken() {
@@ -732,6 +960,7 @@ class WebServerService {
     required TransferDirection direction,
     required TransferStatus status,
     required Duration duration,
+    String? localPath,
   }) {
     _history.insert(
       0,
@@ -743,6 +972,7 @@ class WebServerService {
         status: status,
         duration: duration,
         direction: direction,
+        localPath: localPath,
       ),
     );
     if (_history.length > 400) {

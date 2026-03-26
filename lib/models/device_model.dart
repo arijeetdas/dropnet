@@ -12,6 +12,7 @@ class DeviceModel {
     required this.deviceType,
     required this.isOnline,
     required this.lastSeen,
+    this.tlsCertificateSha256,
   });
 
   final String deviceId;
@@ -22,6 +23,7 @@ class DeviceModel {
   final DeviceType deviceType;
   final bool isOnline;
   final DateTime lastSeen;
+  final String? tlsCertificateSha256;
 
   static String _canonicalPlatform(String raw) {
     final value = raw.trim();
@@ -59,7 +61,9 @@ class DeviceModel {
         .map((part) => part.trim())
         .where((part) => part.isNotEmpty)
         .toList();
-    final parts = baseParts.isEmpty ? <String>[deviceName.trim()] : <String>[...baseParts];
+    final parts = baseParts.isEmpty
+        ? <String>[deviceName.trim()]
+        : <String>[...baseParts];
 
     final normalizedPlatform = _canonicalPlatform(platform).toLowerCase();
     if (normalizedPlatform.isNotEmpty) {
@@ -72,9 +76,15 @@ class DeviceModel {
     final normalizedManufacturer = manufacturer.trim();
     if (normalizedManufacturer.isNotEmpty) {
       final lowerManufacturer = normalizedManufacturer.toLowerCase();
-      final hasManufacturer = parts.any((part) => part.toLowerCase() == lowerManufacturer);
-      final manufacturerAsPlatform = _canonicalPlatform(normalizedManufacturer).toLowerCase();
-      final sameAsPlatform = normalizedPlatform.isNotEmpty && manufacturerAsPlatform == normalizedPlatform;
+      final hasManufacturer = parts.any(
+        (part) => part.toLowerCase() == lowerManufacturer,
+      );
+      final manufacturerAsPlatform = _canonicalPlatform(
+        normalizedManufacturer,
+      ).toLowerCase();
+      final sameAsPlatform =
+          normalizedPlatform.isNotEmpty &&
+          manufacturerAsPlatform == normalizedPlatform;
       if (!hasManufacturer && !sameAsPlatform) {
         parts.add(normalizedManufacturer);
       }
@@ -84,15 +94,16 @@ class DeviceModel {
   }
 
   Map<String, dynamic> toJson() => {
-        'deviceId': deviceId,
-        'deviceName': deviceName,
-        'manufacturer': manufacturer,
-        'platform': platform,
-        'ipAddress': ipAddress,
-        'deviceType': deviceType.name,
-        'isOnline': isOnline,
-        'lastSeen': lastSeen.toIso8601String(),
-      };
+    'deviceId': deviceId,
+    'deviceName': deviceName,
+    'manufacturer': manufacturer,
+    'platform': platform,
+    'ipAddress': ipAddress,
+    'deviceType': deviceType.name,
+    'isOnline': isOnline,
+    'lastSeen': lastSeen.toIso8601String(),
+    'tlsCertificateSha256': tlsCertificateSha256,
+  };
 
   String toWire() => jsonEncode(toJson());
 
@@ -108,11 +119,18 @@ class DeviceModel {
         orElse: () => DeviceType.other,
       ),
       isOnline: json['isOnline'] as bool? ?? true,
-      lastSeen: DateTime.tryParse(json['lastSeen']?.toString() ?? '') ?? DateTime.now(),
+      lastSeen:
+          DateTime.tryParse(json['lastSeen']?.toString() ?? '') ??
+          DateTime.now(),
+      tlsCertificateSha256:
+          (json['tlsCertificateSha256']?.toString().trim().isNotEmpty ?? false)
+          ? json['tlsCertificateSha256'].toString().trim().toLowerCase()
+          : null,
     );
   }
 
-  factory DeviceModel.fromWire(String wire) => DeviceModel.fromJson(jsonDecode(wire) as Map<String, dynamic>);
+  factory DeviceModel.fromWire(String wire) =>
+      DeviceModel.fromJson(jsonDecode(wire) as Map<String, dynamic>);
 
   DeviceModel copyWith({
     String? deviceId,
@@ -123,6 +141,7 @@ class DeviceModel {
     DeviceType? deviceType,
     bool? isOnline,
     DateTime? lastSeen,
+    String? tlsCertificateSha256,
   }) {
     return DeviceModel(
       deviceId: deviceId ?? this.deviceId,
@@ -133,6 +152,7 @@ class DeviceModel {
       deviceType: deviceType ?? this.deviceType,
       isOnline: isOnline ?? this.isOnline,
       lastSeen: lastSeen ?? this.lastSeen,
+      tlsCertificateSha256: tlsCertificateSha256 ?? this.tlsCertificateSha256,
     );
   }
 }

@@ -5,6 +5,7 @@ import UIKit
 @objc class AppDelegate: FlutterAppDelegate {
   private var shareChannel: FlutterMethodChannel?
   private var pendingSharedFilePaths: [String] = []
+  private var pendingSharedTexts: [String] = []
 
   override func application(
     _ application: UIApplication,
@@ -14,13 +15,23 @@ import UIKit
     if let controller = window?.rootViewController as? FlutterViewController {
       let channel = FlutterMethodChannel(name: "dropnet/share_intent", binaryMessenger: controller.binaryMessenger)
       channel.setMethodCallHandler { [weak self] call, result in
-        guard call.method == "consumePendingSharedFiles" else {
+        switch call.method {
+        case "consumePendingSharedPayload":
+          let files = self?.pendingSharedFilePaths ?? []
+          let texts = self?.pendingSharedTexts ?? []
+          self?.pendingSharedFilePaths.removeAll()
+          self?.pendingSharedTexts.removeAll()
+          result([
+            "files": files,
+            "texts": texts,
+          ])
+        case "consumePendingSharedFiles":
+          let files = self?.pendingSharedFilePaths ?? []
+          self?.pendingSharedFilePaths.removeAll()
+          result(files)
+        default:
           result(FlutterMethodNotImplemented)
-          return
         }
-        let files = self?.pendingSharedFilePaths ?? []
-        self?.pendingSharedFilePaths.removeAll()
-        result(files)
       }
       shareChannel = channel
     }
@@ -32,35 +43,64 @@ import UIKit
     open url: URL,
     options: [UIApplication.OpenURLOptionsKey: Any] = [:]
   ) -> Bool {
-    let handled = appendSharedFile(url: url)
+    let handled = appendSharedPayload(url: url)
     if handled {
-      emitSharedFilesUpdated()
+      emitSharedPayloadUpdated()
       return true
     }
     return super.application(app, open: url, options: options)
   }
 
-  private func appendSharedFile(url: URL) -> Bool {
-    guard url.isFileURL else {
+  override func application(
+    _ application: UIApplication,
+    continue userActivity: NSUserActivity,
+    restorationHandler: @escaping ([UIUserActivityRestoring]?) -> Void
+  ) -> Bool {
+    if userActivity.activityType == NSUserActivityTypeBrowsingWeb,
+      let url = userActivity.webpageURL,
+      appendSharedPayload(url: url) {
+      emitSharedPayloadUpdated()
+      return true
+    }
+
+    return super.application(application, continue: userActivity, restorationHandler: restorationHandler)
+  }
+
+  private func appendSharedPayload(url: URL) -> Bool {
+    if url.isFileURL {
+      let path = url.path.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !path.isEmpty else {
+        return false
+      }
+      guard FileManager.default.fileExists(atPath: path) else {
+        return false
+      }
+      if !pendingSharedFilePaths.contains(path) {
+        pendingSharedFilePaths.append(path)
+      }
+      return true
+    }
+
+    let text = url.absoluteString.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !text.isEmpty else {
       return false
     }
-    let path = url.path.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !path.isEmpty else {
-      return false
-    }
-    guard FileManager.default.fileExists(atPath: path) else {
-      return false
-    }
-    if !pendingSharedFilePaths.contains(path) {
-      pendingSharedFilePaths.append(path)
+    if !pendingSharedTexts.contains(text) {
+      pendingSharedTexts.append(text)
     }
     return true
   }
 
-  private func emitSharedFilesUpdated() {
-    guard !pendingSharedFilePaths.isEmpty else {
+  private func emitSharedPayloadUpdated() {
+    guard !pendingSharedFilePaths.isEmpty || !pendingSharedTexts.isEmpty else {
       return
     }
-    shareChannel?.invokeMethod("sharedFilesUpdated", arguments: pendingSharedFilePaths)
+    shareChannel?.invokeMethod(
+      "sharedPayloadUpdated",
+      arguments: [
+        "files": pendingSharedFilePaths,
+        "texts": pendingSharedTexts,
+      ]
+    )
   }
 }

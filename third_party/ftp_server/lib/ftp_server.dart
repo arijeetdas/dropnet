@@ -7,7 +7,8 @@ import 'logger_handler.dart';
 import 'package:ftp_server/file_operations/file_operations.dart';
 
 class FtpServer {
-  ServerSocket? _server;
+  Stream<Socket>? _serverStream;
+  Future<void> Function()? _closeServer;
 
   /// The port on which the FTP server will listen for incoming connections.
   final int port;
@@ -36,6 +37,12 @@ class FtpServer {
   /// The file operations backend to use (VirtualFileOperations, PhysicalFileOperations, or custom).
   final FileOperations fileOperations;
 
+  /// Optional TLS context. When provided, the control channel is served over TLS.
+  final SecurityContext? securityContext;
+
+  /// Whether passive data sockets are also protected with TLS.
+  final bool secureDataConnections;
+
   ///Create a List to collect new sessions.
   ///When you call _server?.stop() it should disconnect all active connections.
   final List<FtpSession> _sessionList = [];
@@ -56,13 +63,15 @@ class FtpServer {
       this.password,
       required this.fileOperations,
       required this.serverType,
+      this.securityContext,
+      this.secureDataConnections = false,
       Function(String)? logFunction})
       : logger = LoggerHandler(logFunction);
 
   Future<void> start() async {
-    _server = await ServerSocket.bind(InternetAddress.anyIPv4, port);
+    await _bindServer();
     logger.generalLog('FTP Server is running on port $port');
-    await for (var socket in _server!) {
+    await for (var socket in _serverStream!) {
       logger.generalLog(
           'New client connected from ${socket.remoteAddress.address}:${socket.remotePort}');
       var session = FtpSession(
@@ -72,6 +81,8 @@ class FtpServer {
         fileOperations: fileOperations,
         serverType: serverType,
         logger: logger,
+        tlsSecurityContext: securityContext,
+        secureDataConnections: secureDataConnections,
       );
       //Fill sessionList with new sessions.
       _sessionList.add(session);
@@ -79,9 +90,9 @@ class FtpServer {
   }
 
   Future<void> startInBackground() async {
-    _server = await ServerSocket.bind(InternetAddress.anyIPv4, port);
+    await _bindServer();
     logger.generalLog('FTP Server is running on port $port');
-    _server!.listen((socket) {
+    _serverStream!.listen((socket) {
       logger.generalLog(
           'New client connected from ${socket.remoteAddress.address}:${socket.remotePort}');
       var session = FtpSession(
@@ -91,10 +102,29 @@ class FtpServer {
         fileOperations: fileOperations,
         serverType: serverType,
         logger: logger,
+        tlsSecurityContext: securityContext,
+        secureDataConnections: secureDataConnections,
       );
       //Fill sessionList with new sessions.
       _sessionList.add(session);
     });
+  }
+
+  Future<void> _bindServer() async {
+    if (securityContext != null) {
+      final secureServer = await SecureServerSocket.bind(
+        InternetAddress.anyIPv4,
+        port,
+        securityContext!,
+      );
+      _serverStream = secureServer;
+      _closeServer = secureServer.close;
+      return;
+    }
+
+    final plainServer = await ServerSocket.bind(InternetAddress.anyIPv4, port);
+    _serverStream = plainServer;
+    _closeServer = plainServer.close;
   }
 
   Future<void> stop() async {
@@ -103,8 +133,9 @@ class FtpServer {
       session.closeConnection();
     }
     _sessionList.clear();
-    await _server?.close();
-    _server = null;
+    await _closeServer?.call();
+    _closeServer = null;
+    _serverStream = null;
     logger.generalLog('FTP Server stopped');
   }
 }

@@ -7,6 +7,7 @@ class FtpFileEntry {
     required this.path,
     required this.isDirectory,
     required this.size,
+    required this.mode,
     required this.modified,
   });
 
@@ -14,6 +15,7 @@ class FtpFileEntry {
   final String path;
   final bool isDirectory;
   final int size;
+  final int mode;
   final DateTime modified;
 }
 
@@ -44,6 +46,7 @@ abstract class FileOperations {
           path: entityPath,
           isDirectory: stat.type == FileSystemEntityType.directory,
           size: stat.size,
+          mode: stat.mode,
           modified: stat.modified,
         ),
       );

@@ -10,13 +10,15 @@
 
 namespace {
 constexpr const char kShareIntentChannel[] = "dropnet/share_intent";
-constexpr const char kConsumePendingMethod[] = "consumePendingSharedFiles";
+constexpr const char kConsumePendingFilesMethod[] = "consumePendingSharedFiles";
+constexpr const char kConsumePendingPayloadMethod[] = "consumePendingSharedPayload";
 }
 
 struct _MyApplication {
   GtkApplication parent_instance;
   char** dart_entrypoint_arguments;
   GPtrArray* pending_shared_file_paths;
+  GPtrArray* pending_shared_texts;
   FlMethodChannel* share_channel;
 };
 
@@ -37,6 +39,28 @@ static FlMethodResponse* consume_pending_shared_files(MyApplication* self) {
   return FL_METHOD_RESPONSE(fl_method_success_response_new(list));
 }
 
+static FlMethodResponse* consume_pending_shared_payload(MyApplication* self) {
+  g_autoptr(FlValue) files = fl_value_new_list();
+  for (guint index = 0; index < self->pending_shared_file_paths->len; index++) {
+    const char* path = static_cast<const char*>(g_ptr_array_index(self->pending_shared_file_paths, index));
+    fl_value_append_take(files, fl_value_new_string(path));
+  }
+
+  g_autoptr(FlValue) texts = fl_value_new_list();
+  for (guint index = 0; index < self->pending_shared_texts->len; index++) {
+    const char* text = static_cast<const char*>(g_ptr_array_index(self->pending_shared_texts, index));
+    fl_value_append_take(texts, fl_value_new_string(text));
+  }
+
+  g_autoptr(FlValue) payload = fl_value_new_map();
+  fl_value_set_string_take(payload, "files", fl_value_ref(files));
+  fl_value_set_string_take(payload, "texts", fl_value_ref(texts));
+
+  g_ptr_array_set_size(self->pending_shared_file_paths, 0);
+  g_ptr_array_set_size(self->pending_shared_texts, 0);
+  return FL_METHOD_RESPONSE(fl_method_success_response_new(payload));
+}
+
 static void share_intent_method_call_handler(FlMethodChannel* channel,
                                              FlMethodCall* method_call,
                                              gpointer user_data) {
@@ -44,7 +68,9 @@ static void share_intent_method_call_handler(FlMethodChannel* channel,
   const gchar* method = fl_method_call_get_name(method_call);
 
   g_autoptr(FlMethodResponse) response = nullptr;
-  if (strcmp(method, kConsumePendingMethod) == 0) {
+  if (strcmp(method, kConsumePendingPayloadMethod) == 0) {
+    response = consume_pending_shared_payload(self);
+  } else if (strcmp(method, kConsumePendingFilesMethod) == 0) {
     response = consume_pending_shared_files(self);
   } else {
     response = FL_METHOD_RESPONSE(fl_method_not_implemented_response_new());
@@ -146,24 +172,54 @@ static gboolean my_application_local_command_line(GApplication* application,
   // Strip out the first argument as it is the binary name.
   self->dart_entrypoint_arguments = g_strdupv(*arguments + 1);
   g_ptr_array_set_size(self->pending_shared_file_paths, 0);
+  g_ptr_array_set_size(self->pending_shared_texts, 0);
   for (char** argument = *arguments + 1; argument != nullptr && *argument != nullptr; argument++) {
-    if (!g_file_test(*argument, G_FILE_TEST_EXISTS | G_FILE_TEST_IS_REGULAR)) {
+    const char* raw = *argument;
+    if (raw == nullptr) {
       continue;
     }
-    g_autofree gchar* canonical = g_canonicalize_filename(*argument, nullptr);
-    if (canonical == nullptr || *canonical == '\0') {
+
+    if (g_file_test(raw, G_FILE_TEST_EXISTS | G_FILE_TEST_IS_REGULAR)) {
+      g_autofree gchar* canonical = g_canonicalize_filename(raw, nullptr);
+      if (canonical == nullptr || *canonical == '\0') {
+        continue;
+      }
+      gboolean duplicate = FALSE;
+      for (guint index = 0; index < self->pending_shared_file_paths->len; index++) {
+        const char* existing = static_cast<const char*>(g_ptr_array_index(self->pending_shared_file_paths, index));
+        if (g_strcmp0(existing, canonical) == 0) {
+          duplicate = TRUE;
+          break;
+        }
+      }
+      if (!duplicate) {
+        g_ptr_array_add(self->pending_shared_file_paths, g_strdup(canonical));
+      }
       continue;
     }
+
+    g_autofree gchar* normalized_text = g_strdup(raw);
+    if (normalized_text == nullptr) {
+      continue;
+    }
+    g_strstrip(normalized_text);
+    if (*normalized_text == '\0') {
+      continue;
+    }
+    if (g_str_has_prefix(normalized_text, "--") || g_str_has_prefix(normalized_text, "-")) {
+      continue;
+    }
+
     gboolean duplicate = FALSE;
-    for (guint index = 0; index < self->pending_shared_file_paths->len; index++) {
-      const char* existing = static_cast<const char*>(g_ptr_array_index(self->pending_shared_file_paths, index));
-      if (g_strcmp0(existing, canonical) == 0) {
+    for (guint index = 0; index < self->pending_shared_texts->len; index++) {
+      const char* existing = static_cast<const char*>(g_ptr_array_index(self->pending_shared_texts, index));
+      if (g_strcmp0(existing, normalized_text) == 0) {
         duplicate = TRUE;
         break;
       }
     }
     if (!duplicate) {
-      g_ptr_array_add(self->pending_shared_file_paths, g_strdup(canonical));
+      g_ptr_array_add(self->pending_shared_texts, g_strdup(normalized_text));
     }
   }
 
@@ -204,6 +260,7 @@ static void my_application_dispose(GObject* object) {
   g_clear_pointer(&self->dart_entrypoint_arguments, g_strfreev);
   g_clear_object(&self->share_channel);
   g_clear_pointer(&self->pending_shared_file_paths, g_ptr_array_unref);
+  g_clear_pointer(&self->pending_shared_texts, g_ptr_array_unref);
   G_OBJECT_CLASS(my_application_parent_class)->dispose(object);
 }
 
@@ -218,6 +275,8 @@ static void my_application_class_init(MyApplicationClass* klass) {
 
 static void my_application_init(MyApplication* self) {
   self->pending_shared_file_paths =
+      g_ptr_array_new_with_free_func(g_free);
+  self->pending_shared_texts =
       g_ptr_array_new_with_free_func(g_free);
 }
 

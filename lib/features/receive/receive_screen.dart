@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/state/app_state.dart';
 import '../../widgets/adaptive_nav_scaffold.dart';
+import '../../widgets/tab_shell_scope.dart';
 
 class ReceiveScreen extends ConsumerStatefulWidget {
   const ReceiveScreen({super.key, this.embedded = false});
@@ -40,9 +41,33 @@ class _ReceiveScreenState extends ConsumerState<ReceiveScreen> with SingleTicker
     super.dispose();
   }
 
+  bool _isShellBranchActive(BuildContext context) {
+    final scope = TabShellScope.maybeOf(context);
+    return scope == null || scope.currentIndex == 0;
+  }
+
   @override
   Widget build(BuildContext context) {
-    final state = ref.watch(appControllerProvider);
+    final isBranchActive = !widget.embedded || _isShellBranchActive(context);
+    if (isBranchActive) {
+      if (!_pulseController.isAnimating) {
+        _pulseController.repeat(reverse: true);
+      }
+    } else if (_pulseController.isAnimating) {
+      _pulseController.stop();
+      return const SizedBox.shrink();
+    } else {
+      return const SizedBox.shrink();
+    }
+
+    final state = ref.watch(
+      appControllerProvider.select(
+        (state) => (
+          localDeviceBaseName: state.localDeviceBaseName,
+          localDeviceNumber: state.localDeviceNumber,
+        ),
+      ),
+    );
     final content = Padding(
       padding: const EdgeInsets.all(16),
       child: Center(
@@ -81,12 +106,17 @@ class _ReceiveScreenState extends ConsumerState<ReceiveScreen> with SingleTicker
             ),
             const SizedBox(height: 26),
             Text(
-              state.localDeviceBaseName.isEmpty ? 'DropNet Device' : state.localDeviceBaseName,
+              state.localDeviceBaseName.isEmpty
+                  ? 'DropNet Device'
+                  : state.localDeviceBaseName,
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.displaySmall,
             ),
             const SizedBox(height: 10),
-            Text('#${state.localDeviceNumber}', style: Theme.of(context).textTheme.titleLarge),
+            Text(
+              '#${state.localDeviceNumber}',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
           ],
         ),
       ),

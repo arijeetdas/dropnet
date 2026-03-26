@@ -13,4 +13,16 @@ class MediaStoreService {
       return false;
     }
   }
+
+  Future<bool> openFileExternally(String path) async {
+    try {
+      final opened = await _channel.invokeMethod<bool>(
+        'openFileExternally',
+        {'path': path},
+      );
+      return opened == true;
+    } catch (_) {
+      return false;
+    }
+  }
 }

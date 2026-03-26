@@ -11,29 +11,71 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../models/device_model.dart';
+import '../../models/trusted_peer_model.dart';
 import '../../models/transfer_model.dart';
 import '../platform/media_store_service.dart';
 import '../platform/share_intent_service.dart';
 import '../platform/android_saf_service.dart';
 import '../networking/discovery_service.dart';
-import '../networking/ftp_service.dart';
 import '../networking/temporary_link_share_service.dart';
 import '../networking/tcp_transfer_service.dart';
+import '../utils/transfer_visuals.dart';
 import '../networking/web_server_service.dart';
+
+bool isTransferPreviewEligible(TransferModel transfer) {
+  if (transfer.direction != TransferDirection.received ||
+      transfer.status != TransferStatus.completed) {
+    return false;
+  }
+  final sessionFileCount = transfer.sessionFileCount ?? 1;
+  if (sessionFileCount != 1) {
+    return false;
+  }
+
+  final localPath = transfer.localPath?.trim() ?? '';
+  if (localPath.isEmpty) {
+    return false;
+  }
+
+  return TransferVisuals.isTextPreviewType(localPath) ||
+      TransferVisuals.supportsReceivedPreview(localPath);
+}
+
+String trustedPeerKey(String deviceId, String tlsCertificateSha256) {
+  return '${deviceId.trim().toLowerCase()}|${tlsCertificateSha256.trim().toLowerCase()}';
+}
+
+bool isDeviceTrusted({
+  required List<TrustedPeer> trustedPeers,
+  required DeviceModel device,
+}) {
+  final deviceId = device.deviceId.trim();
+  final fingerprint = (device.tlsCertificateSha256 ?? '').trim().toLowerCase();
+  if (deviceId.isEmpty || fingerprint.isEmpty) {
+    return false;
+  }
+  final expected = trustedPeerKey(deviceId, fingerprint);
+  return trustedPeers.any(
+    (peer) =>
+        trustedPeerKey(peer.deviceId, peer.tlsCertificateSha256) == expected,
+  );
+}
+
 
 class AppState {
   const AppState({
     required this.devices,
     required this.activeTransfers,
     required this.history,
-    required this.ftpState,
     required this.webState,
     required this.downloadDirectory,
     required this.pendingIncomingRequests,
+    required this.pendingPairingRequests,
     required this.themeMode,
     required this.themeSeed,
     required this.useSystemAccent,
     required this.localDeviceName,
+    required this.localDeviceId,
     required this.localDeviceManufacturer,
     required this.localDevicePlatform,
     required this.localDeviceBaseName,
@@ -46,25 +88,27 @@ class AppState {
     required this.transferSessionItems,
     required this.transferSessionActive,
     required this.pendingSharedFilePaths,
+    required this.pendingSharedTexts,
+    required this.pendingTransferPreviewTexts,
+    required this.pendingTransferPreviewFiles,
+    required this.pendingSystemMessages,
+    required this.trustedPeers,
     required this.saveMediaToGallery,
-    required this.ftpAutoRandomizeCredentials,
-    required this.ftpSavedUsername,
-    required this.ftpSavedPassword,
-    required this.ftpPreferredStorageRoot,
-    required this.ftpSafTreeUris,
+    required this.requirePairingCodeForDirectTransfers,
   });
 
   final List<DeviceModel> devices;
   final List<TransferModel> activeTransfers;
   final List<TransferHistoryEntry> history;
-  final FtpServerState ftpState;
   final WebShareState webState;
   final String downloadDirectory;
   final List<IncomingTransferRequest> pendingIncomingRequests;
+  final List<IncomingPairingRequest> pendingPairingRequests;
   final ThemeMode themeMode;
   final Color themeSeed;
   final bool useSystemAccent;
   final String localDeviceName;
+  final String localDeviceId;
   final String localDeviceManufacturer;
   final String localDevicePlatform;
   final String localDeviceBaseName;
@@ -77,57 +121,61 @@ class AppState {
   final List<TransferModel> transferSessionItems;
   final bool transferSessionActive;
   final List<String> pendingSharedFilePaths;
+  final List<String> pendingSharedTexts;
+  final List<String> pendingTransferPreviewTexts;
+  final List<TransferModel> pendingTransferPreviewFiles;
+  final List<String> pendingSystemMessages;
+  final List<TrustedPeer> trustedPeers;
   final bool saveMediaToGallery;
-  final bool ftpAutoRandomizeCredentials;
-  final String ftpSavedUsername;
-  final String ftpSavedPassword;
-  final String ftpPreferredStorageRoot;
-  final List<String> ftpSafTreeUris;
+  final bool requirePairingCodeForDirectTransfers;
 
   static AppState initial() => AppState(
-        devices: const [],
-        activeTransfers: const [],
-        history: const [],
-        ftpState: FtpServerState.initial(),
-        webState: WebShareState.initial(),
-        downloadDirectory: '',
-        pendingIncomingRequests: const [],
-        themeMode: ThemeMode.system,
-        themeSeed: Colors.indigo,
-        useSystemAccent: true,
-        localDeviceName: '',
-        localDeviceManufacturer: '',
-        localDevicePlatform: '',
-        localDeviceBaseName: '',
-        localDeviceNumber: 0,
-        localIp: '',
-        pendingWebPeerRequests: const [],
-        connectedWebPeers: const [],
-        pendingWebIncomingUploads: const [],
-        tempLinkShare: TemporaryLinkShareState.initial(),
-        transferSessionItems: const [],
-        transferSessionActive: false,
-        pendingSharedFilePaths: const [],
-        saveMediaToGallery: true,
-        ftpAutoRandomizeCredentials: false,
-        ftpSavedUsername: 'dropnet',
-        ftpSavedPassword: 'dropnet123',
-        ftpPreferredStorageRoot: '',
-        ftpSafTreeUris: const <String>[],
-      );
+    devices: const [],
+    activeTransfers: const [],
+    history: const [],
+    webState: WebShareState.initial(),
+    downloadDirectory: '',
+    pendingIncomingRequests: const [],
+    pendingPairingRequests: const [],
+    themeMode: ThemeMode.system,
+    themeSeed: Colors.indigo,
+    useSystemAccent: true,
+    localDeviceName: '',
+    localDeviceId: '',
+    localDeviceManufacturer: '',
+    localDevicePlatform: '',
+    localDeviceBaseName: '',
+    localDeviceNumber: 0,
+    localIp: '',
+    pendingWebPeerRequests: const [],
+    connectedWebPeers: const [],
+    pendingWebIncomingUploads: const [],
+    tempLinkShare: TemporaryLinkShareState.initial(),
+    transferSessionItems: const [],
+    transferSessionActive: false,
+    pendingSharedFilePaths: const [],
+    pendingSharedTexts: const [],
+    pendingTransferPreviewTexts: const [],
+    pendingTransferPreviewFiles: const [],
+    pendingSystemMessages: const [],
+    trustedPeers: const [],
+    saveMediaToGallery: true,
+    requirePairingCodeForDirectTransfers: false,
+  );
 
   AppState copyWith({
     List<DeviceModel>? devices,
     List<TransferModel>? activeTransfers,
     List<TransferHistoryEntry>? history,
-    FtpServerState? ftpState,
     WebShareState? webState,
     String? downloadDirectory,
     List<IncomingTransferRequest>? pendingIncomingRequests,
+    List<IncomingPairingRequest>? pendingPairingRequests,
     ThemeMode? themeMode,
     Color? themeSeed,
     bool? useSystemAccent,
     String? localDeviceName,
+    String? localDeviceId,
     String? localDeviceManufacturer,
     String? localDevicePlatform,
     String? localDeviceBaseName,
@@ -140,43 +188,58 @@ class AppState {
     List<TransferModel>? transferSessionItems,
     bool? transferSessionActive,
     List<String>? pendingSharedFilePaths,
+    List<String>? pendingSharedTexts,
+    List<String>? pendingTransferPreviewTexts,
+    List<TransferModel>? pendingTransferPreviewFiles,
+    List<String>? pendingSystemMessages,
+    List<TrustedPeer>? trustedPeers,
     bool? saveMediaToGallery,
-    bool? ftpAutoRandomizeCredentials,
-    String? ftpSavedUsername,
-    String? ftpSavedPassword,
-    String? ftpPreferredStorageRoot,
-    List<String>? ftpSafTreeUris,
+    bool? requirePairingCodeForDirectTransfers,
   }) {
     return AppState(
       devices: devices ?? this.devices,
       activeTransfers: activeTransfers ?? this.activeTransfers,
       history: history ?? this.history,
-      ftpState: ftpState ?? this.ftpState,
       webState: webState ?? this.webState,
       downloadDirectory: downloadDirectory ?? this.downloadDirectory,
-      pendingIncomingRequests: pendingIncomingRequests ?? this.pendingIncomingRequests,
+      pendingIncomingRequests:
+          pendingIncomingRequests ?? this.pendingIncomingRequests,
+        pendingPairingRequests:
+          pendingPairingRequests ?? this.pendingPairingRequests,
       themeMode: themeMode ?? this.themeMode,
       themeSeed: themeSeed ?? this.themeSeed,
       useSystemAccent: useSystemAccent ?? this.useSystemAccent,
       localDeviceName: localDeviceName ?? this.localDeviceName,
-      localDeviceManufacturer: localDeviceManufacturer ?? this.localDeviceManufacturer,
+      localDeviceId: localDeviceId ?? this.localDeviceId,
+      localDeviceManufacturer:
+          localDeviceManufacturer ?? this.localDeviceManufacturer,
       localDevicePlatform: localDevicePlatform ?? this.localDevicePlatform,
       localDeviceBaseName: localDeviceBaseName ?? this.localDeviceBaseName,
       localDeviceNumber: localDeviceNumber ?? this.localDeviceNumber,
       localIp: localIp ?? this.localIp,
-      pendingWebPeerRequests: pendingWebPeerRequests ?? this.pendingWebPeerRequests,
+      pendingWebPeerRequests:
+          pendingWebPeerRequests ?? this.pendingWebPeerRequests,
       connectedWebPeers: connectedWebPeers ?? this.connectedWebPeers,
-      pendingWebIncomingUploads: pendingWebIncomingUploads ?? this.pendingWebIncomingUploads,
+      pendingWebIncomingUploads:
+          pendingWebIncomingUploads ?? this.pendingWebIncomingUploads,
       tempLinkShare: tempLinkShare ?? this.tempLinkShare,
       transferSessionItems: transferSessionItems ?? this.transferSessionItems,
-      transferSessionActive: transferSessionActive ?? this.transferSessionActive,
-      pendingSharedFilePaths: pendingSharedFilePaths ?? this.pendingSharedFilePaths,
+      transferSessionActive:
+          transferSessionActive ?? this.transferSessionActive,
+      pendingSharedFilePaths:
+          pendingSharedFilePaths ?? this.pendingSharedFilePaths,
+      pendingSharedTexts: pendingSharedTexts ?? this.pendingSharedTexts,
+      pendingTransferPreviewTexts:
+          pendingTransferPreviewTexts ?? this.pendingTransferPreviewTexts,
+      pendingTransferPreviewFiles:
+          pendingTransferPreviewFiles ?? this.pendingTransferPreviewFiles,
+        pendingSystemMessages:
+          pendingSystemMessages ?? this.pendingSystemMessages,
+      trustedPeers: trustedPeers ?? this.trustedPeers,
       saveMediaToGallery: saveMediaToGallery ?? this.saveMediaToGallery,
-      ftpAutoRandomizeCredentials: ftpAutoRandomizeCredentials ?? this.ftpAutoRandomizeCredentials,
-      ftpSavedUsername: ftpSavedUsername ?? this.ftpSavedUsername,
-      ftpSavedPassword: ftpSavedPassword ?? this.ftpSavedPassword,
-      ftpPreferredStorageRoot: ftpPreferredStorageRoot ?? this.ftpPreferredStorageRoot,
-      ftpSafTreeUris: ftpSafTreeUris ?? this.ftpSafTreeUris,
+      requirePairingCodeForDirectTransfers:
+          requirePairingCodeForDirectTransfers ??
+              this.requirePairingCodeForDirectTransfers,
     );
   }
 }
@@ -197,14 +260,6 @@ final tcpTransferServiceProvider = Provider<TcpTransferService>((ref) {
   return service;
 });
 
-final ftpServiceProvider = Provider<FtpService>((ref) {
-  final service = FtpService(safService: ref.watch(androidSafServiceProvider));
-  ref.onDispose(() {
-    service.dispose();
-  });
-  return service;
-});
-
 final androidSafServiceProvider = Provider<AndroidSafService>((ref) {
   return AndroidSafService();
 });
@@ -217,7 +272,9 @@ final webServerServiceProvider = Provider<WebServerService>((ref) {
   return service;
 });
 
-final temporaryLinkShareServiceProvider = Provider<TemporaryLinkShareService>((ref) {
+final temporaryLinkShareServiceProvider = Provider<TemporaryLinkShareService>((
+  ref,
+) {
   final service = TemporaryLinkShareService();
   ref.onDispose(() {
     service.dispose();
@@ -237,11 +294,12 @@ final mediaStoreServiceProvider = Provider<MediaStoreService>((ref) {
   return const MediaStoreService();
 });
 
-final appControllerProvider = StateNotifierProvider<AppController, AppState>((ref) {
+final appControllerProvider = StateNotifierProvider<AppController, AppState>((
+  ref,
+) {
   return AppController(
     discovery: ref.watch(discoveryServiceProvider),
     transfer: ref.watch(tcpTransferServiceProvider),
-    ftp: ref.watch(ftpServiceProvider),
     web: ref.watch(webServerServiceProvider),
     tempShare: ref.watch(temporaryLinkShareServiceProvider),
     shareIntent: ref.watch(shareIntentServiceProvider),
@@ -253,23 +311,20 @@ class AppController extends StateNotifier<AppState> {
   AppController({
     required DiscoveryService discovery,
     required TcpTransferService transfer,
-    required FtpService ftp,
     required WebServerService web,
     required TemporaryLinkShareService tempShare,
     required ShareIntentService shareIntent,
     required MediaStoreService mediaStore,
-  })  : _discovery = discovery,
-        _transfer = transfer,
-        _ftp = ftp,
-        _web = web,
-        _tempShare = tempShare,
-      _shareIntent = shareIntent,
-      _mediaStore = mediaStore,
-        super(AppState.initial());
+  }) : _discovery = discovery,
+       _transfer = transfer,
+       _web = web,
+       _tempShare = tempShare,
+       _shareIntent = shareIntent,
+       _mediaStore = mediaStore,
+       super(AppState.initial());
 
   final DiscoveryService _discovery;
   final TcpTransferService _transfer;
-  final FtpService _ftp;
   final WebServerService _web;
   final TemporaryLinkShareService _tempShare;
   final ShareIntentService _shareIntent;
@@ -281,60 +336,84 @@ class AppController extends StateNotifier<AppState> {
   static const _useSystemAccentKey = 'settings.useSystemAccent';
   static const _downloadDirectoryKey = 'settings.downloadDirectory';
   static const _saveMediaToGalleryKey = 'settings.saveMediaToGallery';
-  static const _ftpAutoRandomizeCredentialsKey = 'settings.ftpAutoRandomizeCredentials';
-  static const _ftpSavedUsernameKey = 'settings.ftpSavedUsername';
-  static const _ftpSavedPasswordKey = 'settings.ftpSavedPassword';
-  static const _ftpPreferredStorageRootKey = 'settings.ftpPreferredStorageRoot';
-  static const _ftpSafTreeUrisKey = 'settings.ftpSafTreeUris';
+  static const _trustedPeersKey = 'security.trustedPeers';
   static const _historyKey = 'history.entries';
+  static const _requirePairingCodeKey = 'security.requirePairingCode';
 
   StreamSubscription<List<DeviceModel>>? _devicesSub;
   StreamSubscription<List<TransferModel>>? _activeSub;
   StreamSubscription<TransferModel>? _completedTransferSub;
   StreamSubscription<List<TransferHistoryEntry>>? _historySub;
   StreamSubscription<List<IncomingTransferRequest>>? _incomingSub;
-  StreamSubscription<FtpServerState>? _ftpSub;
+  StreamSubscription<List<IncomingPairingRequest>>? _incomingPairingSub;
+  StreamSubscription<List<RemoteUnpairNotice>>? _remoteUnpairSub;
   StreamSubscription<WebShareState>? _webSub;
   StreamSubscription<List<WebPeerConnectRequest>>? _webPeerReqSub;
   StreamSubscription<List<WebPeer>>? _webPeerSub;
   StreamSubscription<List<WebIncomingUploadRequest>>? _webIncomingUploadSub;
   StreamSubscription<List<TransferHistoryEntry>>? _webHistorySub;
   StreamSubscription<TemporaryLinkShareState>? _tempShareSub;
-  StreamSubscription<List<String>>? _sharedFilesSub;
+  StreamSubscription<SharedIntentPayload>? _sharedPayloadSub;
 
   List<TransferHistoryEntry> _tcpHistory = const [];
   List<TransferHistoryEntry> _webHistory = const [];
   List<TransferHistoryEntry> _persistedHistory = const [];
-  final Map<String, TransferModel> _transferSessionMap = <String, TransferModel>{};
+  final Map<String, TransferModel> _transferSessionMap =
+      <String, TransferModel>{};
+  final Set<String> _gallerySyncedPaths = <String>{};
+  final Set<String> _processedRemoteUnpairNoticeIds = <String>{};
 
   Future<void> bootstrap() async {
     await ensureStoragePermission();
     _prefs ??= await SharedPreferences.getInstance();
-    final defaultDownloadDir = await _resolveDownloadDirectory();
+
+    // Batch all SharedPreferences reads
+    final restoredThemeMode =
+        _themeModeFromName(_prefs!.getString(_themeModeKey)) ??
+            ThemeMode.system;
+    final restoredUseSystemAccent =
+        _prefs!.getBool(_useSystemAccentKey) ?? true;
+    final restoredThemeSeedValue =
+        _prefs!.getInt(_themeSeedKey) ?? Colors.indigo.toARGB32();
+    final restoredSaveMediaToGallery =
+        _prefs!.getBool(_saveMediaToGalleryKey) ?? true;
+    final restoredTrustedPeers = _restoreTrustedPeers(
+      _prefs!.getStringList(_trustedPeersKey) ?? const <String>[],
+    );
+    final restoredRequirePairingCode =
+        _prefs!.getBool(_requirePairingCodeKey) ?? false;
+    _persistedHistory = _restoreHistory(
+      _prefs!.getStringList(_historyKey) ?? const <String>[],
+    );
+
+    // Parallelize async operations that don't depend on each other
+    final downloadDirFuture = _resolveDownloadDirectory(
+      preferred: _prefs!.getString(_downloadDirectoryKey),
+    );
+    final localIpFuture = _discovery.getLocalIp();
+    final shareIntentFuture = Future<void>(() async {
+      await _shareIntent.initialize();
+    });
+
+    final downloadDir = await downloadDirFuture;
+    final localIp = await localIpFuture;
+    await shareIntentFuture;
+    final initialShared = await _shareIntent.consumePendingSharedPayload();
+
+    // Save download directory if changed
     final restoredDownloadDir = _prefs!.getString(_downloadDirectoryKey);
-    final downloadDir = await _resolveDownloadDirectory(preferred: restoredDownloadDir ?? defaultDownloadDir);
-    final restoredThemeMode = _themeModeFromName(_prefs!.getString(_themeModeKey)) ?? ThemeMode.system;
-    final restoredUseSystemAccent = _prefs!.getBool(_useSystemAccentKey) ?? true;
-    final restoredThemeSeedValue = _prefs!.getInt(_themeSeedKey) ?? Colors.indigo.toARGB32();
-    final restoredSaveMediaToGallery = _prefs!.getBool(_saveMediaToGalleryKey) ?? true;
-    final restoredFtpAutoRandomizeCredentials = _prefs!.getBool(_ftpAutoRandomizeCredentialsKey) ?? false;
-    final restoredFtpSavedUsername = (_prefs!.getString(_ftpSavedUsernameKey) ?? 'dropnet').trim();
-    final restoredFtpSavedPassword = (_prefs!.getString(_ftpSavedPasswordKey) ?? 'dropnet123').trim();
-    final restoredFtpPreferredStorageRoot = (_prefs!.getString(_ftpPreferredStorageRootKey) ?? '').trim();
-    final restoredFtpSafTreeUris = (_prefs!.getStringList(_ftpSafTreeUrisKey) ?? const <String>[])
-      .map((value) => value.trim())
-      .where((value) => value.isNotEmpty)
-      .toList(growable: false);
-    _persistedHistory = _restoreHistory(_prefs!.getStringList(_historyKey) ?? const <String>[]);
-    final localIp = await _discovery.getLocalIp();
-    await _shareIntent.initialize();
-    final initialShared = await _shareIntent.consumePendingSharedFiles();
+    if ((restoredDownloadDir ?? '').trim() != downloadDir.trim()) {
+      unawaited(_saveDownloadDirectory(downloadDir));
+    }
+
+    // Update state with all settings
     state = state.copyWith(
       downloadDirectory: downloadDir,
       themeMode: restoredThemeMode,
       useSystemAccent: restoredUseSystemAccent,
       themeSeed: Color(restoredThemeSeedValue),
       localDeviceName: _discovery.deviceName,
+      localDeviceId: _discovery.deviceId,
       localDeviceManufacturer: _discovery.manufacturerTag,
       localDevicePlatform: _discovery.platformTag,
       localDeviceBaseName: _discovery.deviceBaseName,
@@ -342,25 +421,40 @@ class AppController extends StateNotifier<AppState> {
       localIp: localIp,
       history: _persistedHistory,
       saveMediaToGallery: restoredSaveMediaToGallery,
-      pendingSharedFilePaths: initialShared,
-      ftpAutoRandomizeCredentials: restoredFtpAutoRandomizeCredentials,
-      ftpSavedUsername: restoredFtpSavedUsername.isEmpty ? 'dropnet' : restoredFtpSavedUsername,
-      ftpSavedPassword: restoredFtpSavedPassword.isEmpty ? 'dropnet123' : restoredFtpSavedPassword,
-      ftpPreferredStorageRoot: restoredFtpPreferredStorageRoot,
-      ftpSafTreeUris: restoredFtpSafTreeUris,
+      pendingSharedFilePaths: initialShared.filePaths,
+      pendingSharedTexts: initialShared.texts,
+      trustedPeers: restoredTrustedPeers,
+      requirePairingCodeForDirectTransfers: restoredRequirePairingCode,
     );
 
-    await _discovery.start();
-    await _discovery.updateDeviceNumber(1000 + Random().nextInt(9000));
-    state = state.copyWith(
-      localDeviceName: _discovery.deviceName,
-      localDeviceManufacturer: _discovery.manufacturerTag,
-      localDevicePlatform: _discovery.platformTag,
-      localDeviceBaseName: _discovery.deviceBaseName,
-      localDeviceNumber: _discovery.deviceNumber,
-    );
-    await _transfer.startReceiver(saveDirectory: downloadDir);
+    // Parallelize discovery and transfer startup
+    await Future.wait<void>([
+      _discovery.start(),
+      _transfer.startReceiver(saveDirectory: downloadDir),
+    ]);
 
+    // Defer device number update to avoid blocking startup
+    unawaited(
+      _discovery.updateDeviceNumber(1000 + Random().nextInt(9000)).then((_) {
+        state = state.copyWith(
+          localDeviceName: _discovery.deviceName,
+          localDeviceId: _discovery.deviceId,
+          localDeviceManufacturer: _discovery.manufacturerTag,
+          localDevicePlatform: _discovery.platformTag,
+          localDeviceBaseName: _discovery.deviceBaseName,
+          localDeviceNumber: _discovery.deviceNumber,
+        );
+      }),
+    );
+
+    // Defer stream subscriber setup to avoid blocking app startup
+    unawaited(Future<void>(() async {
+      await Future<void>.delayed(Duration.zero); // Yield to allow UI to render
+      _setupStreamSubscribers();
+    }));
+  }
+
+  void _setupStreamSubscribers() {
     _devicesSub ??= _discovery.devicesStream.listen((devices) {
       state = state.copyWith(devices: devices);
     });
@@ -387,25 +481,32 @@ class AppController extends StateNotifier<AppState> {
 
       state = state.copyWith(
         activeTransfers: activeTransfers,
-        transferSessionItems: state.transferSessionActive ? _sortedTransferSessionItems() : state.transferSessionItems,
+        transferSessionItems: state.transferSessionActive
+            ? _sortedTransferSessionItems()
+            : state.transferSessionItems,
       );
     });
 
-    _completedTransferSub ??= _transfer.completedTransfersStream.listen((completedTransfer) {
+    _completedTransferSub ??= _transfer.completedTransfersStream.listen((
+      completedTransfer,
+    ) {
       if (!state.transferSessionActive && state.activeTransfers.isEmpty) {
         _transferSessionMap.clear();
         state = state.copyWith(transferSessionActive: true);
       }
       _transferSessionMap[completedTransfer.id] = completedTransfer;
-      state = state.copyWith(transferSessionItems: _sortedTransferSessionItems());
+      state = state.copyWith(
+        transferSessionItems: _sortedTransferSessionItems(),
+      );
       if (completedTransfer.direction == TransferDirection.received &&
           completedTransfer.status == TransferStatus.completed &&
           state.saveMediaToGallery) {
         final localPath = completedTransfer.localPath;
         if (localPath != null && localPath.trim().isNotEmpty) {
-          unawaited(_mediaStore.saveToGallery(localPath));
+          unawaited(_saveMediaToGalleryIfEligible(localPath));
         }
       }
+      unawaited(_enqueueTransferPreviewIfEligible(completedTransfer));
     });
 
     _historySub ??= _transfer.historyStream.listen((history) {
@@ -414,11 +515,71 @@ class AppController extends StateNotifier<AppState> {
     });
 
     _incomingSub ??= _transfer.incomingRequestsStream.listen((requests) {
-      state = state.copyWith(pendingIncomingRequests: requests);
+      if (!state.requirePairingCodeForDirectTransfers) {
+        state = state.copyWith(pendingIncomingRequests: requests);
+        return;
+      }
+      final trustedRequests = <IncomingTransferRequest>[];
+      for (final request in requests) {
+        if (_isIncomingRequestTrusted(request)) {
+          trustedRequests.add(request);
+          continue;
+        }
+        _transfer.rejectIncomingRequest(request.id);
+      }
+      state = state.copyWith(pendingIncomingRequests: trustedRequests);
     });
 
-    _ftpSub ??= _ftp.stateStream.listen((ftpState) {
-      state = state.copyWith(ftpState: ftpState);
+    _incomingPairingSub ??= _transfer.incomingPairingRequestsStream.listen((
+      requests,
+    ) {
+      state = state.copyWith(pendingPairingRequests: requests);
+    });
+
+    _remoteUnpairSub ??= _transfer.remoteUnpairNoticesStream.listen((notices) {
+      var trustedPeers = state.trustedPeers;
+      var trustedPeersUpdated = false;
+      var messagesAdded = false;
+      final pendingMessages = List<String>.from(state.pendingSystemMessages);
+
+      for (final notice in notices) {
+        if (!_processedRemoteUnpairNoticeIds.add(notice.id)) {
+          continue;
+        }
+
+        final peerKey = trustedPeerKey(
+          notice.fromDeviceId,
+          notice.fromTlsCertificateSha256,
+        );
+        final next = trustedPeers
+            .where(
+              (peer) =>
+                  trustedPeerKey(peer.deviceId, peer.tlsCertificateSha256) !=
+                  peerKey,
+            )
+            .toList(growable: false);
+        if (next.length != trustedPeers.length) {
+          trustedPeers = next;
+          trustedPeersUpdated = true;
+        }
+
+        final fromName = notice.fromDeviceName.trim().isEmpty
+            ? 'A paired device'
+            : notice.fromDeviceName.trim();
+        pendingMessages.add('$fromName unpaired this device.');
+        messagesAdded = true;
+      }
+
+      if (trustedPeersUpdated) {
+        unawaited(_saveTrustedPeers(trustedPeers));
+      }
+
+      if (trustedPeersUpdated || messagesAdded) {
+        state = state.copyWith(
+          trustedPeers: trustedPeers,
+          pendingSystemMessages: pendingMessages,
+        );
+      }
     });
 
     _webSub ??= _web.stateStream.listen((webState) {
@@ -433,12 +594,21 @@ class AppController extends StateNotifier<AppState> {
       state = state.copyWith(connectedWebPeers: peers);
     });
 
-    _webIncomingUploadSub ??= _web.incomingUploadRequestsStream.listen((requests) {
+    _webIncomingUploadSub ??= _web.incomingUploadRequestsStream.listen((
+      requests,
+    ) {
       state = state.copyWith(pendingWebIncomingUploads: requests);
     });
 
     _webHistorySub ??= _web.historyStream.listen((history) {
+      final previousWebHistory = _webHistory;
       _webHistory = history;
+      unawaited(
+        _syncNewWebReceivedMediaToGallery(
+          previous: previousWebHistory,
+          current: history,
+        ),
+      );
       _emitCombinedHistory();
     });
 
@@ -446,17 +616,253 @@ class AppController extends StateNotifier<AppState> {
       state = state.copyWith(tempLinkShare: tempShareState);
     });
 
-    _sharedFilesSub ??= _shareIntent.sharedFilesStream.listen((paths) {
-      if (paths.isEmpty) {
+    _sharedPayloadSub ??= _shareIntent.sharedPayloadStream.listen((payload) {
+      if (payload.isEmpty) {
         return;
       }
-      final merged = <String>{...state.pendingSharedFilePaths, ...paths}.toList(growable: false);
-      state = state.copyWith(pendingSharedFilePaths: merged);
+      final mergedFiles = _mergeUnique(
+        state.pendingSharedFilePaths,
+        payload.filePaths,
+      );
+      final mergedTexts = _mergeUnique(state.pendingSharedTexts, payload.texts);
+      state = state.copyWith(
+        pendingSharedFilePaths: mergedFiles,
+        pendingSharedTexts: mergedTexts,
+      );
     });
   }
 
-  Future<void> sendFiles(DeviceModel target, List<String> filePaths) {
-    return _transfer.sendFiles(target: target, filePaths: filePaths, senderDeviceName: _taggedLocalName());
+  Future<void> sendFiles(
+    DeviceModel target,
+    List<String> filePaths, {
+    String? pairingCode,
+  }) async {
+    if (state.requirePairingCodeForDirectTransfers && !isTargetTrusted(target)) {
+      throw StateError(
+        'Device is not paired yet. Pair this device before sending files.',
+      );
+    }
+
+    final localFingerprint = await _discovery.ensureLocalTlsCertificateSha256();
+    return _transfer.sendFiles(
+      target: target,
+      filePaths: filePaths,
+      senderDeviceName: _taggedLocalName(),
+      senderDeviceId: state.localDeviceId,
+      senderTlsCertificateSha256: localFingerprint,
+      pairingCode: pairingCode,
+    );
+  }
+
+  bool isTargetTrusted(DeviceModel target) {
+    return isDeviceTrusted(trustedPeers: state.trustedPeers, device: target);
+  }
+
+  String? consumeNextPendingSystemMessage() {
+    if (state.pendingSystemMessages.isEmpty) {
+      return null;
+    }
+    final next = state.pendingSystemMessages.first;
+    final remaining = state.pendingSystemMessages
+        .skip(1)
+        .toList(growable: false);
+    state = state.copyWith(pendingSystemMessages: remaining);
+    return next;
+  }
+
+  Future<void> respondToIncomingPairingRequest(
+    IncomingPairingRequest request, {
+    required bool approved,
+  }) async {
+    if (approved) {
+      await _upsertTrustedPeer(
+        deviceId: request.fromDeviceId,
+        deviceName: request.fromDeviceName,
+        tlsCertificateSha256: request.fromTlsCertificateSha256,
+      );
+      _transfer.approveIncomingPairingRequest(request.id);
+      return;
+    }
+    _transfer.rejectIncomingPairingRequest(request.id);
+  }
+
+  Future<void> pairDeviceWithVerification(
+    DeviceModel device, {
+    required String pairingCode,
+  }) async {
+    if (!state.requirePairingCodeForDirectTransfers) {
+      await pairDevice(device);
+      return;
+    }
+
+    if (!device.isOnline) {
+      throw StateError(
+        'Device must be online on the same network to pair.',
+      );
+    }
+
+    final deviceId = device.deviceId.trim();
+    if (deviceId.isEmpty || device.ipAddress.trim().isEmpty) {
+      throw StateError(
+        'Cannot pair this device because identity metadata is incomplete.',
+      );
+    }
+
+    final localFingerprint = await _discovery.ensureLocalTlsCertificateSha256();
+    final pairingResult = await _transfer.requestPairing(
+      target: device,
+      senderDeviceName: _taggedLocalName(),
+      senderDeviceId: state.localDeviceId,
+      senderTlsCertificateSha256: localFingerprint,
+      pairingCode: pairingCode,
+    );
+    if (!pairingResult.accepted) {
+      throw StateError('Pairing was rejected or timed out.');
+    }
+
+    final trustedFingerprint = pairingResult.peerFingerprint.trim().toLowerCase();
+    if (trustedFingerprint.isEmpty) {
+      throw const HandshakeException(
+        'Pairing failed because peer fingerprint could not be verified.',
+      );
+    }
+
+    await _upsertTrustedPeer(
+      deviceId: deviceId,
+      deviceName: device.taggedName.trim().isEmpty
+          ? device.deviceName.trim()
+          : device.taggedName.trim(),
+      tlsCertificateSha256: trustedFingerprint,
+    );
+  }
+
+  Future<void> pairDevice(DeviceModel device) async {
+    final deviceId = device.deviceId.trim();
+    final fingerprint = (device.tlsCertificateSha256 ?? '')
+        .trim()
+        .toLowerCase();
+    if (deviceId.isEmpty || fingerprint.isEmpty) {
+      throw StateError(
+        'Cannot pair this device because identity metadata is incomplete.',
+      );
+    }
+
+    final displayName = device.taggedName.trim().isEmpty
+        ? device.deviceName.trim()
+        : device.taggedName.trim();
+    await _upsertTrustedPeer(
+      deviceId: deviceId,
+      deviceName: displayName.isEmpty ? deviceId : displayName,
+      tlsCertificateSha256: fingerprint,
+    );
+  }
+
+  Future<void> unpairDevice(DeviceModel device) async {
+    final deviceId = device.deviceId.trim().toLowerCase();
+    final fingerprint = (device.tlsCertificateSha256 ?? '').trim().toLowerCase();
+    if (deviceId.isEmpty || fingerprint.isEmpty) {
+      return;
+    }
+
+    if (state.requirePairingCodeForDirectTransfers) {
+      if (!device.isOnline) {
+        throw StateError(
+          'Unpairing requires both devices on the same network with the app open.',
+        );
+      }
+
+      final localFingerprint =
+          await _discovery.ensureLocalTlsCertificateSha256();
+      final accepted = await _transfer.requestUnpair(
+        target: device,
+        senderDeviceName: _taggedLocalName(),
+        senderDeviceId: state.localDeviceId,
+        senderTlsCertificateSha256: localFingerprint,
+      );
+      if (!accepted) {
+        throw StateError(
+          'Unpair request failed. Ensure both devices are online and open.',
+        );
+      }
+    }
+
+    await _removeTrustedPeerByKey(trustedPeerKey(deviceId, fingerprint));
+  }
+
+  Future<void> unpairTrustedPeer(TrustedPeer target) async {
+    final targetKey = trustedPeerKey(
+      target.deviceId,
+      target.tlsCertificateSha256,
+    );
+
+    if (state.requirePairingCodeForDirectTransfers) {
+      final matchedDevice = state.devices.where((device) {
+        final fingerprint = (device.tlsCertificateSha256 ?? '')
+            .trim()
+            .toLowerCase();
+        if (fingerprint.isEmpty || !device.isOnline) {
+          return false;
+        }
+        final key = trustedPeerKey(device.deviceId, fingerprint);
+        return key == targetKey;
+      }).firstOrNull;
+
+      if (matchedDevice == null) {
+        throw StateError(
+          'Unpairing requires both devices on the same network with the app open.',
+        );
+      }
+
+      await unpairDevice(matchedDevice);
+      return;
+    }
+
+    await _removeTrustedPeerByKey(targetKey);
+  }
+
+  Future<void> _upsertTrustedPeer({
+    required String deviceId,
+    required String deviceName,
+    required String tlsCertificateSha256,
+  }) async {
+    final normalizedDeviceId = deviceId.trim();
+    final normalizedFingerprint = tlsCertificateSha256.trim().toLowerCase();
+    if (normalizedDeviceId.isEmpty || normalizedFingerprint.isEmpty) {
+      return;
+    }
+
+    final updated = <TrustedPeer>[];
+    for (final peer in state.trustedPeers) {
+      if (peer.deviceId.trim().toLowerCase() ==
+          normalizedDeviceId.toLowerCase()) {
+        continue;
+      }
+      updated.add(peer);
+    }
+    updated.insert(
+      0,
+      TrustedPeer(
+        deviceId: normalizedDeviceId,
+        deviceName: deviceName.trim().isEmpty ? normalizedDeviceId : deviceName.trim(),
+        tlsCertificateSha256: normalizedFingerprint,
+        pairedAt: DateTime.now(),
+      ),
+    );
+
+    state = state.copyWith(trustedPeers: updated);
+    await _saveTrustedPeers(updated);
+  }
+
+  Future<void> _removeTrustedPeerByKey(String targetKey) async {
+    final updated = state.trustedPeers
+        .where(
+          (peer) =>
+              trustedPeerKey(peer.deviceId, peer.tlsCertificateSha256) !=
+              targetKey,
+        )
+        .toList(growable: false);
+    state = state.copyWith(trustedPeers: updated);
+    await _saveTrustedPeers(updated);
   }
 
   Future<bool> ensureStoragePermission({
@@ -481,7 +887,9 @@ class AppController extends StateNotifier<AppState> {
 
       if (needsSharedStorageAccess) {
         if (openSettingsIfDenied &&
-            (manageStatus.isPermanentlyDenied || manageStatus.isRestricted || manageStatus.isDenied)) {
+            (manageStatus.isPermanentlyDenied ||
+                manageStatus.isRestricted ||
+                manageStatus.isDenied)) {
           await openAppSettings();
         }
         return false;
@@ -511,7 +919,9 @@ class AppController extends StateNotifier<AppState> {
         photosStatus = await Permission.photos.request();
       }
       final granted = photosStatus.isGranted || photosStatus.isLimited;
-      if (!granted && openSettingsIfDenied && photosStatus.isPermanentlyDenied) {
+      if (!granted &&
+          openSettingsIfDenied &&
+          photosStatus.isPermanentlyDenied) {
         await openAppSettings();
       }
       return granted;
@@ -522,7 +932,10 @@ class AppController extends StateNotifier<AppState> {
 
   Future<void> refreshNearbyDevices() => _discovery.refreshNow();
 
-  Future<int> stageFilesForWebPeers({required List<String> filePaths, required List<String> peerIds}) {
+  Future<int> stageFilesForWebPeers({
+    required List<String> filePaths,
+    required List<String> peerIds,
+  }) {
     return _web.offerFilesToPeers(filePaths: filePaths, peerIds: peerIds);
   }
 
@@ -538,42 +951,12 @@ class AppController extends StateNotifier<AppState> {
     _transfer.rejectIncomingRequest(id);
   }
 
-  Future<void> startFtp({
-    required List<String> sharedRoots,
-    required bool anonymous,
-    required bool readOnly,
-    required String username,
-    required String password,
-    int port = 2121,
-  }) async {
-    final resolvedIp = await _discovery.getLocalIp();
-    final preferredHost = resolvedIp.isEmpty ? state.localIp : resolvedIp;
-    await _ftp.start(
-      sharedDirectories: sharedRoots,
-      anonymous: anonymous,
-      readOnly: readOnly,
-      username: username,
-      password: password,
-      port: port,
-      preferredHost: preferredHost,
-    );
-    state = state.copyWith(ftpState: _ftp.currentState);
-  }
-
-  Future<void> stopFtp() async {
-    await _ftp.stop();
-    state = state.copyWith(ftpState: _ftp.currentState);
-  }
-
-  RandomCredentials generateRandomFtpCredentials() {
-    return _ftp.generateRandomCredentials();
-  }
-
-  Future<void> startWebShare({int port = 8080}) {
+  Future<void> startWebShare({int port = 8080, String pin = ''}) {
     return _web.start(
       rootDirectory: state.downloadDirectory,
       hostDeviceName: _taggedLocalName(),
       port: port,
+      pin: pin,
     );
   }
 
@@ -582,19 +965,25 @@ class AppController extends StateNotifier<AppState> {
   Future<void> startTemporaryLinkShare({
     required List<String> filePaths,
     Duration? ttl,
+    String pin = '',
   }) async {
     final resolvedIp = await _discovery.getLocalIp();
     final hostIp = resolvedIp.isEmpty ? state.localIp : resolvedIp;
     if (hostIp.isEmpty) {
-      throw StateError('Local IP is unavailable. Connect to a LAN/Wi-Fi network and try again.');
+      throw StateError(
+        'Local IP is unavailable. Connect to a LAN/Wi-Fi network and try again.',
+      );
     }
     await _tempShare.start(
       filePaths: filePaths,
       host: hostIp,
       deviceName: _taggedLocalName(),
-      platformLabel: state.localDevicePlatform.isEmpty ? 'Unknown' : state.localDevicePlatform,
+      platformLabel: state.localDevicePlatform.isEmpty
+          ? 'Unknown'
+          : state.localDevicePlatform,
       idSuffix: '#${state.localDeviceNumber}',
       ttl: ttl,
+      pin: pin,
     );
     state = state.copyWith(
       localIp: hostIp,
@@ -652,31 +1041,17 @@ class AppController extends StateNotifier<AppState> {
     unawaited(_saveSaveMediaToGallery(value));
   }
 
-  void setFtpAutoRandomizeCredentials(bool value) {
-    state = state.copyWith(ftpAutoRandomizeCredentials: value);
-    unawaited(_saveFtpAutoRandomizeCredentials(value));
+  void setRequirePairingCodeForDirectTransfers(bool value) {
+    state = state.copyWith(requirePairingCodeForDirectTransfers: value);
+    unawaited(_saveRequirePairingCode(value));
   }
 
-  void setFtpSavedCredentials({required String username, required String password}) {
-    final normalizedUsername = username.trim().isEmpty ? 'dropnet' : username.trim();
-    final normalizedPassword = password.trim().isEmpty ? 'dropnet123' : password.trim();
-    state = state.copyWith(
-      ftpSavedUsername: normalizedUsername,
-      ftpSavedPassword: normalizedPassword,
-    );
-    unawaited(_saveFtpSavedCredentials(username: normalizedUsername, password: normalizedPassword));
-  }
-
-  void setFtpPreferredStorageRoot(String path) {
-    final normalized = path.trim();
-    state = state.copyWith(ftpPreferredStorageRoot: normalized);
-    unawaited(_saveFtpPreferredStorageRoot(normalized));
-  }
-
-  void setFtpSafTreeUris(List<String> uris) {
-    final normalized = uris.map((uri) => uri.trim()).where((uri) => uri.isNotEmpty).toList(growable: false);
-    state = state.copyWith(ftpSafTreeUris: normalized);
-    unawaited(_saveFtpSafTreeUris(normalized));
+  void addPendingSharedFiles(List<String> filePaths) {
+    if (filePaths.isEmpty) {
+      return;
+    }
+    final merged = _mergeUnique(state.pendingSharedFilePaths, filePaths);
+    state = state.copyWith(pendingSharedFilePaths: merged);
   }
 
   List<String> consumePendingSharedFiles() {
@@ -686,6 +1061,54 @@ class AppController extends StateNotifier<AppState> {
     }
     state = state.copyWith(pendingSharedFilePaths: const <String>[]);
     return pending;
+  }
+
+  List<String> consumePendingSharedTexts() {
+    final pending = state.pendingSharedTexts;
+    if (pending.isEmpty) {
+      return const <String>[];
+    }
+    state = state.copyWith(pendingSharedTexts: const <String>[]);
+    return pending;
+  }
+
+  String? consumeNextPendingSharedText() {
+    final pending = state.pendingSharedTexts;
+    if (pending.isEmpty) {
+      return null;
+    }
+    final next = pending.first;
+    final remaining = pending.length == 1
+        ? const <String>[]
+        : pending.sublist(1);
+    state = state.copyWith(pendingSharedTexts: remaining);
+    return next;
+  }
+
+  String? consumeNextPendingTransferPreviewText() {
+    final pending = state.pendingTransferPreviewTexts;
+    if (pending.isEmpty) {
+      return null;
+    }
+    final next = pending.first;
+    final remaining = pending.length == 1
+        ? const <String>[]
+        : pending.sublist(1);
+    state = state.copyWith(pendingTransferPreviewTexts: remaining);
+    return next;
+  }
+
+  TransferModel? consumeNextPendingTransferPreviewFile() {
+    final pending = state.pendingTransferPreviewFiles;
+    if (pending.isEmpty) {
+      return null;
+    }
+    final next = pending.first;
+    final remaining = pending.length == 1
+        ? const <TransferModel>[]
+        : pending.sublist(1);
+    state = state.copyWith(pendingTransferPreviewFiles: remaining);
+    return next;
   }
 
   Future<void> setDeviceName(String name) async {
@@ -745,7 +1168,6 @@ class AppController extends StateNotifier<AppState> {
   Future<void> shutdownNetworkServices() async {
     await _tempShare.stop();
     await _web.stop();
-    await _ftp.stop();
     await _transfer.stopReceiver();
   }
 
@@ -756,6 +1178,24 @@ class AppController extends StateNotifier<AppState> {
     _webHistory = const [];
     _persistedHistory = const [];
     await _saveHistory(const <TransferHistoryEntry>[]);
+    _emitCombinedHistory();
+  }
+
+  Future<void> clearHistoryByDirection(TransferDirection direction) async {
+    await _transfer.clearHistoryByDirection(direction);
+    await _web.clearHistoryByDirection(direction);
+
+    _tcpHistory = _tcpHistory
+        .where((entry) => entry.direction != direction)
+        .toList(growable: false);
+    _webHistory = _webHistory
+        .where((entry) => entry.direction != direction)
+        .toList(growable: false);
+    _persistedHistory = _persistedHistory
+        .where((entry) => entry.direction != direction)
+        .toList(growable: false);
+
+    await _saveHistory(_persistedHistory);
     _emitCombinedHistory();
   }
 
@@ -770,21 +1210,32 @@ class AppController extends StateNotifier<AppState> {
   Future<void> removeHistoryEntry(TransferHistoryEntry entry) async {
     await _transfer.removeHistoryEntry(entry);
     await _web.removeHistoryEntry(entry);
-    _persistedHistory = _persistedHistory.where((item) => !_sameHistoryEntry(item, entry)).toList(growable: false);
+    _persistedHistory = _persistedHistory
+        .where((item) => !_sameHistoryEntry(item, entry))
+        .toList(growable: false);
     await _saveHistory(_persistedHistory);
     _emitCombinedHistory();
   }
 
   Map<String, dynamic> analytics() {
-    final sent = state.history.where((entry) => entry.status == TransferStatus.completed).length;
-    final totalBytes = state.history.fold<int>(0, (sum, item) => sum + item.size);
+    final sent = state.history
+        .where((entry) => entry.status == TransferStatus.completed)
+        .length;
+    final totalBytes = state.history.fold<int>(
+      0,
+      (sum, item) => sum + item.size,
+    );
     final avgSpeed = state.history.isEmpty
         ? 0.0
         : state.history.fold<double>(
-              0,
-              (sum, item) => sum + (item.size / item.duration.inMilliseconds.clamp(1, 1 << 30) * 1000),
-            ) /
-            state.history.length;
+                0,
+                (sum, item) =>
+                    sum +
+                    (item.size /
+                        item.duration.inMilliseconds.clamp(1, 1 << 30) *
+                        1000),
+              ) /
+              state.history.length;
 
     final byDevice = <String, int>{};
     for (final item in state.history) {
@@ -815,7 +1266,11 @@ class AppController extends StateNotifier<AppState> {
   }
 
   void _emitCombinedHistory() {
-    final all = <TransferHistoryEntry>[..._persistedHistory, ..._tcpHistory, ..._webHistory];
+    final all = <TransferHistoryEntry>[
+      ..._persistedHistory,
+      ..._tcpHistory,
+      ..._webHistory,
+    ];
     final deduped = <TransferHistoryEntry>[];
     for (final entry in all) {
       final exists = deduped.any((item) => _sameHistoryEntry(item, entry));
@@ -827,6 +1282,197 @@ class AppController extends StateNotifier<AppState> {
     _persistedHistory = deduped;
     unawaited(_saveHistory(deduped));
     state = state.copyWith(history: deduped);
+  }
+
+  Future<void> _enqueueTransferPreviewIfEligible(TransferModel transfer) async {
+    if (!isTransferPreviewEligible(transfer)) {
+      return;
+    }
+
+    final localPath = transfer.localPath!.trim();
+
+    final file = File(localPath);
+    if (!await file.exists()) {
+      return;
+    }
+
+    if (TransferVisuals.supportsReceivedPreview(localPath)) {
+      final queued = List<TransferModel>.from(state.pendingTransferPreviewFiles)
+        ..add(transfer);
+      state = state.copyWith(pendingTransferPreviewFiles: queued);
+      return;
+    }
+
+    const maxPreviewBytes = 1024 * 512;
+    final length = await file.length();
+    if (length <= 0 || length > maxPreviewBytes) {
+      return;
+    }
+
+    String text;
+    try {
+      text = await file.readAsString();
+    } catch (_) {
+      return;
+    }
+
+    final normalized = text.trim();
+    if (normalized.isEmpty) {
+      return;
+    }
+
+    final queued = List<String>.from(state.pendingTransferPreviewTexts)
+      ..add(normalized);
+    state = state.copyWith(pendingTransferPreviewTexts: queued);
+  }
+
+  Future<void> _syncNewWebReceivedMediaToGallery({
+    required List<TransferHistoryEntry> previous,
+    required List<TransferHistoryEntry> current,
+  }) async {
+    if (!state.saveMediaToGallery || current.isEmpty) {
+      return;
+    }
+
+    for (final entry in current) {
+      if (entry.direction != TransferDirection.received ||
+          entry.status != TransferStatus.completed) {
+        continue;
+      }
+
+      final localPath = (entry.localPath ?? '').trim();
+      if (localPath.isEmpty) {
+        continue;
+      }
+
+      final alreadyKnown = previous.any(
+        (item) => _sameHistoryEntry(item, entry),
+      );
+      if (alreadyKnown) {
+        continue;
+      }
+
+      await _saveMediaToGalleryIfEligible(localPath);
+    }
+  }
+
+  Future<void> _saveMediaToGalleryIfEligible(String path) async {
+    final normalizedPath = path.trim();
+    if (normalizedPath.isEmpty || !_isGalleryMediaPath(normalizedPath)) {
+      return;
+    }
+    if (!_gallerySyncedPaths.add(normalizedPath)) {
+      return;
+    }
+
+    await _mediaStore.saveToGallery(normalizedPath);
+  }
+
+  bool _isGalleryMediaPath(String path) {
+    final lowerPath = path.toLowerCase();
+    const imageExtensions = <String>{
+      '.jpg',
+      '.jpeg',
+      '.png',
+      '.gif',
+      '.bmp',
+      '.webp',
+      '.heic',
+      '.heif',
+      '.tif',
+      '.tiff',
+    };
+    const videoExtensions = <String>{
+      '.mp4',
+      '.mov',
+      '.mkv',
+      '.avi',
+      '.webm',
+      '.m4v',
+      '.3gp',
+    };
+
+    for (final extension in imageExtensions) {
+      if (lowerPath.endsWith(extension)) {
+        return true;
+      }
+    }
+    for (final extension in videoExtensions) {
+      if (lowerPath.endsWith(extension)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool _isIncomingRequestTrusted(IncomingTransferRequest request) {
+    final fromDeviceId = (request.fromDeviceId ?? '').trim();
+    final fingerprint = (request.fromTlsCertificateSha256 ?? '')
+        .trim()
+        .toLowerCase();
+    if (fromDeviceId.isEmpty || fingerprint.isEmpty) {
+      return false;
+    }
+    final expected = trustedPeerKey(fromDeviceId, fingerprint);
+    return state.trustedPeers.any(
+      (peer) =>
+          trustedPeerKey(peer.deviceId, peer.tlsCertificateSha256) == expected,
+    );
+  }
+
+  List<TrustedPeer> _restoreTrustedPeers(List<String> encodedItems) {
+    final restored = <TrustedPeer>[];
+    final seen = <String>{};
+    for (final encoded in encodedItems) {
+      try {
+        final decoded = jsonDecode(encoded);
+        if (decoded is! Map<String, dynamic>) {
+          continue;
+        }
+        final peer = TrustedPeer.fromJson(decoded);
+        if (peer == null) {
+          continue;
+        }
+        final key = trustedPeerKey(peer.deviceId, peer.tlsCertificateSha256);
+        if (!seen.add(key)) {
+          continue;
+        }
+        restored.add(peer);
+      } catch (_) {}
+    }
+    restored.sort((a, b) => b.pairedAt.compareTo(a.pairedAt));
+    return restored;
+  }
+
+  Future<void> _saveTrustedPeers(List<TrustedPeer> peers) async {
+    _prefs ??= await SharedPreferences.getInstance();
+    final encoded = peers
+        .map((peer) => jsonEncode(peer.toJson()))
+        .toList(growable: false);
+    await _prefs!.setStringList(_trustedPeersKey, encoded);
+  }
+
+  List<String> _mergeUnique(List<String> current, List<String> incoming) {
+    if (incoming.isEmpty) {
+      return current;
+    }
+    final merged = <String>[];
+    final seen = <String>{};
+    for (final value in current) {
+      final normalized = value.trim();
+      if (normalized.isEmpty || !seen.add(normalized)) {
+        continue;
+      }
+      merged.add(normalized);
+    }
+    for (final value in incoming) {
+      final normalized = value.trim();
+      if (normalized.isEmpty || !seen.add(normalized)) {
+        continue;
+      }
+      merged.add(normalized);
+    }
+    return merged;
   }
 
   bool _sameHistoryEntry(TransferHistoryEntry a, TransferHistoryEntry b) {
@@ -858,7 +1504,9 @@ class AppController extends StateNotifier<AppState> {
 
   Future<void> _saveHistory(List<TransferHistoryEntry> history) async {
     _prefs ??= await SharedPreferences.getInstance();
-    final encoded = history.map((entry) => jsonEncode(entry.toJson())).toList(growable: false);
+    final encoded = history
+        .map((entry) => jsonEncode(entry.toJson()))
+        .toList(growable: false);
     await _prefs!.setStringList(_historyKey, encoded);
   }
 
@@ -896,50 +1544,143 @@ class AppController extends StateNotifier<AppState> {
     await _prefs!.setBool(_saveMediaToGalleryKey, value);
   }
 
-  Future<void> _saveFtpAutoRandomizeCredentials(bool value) async {
+  Future<void> _saveRequirePairingCode(bool value) async {
     _prefs ??= await SharedPreferences.getInstance();
-    await _prefs!.setBool(_ftpAutoRandomizeCredentialsKey, value);
-  }
-
-  Future<void> _saveFtpSavedCredentials({required String username, required String password}) async {
-    _prefs ??= await SharedPreferences.getInstance();
-    await _prefs!.setString(_ftpSavedUsernameKey, username);
-    await _prefs!.setString(_ftpSavedPasswordKey, password);
-  }
-
-  Future<void> _saveFtpPreferredStorageRoot(String path) async {
-    _prefs ??= await SharedPreferences.getInstance();
-    await _prefs!.setString(_ftpPreferredStorageRootKey, path);
-  }
-
-  Future<void> _saveFtpSafTreeUris(List<String> uris) async {
-    _prefs ??= await SharedPreferences.getInstance();
-    await _prefs!.setStringList(_ftpSafTreeUrisKey, uris);
+    await _prefs!.setBool(_requirePairingCodeKey, value);
   }
 
   Future<String> _resolveDownloadDirectory({String? preferred}) async {
-    if (preferred != null && preferred.trim().isNotEmpty) {
+    final preferredPath = preferred?.trim() ?? '';
+    if (Platform.isAndroid) {
+      final legacyPrivatePath = await _legacyMobileDownloadDirectory();
+      final usingLegacyPrivateDefault =
+          preferredPath.isNotEmpty &&
+          _isSameNormalizedPath(preferredPath, legacyPrivatePath);
+
+      if (preferredPath.isNotEmpty && !usingLegacyPrivateDefault) {
+        try {
+          final preferredDir = Directory(preferredPath);
+          await preferredDir.create(recursive: true);
+          return preferredDir.path;
+        } catch (_) {}
+      }
+
+      final sharedDownloadPath = await _resolveAndroidSharedDownloadDirectory();
+      if (sharedDownloadPath != null) {
+        return sharedDownloadPath;
+      }
+
+      final fallback = Directory(legacyPrivatePath);
+      await fallback.create(recursive: true);
+      return fallback.path;
+    }
+
+    if (preferredPath.isNotEmpty) {
       try {
-        final preferredDir = Directory(preferred);
+        final preferredDir = Directory(preferredPath);
         await preferredDir.create(recursive: true);
         return preferredDir.path;
       } catch (_) {}
     }
-    if (Platform.isAndroid || Platform.isIOS) {
-      final dir = await getApplicationDocumentsDirectory();
-      final target = Directory('${dir.path}${Platform.pathSeparator}DropNet');
-      await target.create(recursive: true);
-      return target.path;
+
+    if (Platform.isIOS) {
+      final fallback = Directory(await _legacyMobileDownloadDirectory());
+      await fallback.create(recursive: true);
+      return fallback.path;
     }
+
     Directory dir;
     try {
-      dir = await getDownloadsDirectory() ?? await getApplicationDocumentsDirectory();
+      dir =
+          await getDownloadsDirectory() ??
+          await getApplicationDocumentsDirectory();
     } on UnsupportedError {
       dir = await getApplicationDocumentsDirectory();
     }
     final target = Directory('${dir.path}${Platform.pathSeparator}DropNet');
     await target.create(recursive: true);
     return target.path;
+  }
+
+  Future<String> _legacyMobileDownloadDirectory() async {
+    final dir = await getApplicationDocumentsDirectory();
+    return '${dir.path}${Platform.pathSeparator}DropNet';
+  }
+
+  bool _isSameNormalizedPath(String a, String b) {
+    String normalize(String input) {
+      final replaced = input.trim().replaceAll('\\', '/').toLowerCase();
+      return replaced.replaceAll(RegExp('/+'), '/');
+    }
+
+    return normalize(a) == normalize(b);
+  }
+
+  Future<String?> _resolveAndroidSharedDownloadDirectory() async {
+    final candidateRoots = <String>{};
+
+    try {
+      final externalDownloadDirs =
+          await getExternalStorageDirectories(
+            type: StorageDirectory.downloads,
+          ) ??
+          const <Directory>[];
+      for (final directory in externalDownloadDirs) {
+        final root = _extractAndroidSharedStorageRoot(directory.path);
+        if (root.isNotEmpty) {
+          candidateRoots.add(root);
+        }
+      }
+    } catch (_) {}
+
+    try {
+      final externalDir = await getExternalStorageDirectory();
+      if (externalDir != null) {
+        final root = _extractAndroidSharedStorageRoot(externalDir.path);
+        if (root.isNotEmpty) {
+          candidateRoots.add(root);
+        }
+      }
+    } catch (_) {}
+
+    candidateRoots.add('/storage/emulated/0');
+
+    for (final root in candidateRoots) {
+      final candidate = Directory('$root/Download/DropNet');
+      try {
+        await candidate.create(recursive: true);
+        return candidate.path;
+      } catch (_) {}
+    }
+
+    return null;
+  }
+
+  String _extractAndroidSharedStorageRoot(String rawPath) {
+    final normalized = rawPath.trim().replaceAll('\\', '/');
+    if (normalized.isEmpty || !normalized.startsWith('/storage/')) {
+      return '';
+    }
+
+    if (normalized.startsWith('/storage/emulated/')) {
+      final segments = normalized
+          .split('/')
+          .where((part) => part.isNotEmpty)
+          .toList(growable: false);
+      if (segments.length >= 3) {
+        return '/${segments[0]}/${segments[1]}/${segments[2]}';
+      }
+    }
+
+    final segments = normalized
+        .split('/')
+        .where((part) => part.isNotEmpty)
+        .toList(growable: false);
+    if (segments.length >= 2) {
+      return '/${segments[0]}/${segments[1]}';
+    }
+
+    return '';
   }
 
   ThemeMode? _themeModeFromName(String? value) {
@@ -954,6 +1695,7 @@ class AppController extends StateNotifier<AppState> {
     return null;
   }
 
+
   @override
   void dispose() {
     _devicesSub?.cancel();
@@ -961,14 +1703,15 @@ class AppController extends StateNotifier<AppState> {
     _completedTransferSub?.cancel();
     _historySub?.cancel();
     _incomingSub?.cancel();
-    _ftpSub?.cancel();
+    _incomingPairingSub?.cancel();
+    _remoteUnpairSub?.cancel();
     _webSub?.cancel();
     _webPeerReqSub?.cancel();
     _webPeerSub?.cancel();
     _webIncomingUploadSub?.cancel();
     _webHistorySub?.cancel();
     _tempShareSub?.cancel();
-    _sharedFilesSub?.cancel();
+    _sharedPayloadSub?.cancel();
     super.dispose();
   }
 }

@@ -36,6 +36,7 @@ class FtpServerState {
     required this.activeConnections,
     required this.sharedRoots,
     required this.sharedMounts,
+    required this.secureTransport,
     required this.logs,
   });
 
@@ -49,6 +50,7 @@ class FtpServerState {
   final int activeConnections;
   final List<String> sharedRoots;
   final List<String> sharedMounts;
+  final bool secureTransport;
   final List<String> logs;
 
   FtpServerState copyWith({
@@ -62,6 +64,7 @@ class FtpServerState {
     int? activeConnections,
     List<String>? sharedRoots,
     List<String>? sharedMounts,
+    bool? secureTransport,
     List<String>? logs,
   }) {
     return FtpServerState(
@@ -75,6 +78,7 @@ class FtpServerState {
       activeConnections: activeConnections ?? this.activeConnections,
       sharedRoots: sharedRoots ?? this.sharedRoots,
       sharedMounts: sharedMounts ?? this.sharedMounts,
+      secureTransport: secureTransport ?? this.secureTransport,
       logs: logs ?? this.logs,
     );
   }
@@ -90,6 +94,7 @@ class FtpServerState {
         activeConnections: 0,
         sharedRoots: <String>[],
         sharedMounts: <String>[],
+        secureTransport: true,
         logs: <String>[],
       );
 }
@@ -105,7 +110,9 @@ class _BuiltFtpMount {
 }
 
 class FtpService {
-  FtpService({AndroidSafService? safService}) : _safService = safService;
+  FtpService({
+    AndroidSafService? safService,
+  }) : _safService = safService;
 
   final AndroidSafService? _safService;
   final _controller = StreamController<FtpServerState>.broadcast();
@@ -136,12 +143,13 @@ class FtpService {
 
   Future<void> start({
     required List<String> sharedDirectories,
-    int port = 2121,
+    int port = 21,
     String username = 'dropnet',
     String password = 'dropnet123',
     bool anonymous = false,
     bool readOnly = false,
     String? preferredHost,
+    bool secureTransport = false,
   }) async {
     await stop();
 
@@ -162,6 +170,8 @@ class FtpService {
       password: anonymous ? null : password,
       fileOperations: built.fileOperations,
       serverType: readOnly ? ServerType.readOnly : ServerType.readAndWrite,
+      securityContext: null,
+      secureDataConnections: false,
       logFunction: (line) {
         logs.insert(0, line);
         if (logs.length > 200) {
@@ -184,6 +194,7 @@ class FtpService {
         readOnly: readOnly,
         sharedRoots: normalizedRoots,
         sharedMounts: built.mountPreview,
+        secureTransport: secureTransport,
       ),
     );
 

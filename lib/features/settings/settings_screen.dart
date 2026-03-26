@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../models/trusted_peer_model.dart';
 import '../../core/state/app_state.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
@@ -134,6 +135,95 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         ],
                       ),
                     ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text('Security', style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 8),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Require Pairing Code for Direct Transfers'),
+                      subtitle: Text(
+                        state.requirePairingCodeForDirectTransfers
+                            ? 'Transfers require a 6-digit code verification'
+                            : 'Transfers work without additional verification',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                      value: state.requirePairingCodeForDirectTransfers,
+                      onChanged: (value) {
+                        ref
+                            .read(appControllerProvider.notifier)
+                            .setRequirePairingCodeForDirectTransfers(value);
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      state.requirePairingCodeForDirectTransfers
+                        ? 'When enabled: Security controls appear in Send, pairing requires 6-digit verification, and only verified paired devices can transfer files.'
+                        : 'When disabled: Security pairing controls are hidden in Send and direct transfers can proceed without pairing verification.',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onSurfaceVariant,
+                          ),
+                    ),
+                    const SizedBox(height: 16),
+                    const Divider(),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Paired Devices',
+                      style: Theme.of(context).textTheme.labelMedium,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Only paired devices can send files to this device over direct transfer.',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    const SizedBox(height: 10),
+                    if (state.trustedPeers.isEmpty)
+                      Text(
+                        'No paired devices yet. Pair devices from the Send screen.',
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      )
+                    else
+                      ListView.separated(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        itemCount: state.trustedPeers.length,
+                        separatorBuilder: (context, index) =>
+                            const SizedBox(height: 6),
+                        itemBuilder: (context, index) {
+                          final peer = state.trustedPeers[index];
+                          final title = peer.deviceName.trim().isEmpty
+                              ? peer.deviceId
+                              : peer.deviceName;
+                          return ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            leading: const Icon(Icons.verified_user_rounded),
+                            title: Text(
+                              title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            subtitle: Text(
+                              '${_shortFingerprint(peer.tlsCertificateSha256)}\nPaired ${_formatPairedAt(peer.pairedAt)}',
+                            ),
+                            isThreeLine: true,
+                            trailing: OutlinedButton(
+                              onPressed: () => _unpairTrustedPeer(peer),
+                              child: const Text('Unpair'),
+                            ),
+                          );
+                        },
+                      ),
                   ],
                 ),
               ),
@@ -274,23 +364,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 ),
               ),
             ),
-            const SizedBox(height: 10),
-            Text('FTP', style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 8),
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('Auto-randomize FTP credentials per session'),
-                  subtitle: const Text(
-                    'When off (default), your custom FTP username and password are retained. Randomize remains available manually in FTP screen.',
-                  ),
-                  value: state.ftpAutoRandomizeCredentials,
-                  onChanged: (value) => ref.read(appControllerProvider.notifier).setFtpAutoRandomizeCredentials(value),
-                ),
-              ),
-            ),
             const SizedBox(height: 18),
             if (_appVersion.isNotEmpty)
               Column(
@@ -323,6 +396,43 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       return;
     }
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Save location updated.')));
+  }
+
+  Future<void> _unpairTrustedPeer(TrustedPeer peer) async {
+    try {
+      await ref.read(appControllerProvider.notifier).unpairTrustedPeer(peer);
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Trusted device removed.')),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$error')),
+      );
+    }
+  }
+
+  String _shortFingerprint(String fingerprint) {
+    final normalized = fingerprint.trim().toLowerCase();
+    if (normalized.length <= 20) {
+      return normalized;
+    }
+    return '${normalized.substring(0, 12)}...${normalized.substring(normalized.length - 8)}';
+  }
+
+  String _formatPairedAt(DateTime dateTime) {
+    final local = dateTime.toLocal();
+    final day = local.day.toString().padLeft(2, '0');
+    final month = local.month.toString().padLeft(2, '0');
+    final year = local.year.toString();
+    final hour = local.hour.toString().padLeft(2, '0');
+    final minute = local.minute.toString().padLeft(2, '0');
+    return '$day/$month/$year $hour:$minute';
   }
 
   @override

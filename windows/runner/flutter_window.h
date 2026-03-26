@@ -32,6 +32,7 @@ class FlutterWindow : public Win32Window {
   flutter::DartProject project_;
   std::vector<std::string> startup_arguments_;
   std::vector<std::string> pending_shared_file_paths_;
+  std::vector<std::string> pending_shared_texts_;
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> share_channel_;
 
   // The Flutter instance hosted by this window.

@@ -152,6 +152,7 @@ class MixedFileOperations extends FileOperations {
               path: '/${root.alias}',
               isDirectory: true,
               size: 0,
+              mode: 0,
               modified: DateTime.now(),
             ),
           )
@@ -176,6 +177,7 @@ class MixedFileOperations extends FileOperations {
             path: _virtual(mapping.root.alias, mapping.relativePath, name),
             isDirectory: stat.type == FileSystemEntityType.directory,
             size: stat.size,
+            mode: stat.mode,
             modified: stat.modified,
           ),
         );
@@ -198,6 +200,7 @@ class MixedFileOperations extends FileOperations {
             path: _virtual(mapping.root.alias, mapping.relativePath, entry.name),
             isDirectory: entry.isDirectory,
             size: entry.size,
+            mode: 0,
             modified: entry.modifiedAt > 0
                 ? DateTime.fromMillisecondsSinceEpoch(entry.modifiedAt)
                 : DateTime.now(),

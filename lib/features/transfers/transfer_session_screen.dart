@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/state/app_state.dart';
 import '../../core/utils/file_utils.dart';
+import '../../core/utils/transfer_visuals.dart';
 import '../../models/transfer_model.dart';
 
 class TransferSessionScreen extends ConsumerWidget {
@@ -12,6 +13,8 @@ class TransferSessionScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(appControllerProvider);
     final items = state.transferSessionItems;
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
 
     final totalBytes = items.fold<int>(0, (sum, item) => sum + item.size);
     final doneBytes = items.fold<double>(0, (sum, item) {
@@ -27,130 +30,239 @@ class TransferSessionScreen extends ConsumerWidget {
 
     final allDone = items.isNotEmpty && items.every((item) => _isTerminal(item.status));
     final hasErrors = items.any((item) => item.status == TransferStatus.failed || item.status == TransferStatus.canceled);
+    final completedCount = items.where((item) => item.status == TransferStatus.completed).length;
 
     return PopScope(
       canPop: allDone,
       child: Scaffold(
+        backgroundColor: colorScheme.surface,
         appBar: AppBar(
           automaticallyImplyLeading: false,
-          title: const Text('Transferring files'),
+          title: Text(allDone ? 'Transfer summary' : 'Transfer session'),
         ),
-        body: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            children: [
-              if (items.isNotEmpty)
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(12),
+        body: Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                colorScheme.primary.withValues(alpha: 0.06),
+                colorScheme.surface,
+              ],
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+            ),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              children: [
+                if (items.isNotEmpty)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(18),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(24),
+                      color: colorScheme.surfaceContainerLow,
+                      border: Border.all(
+                        color: colorScheme.outlineVariant.withValues(alpha: 0.7),
+                      ),
+                    ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          hasErrors ? 'Transfer finished with some errors' : (allDone ? 'Transfer successful' : 'Transfer in progress'),
-                          style: Theme.of(context).textTheme.titleMedium,
+                          hasErrors
+                              ? 'Session completed with issues'
+                              : allDone
+                                  ? 'Transfer session completed'
+                                  : 'Files are moving right now',
+                          style: theme.textTheme.titleLarge,
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          '${items.length} file${items.length == 1 ? '' : 's'} in this session',
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        Wrap(
+                          spacing: 10,
+                          runSpacing: 10,
+                          children: [
+                            _SummaryChip(
+                              icon: Icons.check_circle_outline_rounded,
+                              label: '$completedCount complete',
+                            ),
+                            _SummaryChip(
+                              icon: Icons.folder_copy_outlined,
+                              label: FileUtils.formatBytes(totalBytes.toDouble()),
+                            ),
+                            _SummaryChip(
+                              icon: Icons.tune_rounded,
+                              label: '${(overallProgress * 100).toStringAsFixed(1)}% overall',
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(999),
+                          child: LinearProgressIndicator(
+                            value: overallProgress,
+                            minHeight: 10,
+                            backgroundColor: colorScheme.surfaceContainerHighest,
+                          ),
                         ),
                         const SizedBox(height: 8),
-                        LinearProgressIndicator(value: overallProgress, minHeight: 8),
-                        const SizedBox(height: 8),
                         Text(
-                          'Overall ${(overallProgress * 100).toStringAsFixed(1)}% • ${FileUtils.formatBytes(doneBytes)} / ${FileUtils.formatBytes(totalBytes.toDouble())}',
-                          style: Theme.of(context).textTheme.bodySmall,
+                          '${FileUtils.formatBytes(doneBytes)} of ${FileUtils.formatBytes(totalBytes.toDouble())}',
+                          style: theme.textTheme.bodySmall,
                         ),
                       ],
                     ),
                   ),
-                ),
-              const SizedBox(height: 12),
-              Expanded(
-                child: items.isEmpty
-                    ? const Center(child: Text('Waiting for transfer...'))
-                    : ListView.separated(
-                        itemCount: items.length,
-                        separatorBuilder: (context, index) => const SizedBox(height: 8),
-                        itemBuilder: (context, index) {
-                          final item = items[index];
-                          return Card(
-                            child: Padding(
-                              padding: const EdgeInsets.all(12),
+                const SizedBox(height: 12),
+                Expanded(
+                  child: items.isEmpty
+                      ? Center(
+                          child: Text(
+                            'Waiting for transfer...',
+                            style: theme.textTheme.titleMedium,
+                          ),
+                        )
+                      : ListView.separated(
+                          itemCount: items.length,
+                          separatorBuilder: (context, index) => const SizedBox(height: 10),
+                          itemBuilder: (context, index) {
+                            final item = items[index];
+                            final accent = TransferVisuals.accentColor(context, item.fileName);
+                            return Container(
+                              padding: const EdgeInsets.all(14),
+                              decoration: BoxDecoration(
+                                color: colorScheme.surface,
+                                borderRadius: BorderRadius.circular(22),
+                                border: Border.all(
+                                  color: colorScheme.outlineVariant.withValues(alpha: 0.65),
+                                ),
+                              ),
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Row(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
+                                      Container(
+                                        width: 42,
+                                        height: 42,
+                                        decoration: BoxDecoration(
+                                          color: accent.withValues(alpha: 0.12),
+                                          borderRadius: BorderRadius.circular(14),
+                                        ),
+                                        child: Icon(
+                                          TransferVisuals.iconForName(item.fileName),
+                                          color: accent,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 12),
                                       Expanded(
-                                        child: Text(
-                                          item.fileName,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: Theme.of(context).textTheme.titleSmall,
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              item.fileName,
+                                              maxLines: 2,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: theme.textTheme.titleSmall,
+                                            ),
+                                            const SizedBox(height: 4),
+                                            Text(
+                                              '${item.direction == TransferDirection.sent ? 'Sending to' : 'Receiving from'} ${item.deviceName}',
+                                              style: theme.textTheme.bodySmall?.copyWith(
+                                                color: colorScheme.onSurfaceVariant,
+                                              ),
+                                            ),
+                                          ],
                                         ),
                                       ),
                                       const SizedBox(width: 8),
-                                      _statusChip(item.status),
+                                      _statusChip(context, item.status),
                                     ],
                                   ),
-                                  const SizedBox(height: 6),
-                                  Text(
-                                    '${item.direction == TransferDirection.sent ? 'Sending to' : 'Receiving from'} ${item.deviceName}',
-                                    style: Theme.of(context).textTheme.bodySmall,
+                                  const SizedBox(height: 12),
+                                  Wrap(
+                                    spacing: 8,
+                                    runSpacing: 8,
+                                    children: [
+                                      _SummaryChip(
+                                        icon: Icons.category_outlined,
+                                        label: TransferVisuals.kindLabel(item.fileName),
+                                      ),
+                                      _SummaryChip(
+                                        icon: Icons.data_object_rounded,
+                                        label: FileUtils.formatBytes(item.size.toDouble()),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 12),
+                                  ClipRRect(
+                                    borderRadius: BorderRadius.circular(999),
+                                    child: LinearProgressIndicator(
+                                      value: item.progress.clamp(0, 1),
+                                      minHeight: 8,
+                                      backgroundColor: colorScheme.surfaceContainerHighest,
+                                    ),
                                   ),
                                   const SizedBox(height: 8),
-                                  LinearProgressIndicator(value: item.progress.clamp(0, 1), minHeight: 7),
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    '${(item.progress.clamp(0, 1) * 100).toStringAsFixed(1)}% • ${FileUtils.formatBytes(item.size.toDouble())}',
-                                    style: Theme.of(context).textTheme.bodySmall,
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Text(
+                                        '${(item.progress.clamp(0, 1) * 100).toStringAsFixed(1)}%',
+                                        style: theme.textTheme.bodySmall,
+                                      ),
+                                      Text(
+                                        _statusDescription(item),
+                                        style: theme.textTheme.bodySmall?.copyWith(
+                                          color: colorScheme.onSurfaceVariant,
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                   if (item.errorMessage != null && item.errorMessage!.trim().isNotEmpty) ...[
-                                    const SizedBox(height: 8),
-                                    Theme(
-                                      data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-                                      child: ExpansionTile(
-                                        tilePadding: EdgeInsets.zero,
-                                        childrenPadding: const EdgeInsets.only(bottom: 8),
-                                        title: Text(
-                                          item.status == TransferStatus.failed ? 'Error details' : 'Details',
-                                          style: Theme.of(context).textTheme.bodySmall,
-                                        ),
-                                        children: [
-                                          Container(
-                                            width: double.infinity,
-                                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                                            decoration: BoxDecoration(
-                                              borderRadius: BorderRadius.circular(10),
-                                              color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
-                                            ),
-                                            child: Text(
-                                              item.errorMessage!,
-                                              style: Theme.of(context).textTheme.bodySmall,
-                                            ),
-                                          ),
-                                        ],
+                                    const SizedBox(height: 10),
+                                    Container(
+                                      width: double.infinity,
+                                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                      decoration: BoxDecoration(
+                                        borderRadius: BorderRadius.circular(14),
+                                        color: colorScheme.errorContainer.withValues(alpha: 0.42),
+                                      ),
+                                      child: Text(
+                                        item.errorMessage!,
+                                        style: theme.textTheme.bodySmall,
                                       ),
                                     ),
                                   ],
                                 ],
                               ),
-                            ),
-                          );
-                        },
-                      ),
-              ),
-              const SizedBox(height: 12),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton(
-                  onPressed: allDone
-                      ? () {
-                          ref.read(appControllerProvider.notifier).closeTransferSession();
-                          Navigator.of(context).maybePop();
-                        }
-                      : null,
-                  child: const Text('Done'),
+                            );
+                          },
+                        ),
                 ),
-              ),
-            ],
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
+                    onPressed: allDone
+                        ? () {
+                            ref.read(appControllerProvider.notifier).closeTransferSession();
+                            Navigator.of(context).maybePop();
+                          }
+                        : null,
+                    child: Text(allDone ? 'Done' : 'Waiting for completion'),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -161,7 +273,7 @@ class TransferSessionScreen extends ConsumerWidget {
     return status == TransferStatus.completed || status == TransferStatus.failed || status == TransferStatus.canceled;
   }
 
-  Widget _statusChip(TransferStatus status) {
+  Widget _statusChip(BuildContext context, TransferStatus status) {
     final (label, icon) = switch (status) {
       TransferStatus.completed => ('Success', Icons.check_circle_rounded),
       TransferStatus.failed => ('Error', Icons.error_rounded),
@@ -172,10 +284,67 @@ class TransferSessionScreen extends ConsumerWidget {
       TransferStatus.paused => ('Paused', Icons.pause_circle_rounded),
     };
 
-    return Chip(
-      avatar: Icon(icon, size: 16),
-      label: Text(label),
-      visualDensity: VisualDensity.compact,
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.72),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16),
+          const SizedBox(width: 6),
+          Text(label),
+        ],
+      ),
+    );
+  }
+
+  String _statusDescription(TransferModel item) {
+    if (item.status == TransferStatus.completed) {
+      return 'Completed';
+    }
+    if (item.status == TransferStatus.failed) {
+      return 'Needs attention';
+    }
+    if (item.status == TransferStatus.canceled) {
+      return 'Canceled';
+    }
+    if (item.speed > 0) {
+      return FileUtils.formatSpeed(item.speed);
+    }
+    return 'Preparing';
+  }
+}
+
+class _SummaryChip extends StatelessWidget {
+  const _SummaryChip({
+    required this.icon,
+    required this.label,
+  });
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: colorScheme.surface.withValues(alpha: 0.85),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16),
+          const SizedBox(width: 8),
+          Text(label),
+        ],
+      ),
     );
   }
 }

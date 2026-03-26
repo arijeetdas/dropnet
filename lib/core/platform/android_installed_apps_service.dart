@@ -7,6 +7,8 @@ class AndroidInstalledApp {
     required this.apkPath,
     required this.isSystemApp,
     required this.iconBytes,
+    required this.versionName,
+    required this.apkSize,
   });
 
   final String name;
@@ -14,6 +16,8 @@ class AndroidInstalledApp {
   final String apkPath;
   final bool isSystemApp;
   final Uint8List? iconBytes;
+  final String versionName;
+  final int apkSize;
 }
 
 class AndroidInstalledAppsService {
@@ -43,6 +47,8 @@ class AndroidInstalledAppsService {
               : rawIcon is List
                   ? Uint8List.fromList(rawIcon.whereType<int>().toList(growable: false))
                   : null;
+          final versionName = (map['versionName']?.toString() ?? '').trim();
+          final apkSize = (map['apkSize'] as num?)?.toInt() ?? 0;
           if (name.isEmpty || packageName.isEmpty || apkPath.isEmpty) {
             return null;
           }
@@ -52,6 +58,8 @@ class AndroidInstalledAppsService {
             apkPath: apkPath,
             isSystemApp: isSystem,
             iconBytes: iconBytes,
+            versionName: versionName,
+            apkSize: apkSize,
           );
         })
         .whereType<AndroidInstalledApp>()

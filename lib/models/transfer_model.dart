@@ -8,10 +8,7 @@ enum TransferStatus {
   failed,
 }
 
-enum TransferDirection {
-  sent,
-  received,
-}
+enum TransferDirection { sent, received }
 
 class TransferModel {
   const TransferModel({
@@ -29,6 +26,10 @@ class TransferModel {
     this.sha256,
     this.verified = false,
     this.errorMessage,
+    this.sessionId,
+    this.sessionFileCount,
+    this.sessionFileIndex,
+    this.sessionTotalBytes,
   });
 
   final String id;
@@ -45,6 +46,10 @@ class TransferModel {
   final String? sha256;
   final bool verified;
   final String? errorMessage;
+  final String? sessionId;
+  final int? sessionFileCount;
+  final int? sessionFileIndex;
+  final int? sessionTotalBytes;
 
   TransferModel copyWith({
     String? id,
@@ -61,6 +66,10 @@ class TransferModel {
     String? sha256,
     bool? verified,
     String? errorMessage,
+    String? sessionId,
+    int? sessionFileCount,
+    int? sessionFileIndex,
+    int? sessionTotalBytes,
   }) {
     return TransferModel(
       id: id ?? this.id,
@@ -77,6 +86,10 @@ class TransferModel {
       sha256: sha256 ?? this.sha256,
       verified: verified ?? this.verified,
       errorMessage: errorMessage ?? this.errorMessage,
+      sessionId: sessionId ?? this.sessionId,
+      sessionFileCount: sessionFileCount ?? this.sessionFileCount,
+      sessionFileIndex: sessionFileIndex ?? this.sessionFileIndex,
+      sessionTotalBytes: sessionTotalBytes ?? this.sessionTotalBytes,
     );
   }
 }
@@ -90,6 +103,7 @@ class TransferHistoryEntry {
     required this.status,
     required this.duration,
     required this.direction,
+    this.localPath,
   });
 
   final String fileName;
@@ -99,6 +113,7 @@ class TransferHistoryEntry {
   final TransferStatus status;
   final Duration duration;
   final TransferDirection direction;
+  final String? localPath;
 
   Map<String, dynamic> toJson() {
     return {
@@ -109,6 +124,7 @@ class TransferHistoryEntry {
       'status': status.name,
       'durationMs': duration.inMilliseconds,
       'direction': direction.name,
+      'localPath': localPath,
     };
   }
 
@@ -121,6 +137,7 @@ class TransferHistoryEntry {
       final statusName = json['status']?.toString() ?? '';
       final durationMs = (json['durationMs'] as num?)?.toInt() ?? 0;
       final directionName = json['direction']?.toString() ?? '';
+      final localPathRaw = json['localPath']?.toString().trim() ?? '';
 
       if (fileName.isEmpty || dateRaw.isEmpty || deviceName.isEmpty) {
         return null;
@@ -148,6 +165,7 @@ class TransferHistoryEntry {
         status: status,
         duration: Duration(milliseconds: durationMs.clamp(0, 1 << 30)),
         direction: direction,
+        localPath: localPathRaw.isEmpty ? null : localPathRaw,
       );
     } catch (_) {
       return null;
@@ -164,9 +182,12 @@ class IncomingTransferRequest {
     required this.fromDeviceName,
     required this.requestedAt,
     this.batchId,
+    this.fromDeviceId,
+    this.fromTlsCertificateSha256,
     this.batchFileCount,
     this.batchIndex,
     this.batchTotalBytes,
+    this.pairingCode,
   });
 
   final String id;
@@ -176,7 +197,48 @@ class IncomingTransferRequest {
   final String fromDeviceName;
   final DateTime requestedAt;
   final String? batchId;
+  final String? fromDeviceId;
+  final String? fromTlsCertificateSha256;
   final int? batchFileCount;
   final int? batchIndex;
   final int? batchTotalBytes;
+  final String? pairingCode;
+}
+
+class IncomingPairingRequest {
+  const IncomingPairingRequest({
+    required this.id,
+    required this.fromAddress,
+    required this.fromDeviceName,
+    required this.fromDeviceId,
+    required this.fromTlsCertificateSha256,
+    required this.pairingCode,
+    required this.requestedAt,
+  });
+
+  final String id;
+  final String fromAddress;
+  final String fromDeviceName;
+  final String fromDeviceId;
+  final String fromTlsCertificateSha256;
+  final String pairingCode;
+  final DateTime requestedAt;
+}
+
+class RemoteUnpairNotice {
+  const RemoteUnpairNotice({
+    required this.id,
+    required this.fromAddress,
+    required this.fromDeviceName,
+    required this.fromDeviceId,
+    required this.fromTlsCertificateSha256,
+    required this.notifiedAt,
+  });
+
+  final String id;
+  final String fromAddress;
+  final String fromDeviceName;
+  final String fromDeviceId;
+  final String fromTlsCertificateSha256;
+  final DateTime notifiedAt;
 }

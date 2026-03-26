@@ -77,23 +77,42 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
 
 void FlutterWindow::CaptureInitialSharedFiles() {
   pending_shared_file_paths_.clear();
+  pending_shared_texts_.clear();
+
+  const auto trim = [](const std::string& value) {
+    const auto first = value.find_first_not_of(" \t\n\r");
+    if (first == std::string::npos) {
+      return std::string();
+    }
+    const auto last = value.find_last_not_of(" \t\n\r");
+    return value.substr(first, last - first + 1);
+  };
+
   for (const auto& argument : startup_arguments_) {
     std::error_code ec;
     std::filesystem::path path(argument);
     const auto normalized = std::filesystem::absolute(path, ec);
-    if (ec) {
+
+    if (!ec && std::filesystem::exists(normalized, ec) && !ec &&
+        std::filesystem::is_regular_file(normalized, ec) && !ec) {
+      const auto value = normalized.u8string();
+      if (std::find(pending_shared_file_paths_.begin(), pending_shared_file_paths_.end(), value) ==
+          pending_shared_file_paths_.end()) {
+        pending_shared_file_paths_.push_back(value);
+      }
       continue;
     }
-    if (!std::filesystem::exists(normalized, ec) || ec) {
+
+    const auto text = trim(argument);
+    if (text.empty()) {
       continue;
     }
-    if (!std::filesystem::is_regular_file(normalized, ec) || ec) {
+    if (text.rfind("--", 0) == 0 || text.rfind("-", 0) == 0) {
       continue;
     }
-    const auto value = normalized.u8string();
-    if (std::find(pending_shared_file_paths_.begin(), pending_shared_file_paths_.end(), value) ==
-        pending_shared_file_paths_.end()) {
-      pending_shared_file_paths_.push_back(value);
+    if (std::find(pending_shared_texts_.begin(), pending_shared_texts_.end(), text) ==
+        pending_shared_texts_.end()) {
+      pending_shared_texts_.push_back(text);
     }
   }
 }
@@ -105,6 +124,27 @@ void FlutterWindow::SetupShareChannel() {
       &flutter::StandardMethodCodec::GetInstance());
 
   share_channel_->SetMethodCallHandler([this](const auto& call, auto result) {
+    if (call.method_name() == "consumePendingSharedPayload") {
+      flutter::EncodableList paths;
+      for (const auto& file_path : pending_shared_file_paths_) {
+        paths.emplace_back(file_path);
+      }
+
+      flutter::EncodableList texts;
+      for (const auto& text : pending_shared_texts_) {
+        texts.emplace_back(text);
+      }
+
+      flutter::EncodableMap payload;
+      payload[flutter::EncodableValue("files")] = flutter::EncodableValue(paths);
+      payload[flutter::EncodableValue("texts")] = flutter::EncodableValue(texts);
+
+      pending_shared_file_paths_.clear();
+      pending_shared_texts_.clear();
+      result->Success(payload);
+      return;
+    }
+
     if (call.method_name() != "consumePendingSharedFiles") {
       result->NotImplemented();
       return;

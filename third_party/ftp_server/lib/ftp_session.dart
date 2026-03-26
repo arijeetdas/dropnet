@@ -11,7 +11,9 @@ class FtpSession {
   final Socket controlSocket;
   bool isAuthenticated = false;
   final FTPCommandHandler commandHandler;
-  ServerSocket? dataListener;
+  Stream<Socket>? _dataListenerStream;
+  Future<void> Function()? _closeDataListener;
+  int? _dataListenerPort;
   Socket? dataSocket;
   final String? username;
   final String? password;
@@ -21,6 +23,8 @@ class FtpSession {
   final FileOperations fileOperations;
   final ServerType serverType;
   final LoggerHandler logger;
+  final SecurityContext? tlsSecurityContext;
+  final bool secureDataConnections;
   bool transferInProgress = false;
   Future? _gettingDataSocket;
   final StringBuffer _commandBuffer = StringBuffer();
@@ -37,7 +41,9 @@ class FtpSession {
       this.password,
       required FileOperations fileOperations,
       required this.serverType,
-      required this.logger})
+      required this.logger,
+      this.tlsSecurityContext,
+      this.secureDataConnections = false})
       : fileOperations = fileOperations.copy(),
         commandHandler = FTPCommandHandler(controlSocket, logger) {
     sendResponse('220 Welcome to the FTP server');
@@ -84,7 +90,10 @@ class FtpSession {
   void closeConnection() {
     controlSocket.close();
     dataSocket?.close();
-    dataListener?.close();
+    _closeDataListener?.call();
+    _closeDataListener = null;
+    _dataListenerStream = null;
+    _dataListenerPort = null;
     logger.generalLog('Connection closed');
   }
 
@@ -103,7 +112,7 @@ class FtpSession {
   }
 
   Future<void> waitForClientDataSocket({Duration? timeout}) {
-    var result = dataListener!.first;
+    var result = _dataListenerStream!.first;
     if (timeout != null) {
       result = result.timeout(timeout, onTimeout: () {
         throw TimeoutException(
@@ -115,8 +124,8 @@ class FtpSession {
 
   Future<void> enterPassiveMode() async {
     try {
-      dataListener = await ServerSocket.bind(InternetAddress.anyIPv4, 0);
-      int port = dataListener!.port;
+      await _bindDataListener();
+      int port = _dataListenerPort ?? 0;
       int p1 = port >> 8;
       int p2 = port & 0xFF;
       var address = (await _getIpAddress()).replaceAll('.', ',');
@@ -133,6 +142,12 @@ class FtpSession {
   }
 
   Future<void> enterActiveMode(String parameters) async {
+    if (secureDataConnections) {
+      sendResponse(
+          '522 Active mode is unavailable for secure FTP. Use PASV or EPSV.');
+      return;
+    }
+
     try {
       List<String> parts = parameters.split(',');
       String ip = parts.take(4).join('.');
@@ -189,7 +204,10 @@ class FtpSession {
         if (!transferInProgress) break; // Abort if transfer is cancelled
 
         try {
-          final permissions = _formatPermissions(entity.isDirectory);
+          final permissions = _formatPermissions(
+            mode: entity.mode,
+            isDirectory: entity.isDirectory,
+          );
           final fileSize = entity.size.toString();
           final modificationTime = _formatModificationTime(entity.modified);
           final fileName = entity.name;
@@ -230,9 +248,22 @@ class FtpSession {
     }
   }
 
-  String _formatPermissions(bool isDirectory) {
+  String _formatPermissions({
+    required int mode,
+    required bool isDirectory,
+  }) {
     final type = isDirectory ? 'd' : '-';
-    return '${type}rw-r--r--';
+    final owner = _permissionToString(mode >> 6);
+    final group = _permissionToString((mode >> 3) & 7);
+    final others = _permissionToString(mode & 7);
+    return '$type$owner$group$others';
+  }
+
+  String _permissionToString(int permission) {
+    final read = (permission & 4) != 0 ? 'r' : '-';
+    final write = (permission & 2) != 0 ? 'w' : '-';
+    final execute = (permission & 1) != 0 ? 'x' : '-';
+    return '$read$write$execute';
   }
 
   String _formatModificationTime(DateTime dateTime) {
@@ -359,13 +390,15 @@ class FtpSession {
       }
     }
 
-    if (dataListener != null) {
+    if (_closeDataListener != null) {
       try {
-        await dataListener!.close();
+        await _closeDataListener!.call();
       } catch (e) {
         logger.generalLog('Error closing data listener: $e');
       } finally {
-        dataListener = null;
+        _closeDataListener = null;
+        _dataListenerStream = null;
+        _dataListenerPort = null;
       }
     }
 
@@ -448,8 +481,8 @@ class FtpSession {
 
   Future<void> enterExtendedPassiveMode() async {
     try {
-      dataListener = await ServerSocket.bind(InternetAddress.anyIPv4, 0);
-      int port = dataListener!.port;
+      await _bindDataListener();
+      int port = _dataListenerPort ?? 0;
       sendResponse('229 Entering Extended Passive Mode (|||$port|)');
 
       // Properly wait for the client to connect and handle errors
@@ -459,6 +492,25 @@ class FtpSession {
       sendResponse('425 Can\'t enter extended passive mode');
       logger.generalLog('Error entering extended passive mode: $e');
     }
+  }
+
+  Future<void> _bindDataListener() async {
+    if (secureDataConnections && tlsSecurityContext != null) {
+      final secureListener = await SecureServerSocket.bind(
+        InternetAddress.anyIPv4,
+        0,
+        tlsSecurityContext!,
+      );
+      _dataListenerStream = secureListener;
+      _closeDataListener = secureListener.close;
+      _dataListenerPort = secureListener.port;
+      return;
+    }
+
+    final plainListener = await ServerSocket.bind(InternetAddress.anyIPv4, 0);
+    _dataListenerStream = plainListener;
+    _closeDataListener = plainListener.close;
+    _dataListenerPort = plainListener.port;
   }
 
   Future<void> handleMlsd(String argument, FtpSession session) async {

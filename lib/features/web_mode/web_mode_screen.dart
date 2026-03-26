@@ -4,8 +4,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../core/networking/web_server_service.dart';
 import '../../core/state/app_state.dart';
 import '../../widgets/adaptive_nav_scaffold.dart';
+import '../../widgets/tab_shell_scope.dart';
 
 class WebModeScreen extends ConsumerStatefulWidget {
   const WebModeScreen({super.key, this.embedded = false});
@@ -17,11 +19,121 @@ class WebModeScreen extends ConsumerStatefulWidget {
 }
 
 class _WebModeScreenState extends ConsumerState<WebModeScreen> {
+  bool _isShellBranchActive(BuildContext context) {
+    final scope = TabShellScope.maybeOf(context);
+    return scope == null || scope.currentIndex == 2;
+  }
+
+  Future<void> _startWebServer() async {
+    final options = await _askWebServerOptions();
+    if (options == null || !mounted) return;
+    await ref
+        .read(appControllerProvider.notifier)
+        .startWebShare(pin: options.pin);
+  }
+
+  Future<({String pin})?> _askWebServerOptions() async {
+    final pinController = TextEditingController(
+      text: WebServerService.generatePin(),
+    );
+    var usePinProtection = false;
+
+    return showDialog<({String pin})>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: const Text('Start Web Server'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Web peers will be able to send and receive files through the browser.',
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                    const SizedBox(height: 20),
+                    Text(
+                      'PIN Protection',
+                      style: Theme.of(context).textTheme.labelLarge,
+                    ),
+                    CheckboxListTile(
+                      value: usePinProtection,
+                      onChanged: (v) =>
+                          setState(() => usePinProtection = v ?? false),
+                      title: const Text('Require PIN to access'),
+                      controlAffinity: ListTileControlAffinity.leading,
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                    if (usePinProtection) ...[
+                      TextField(
+                        controller: pinController,
+                        decoration: InputDecoration(
+                          labelText: 'PIN',
+                          hintText: 'Auto-generated',
+                          suffixIcon: IconButton(
+                            tooltip: 'Generate new PIN',
+                            icon: const Icon(Icons.refresh_rounded),
+                            onPressed: () => setState(() {
+                              pinController.text =
+                                  WebServerService.generatePin();
+                            }),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Visitors must enter this PIN before accessing the web interface.',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    final pin =
+                        usePinProtection ? pinController.text.trim() : '';
+                    Navigator.of(context).pop((pin: pin));
+                  },
+                  child: const Text('Start'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final isActiveBranch = !widget.embedded || _isShellBranchActive(context);
+    if (widget.embedded && !isActiveBranch) {
+      return const SizedBox.shrink();
+    }
+
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-    final state = ref.watch(appControllerProvider);
+    final state = ref.watch(
+      appControllerProvider.select(
+        (state) => (
+          webState: state.webState,
+          connectedWebPeers: state.connectedWebPeers,
+        ),
+      ),
+    );
     final web = state.webState;
     final isDark = theme.brightness == Brightness.dark;
     final content = Padding(
@@ -62,6 +174,24 @@ class _WebModeScreenState extends ConsumerState<WebModeScreen> {
                               style: theme.textTheme.titleMedium,
                             ),
                           ),
+                          if (web.running && web.pin.isNotEmpty) ...[
+                            Tooltip(
+                              message: 'PIN: ${web.pin}',
+                              child: Chip(
+                                avatar: const Icon(Icons.lock_rounded, size: 14),
+                                label: Text(
+                                  web.pin,
+                                  style: const TextStyle(
+                                    fontFamily: 'monospace',
+                                    letterSpacing: 0.5,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                                visualDensity: VisualDensity.compact,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                          ],
                           Chip(
                             avatar: const Icon(Icons.devices_rounded, size: 16),
                             label: Text('${state.connectedWebPeers.length} connected'),
@@ -71,17 +201,26 @@ class _WebModeScreenState extends ConsumerState<WebModeScreen> {
                       const SizedBox(height: 10),
                       Text(
                         web.running
-                            ? 'Web peers can connect with the shared link and request transfers for this active session.'
+                            ? 'Web peers connect over HTTPS and can request transfers for this active session.'
                             : 'Start the server to accept web device connections.',
                         style: theme.textTheme.bodyMedium,
                       ),
+                      if (web.running) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          'First-time browser access may show a local certificate warning before continuing.',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 14),
                       Wrap(
                         spacing: 8,
                         runSpacing: 8,
                         children: [
                           FilledButton.icon(
-                            onPressed: web.running ? null : () => ref.read(appControllerProvider.notifier).startWebShare(),
+                            onPressed: web.running ? null : _startWebServer,
                             icon: const Icon(Icons.play_arrow_rounded),
                             label: const Text('Start Web Server'),
                           ),
@@ -186,16 +325,23 @@ class _WebModeScreenState extends ConsumerState<WebModeScreen> {
                               ),
                             ),
                           ),
-                          if (state.connectedWebPeers.isNotEmpty) ...[
-                            const SizedBox(height: 12),
-                            Card(
-                              child: Padding(
-                                padding: const EdgeInsets.all(16),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text('Connected devices', style: theme.textTheme.titleMedium),
-                                    const SizedBox(height: 10),
+                          const SizedBox(height: 12),
+                          Card(
+                            child: Padding(
+                              padding: const EdgeInsets.all(16),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text('Connected devices', style: theme.textTheme.titleMedium),
+                                  const SizedBox(height: 10),
+                                  if (state.connectedWebPeers.isEmpty)
+                                    Text(
+                                      'No devices connected yet.',
+                                      style: theme.textTheme.bodySmall?.copyWith(
+                                        color: colorScheme.onSurfaceVariant,
+                                      ),
+                                    )
+                                  else
                                     Wrap(
                                       spacing: 8,
                                       runSpacing: 8,
@@ -208,11 +354,10 @@ class _WebModeScreenState extends ConsumerState<WebModeScreen> {
                                           )
                                           .toList(),
                                     ),
-                                  ],
-                                ),
+                                ],
                               ),
                             ),
-                          ],
+                          ),
                         ],
                       )
                     : const SizedBox.shrink(key: ValueKey('stopped-sections')),
