@@ -51,13 +51,6 @@ More features and performance improvements are coming soon.
 
 ---
 
-## 📌 Version
-
-Current Version: 2.3.3  
-Release Type: Stable Release  
-
----
-
 ## 🤝 Contributing
 
 Contributions, issues, and feature requests are welcome.  
