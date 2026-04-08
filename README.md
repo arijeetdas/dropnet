@@ -46,16 +46,8 @@ flutter run
 ## 🎯 Vision
 
 DropNet aims to provide a fast, minimal, and beautifully designed file-sharing experience without unnecessary complexity.
-
-This is the foundation release (v1.0.0).  
+ 
 More features and performance improvements are coming soon.
-
----
-
-## 📌 Version
-
-Current Version: 1.0.0  
-Release Type: Stable Initial Release  
 
 ---
 
