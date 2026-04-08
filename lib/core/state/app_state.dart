@@ -61,7 +61,6 @@ bool isDeviceTrusted({
   );
 }
 
-
 class AppState {
   const AppState({
     required this.devices,
@@ -204,7 +203,7 @@ class AppState {
       downloadDirectory: downloadDirectory ?? this.downloadDirectory,
       pendingIncomingRequests:
           pendingIncomingRequests ?? this.pendingIncomingRequests,
-        pendingPairingRequests:
+      pendingPairingRequests:
           pendingPairingRequests ?? this.pendingPairingRequests,
       themeMode: themeMode ?? this.themeMode,
       themeSeed: themeSeed ?? this.themeSeed,
@@ -233,13 +232,13 @@ class AppState {
           pendingTransferPreviewTexts ?? this.pendingTransferPreviewTexts,
       pendingTransferPreviewFiles:
           pendingTransferPreviewFiles ?? this.pendingTransferPreviewFiles,
-        pendingSystemMessages:
+      pendingSystemMessages:
           pendingSystemMessages ?? this.pendingSystemMessages,
       trustedPeers: trustedPeers ?? this.trustedPeers,
       saveMediaToGallery: saveMediaToGallery ?? this.saveMediaToGallery,
       requirePairingCodeForDirectTransfers:
           requirePairingCodeForDirectTransfers ??
-              this.requirePairingCodeForDirectTransfers,
+          this.requirePairingCodeForDirectTransfers,
     );
   }
 }
@@ -370,7 +369,7 @@ class AppController extends StateNotifier<AppState> {
     // Batch all SharedPreferences reads
     final restoredThemeMode =
         _themeModeFromName(_prefs!.getString(_themeModeKey)) ??
-            ThemeMode.system;
+        ThemeMode.system;
     final restoredUseSystemAccent =
         _prefs!.getBool(_useSystemAccentKey) ?? true;
     final restoredThemeSeedValue =
@@ -399,6 +398,8 @@ class AppController extends StateNotifier<AppState> {
     final localIp = await localIpFuture;
     await shareIntentFuture;
     final initialShared = await _shareIntent.consumePendingSharedPayload();
+
+    await _discovery.updatePairingModeEnabled(restoredRequirePairingCode);
 
     // Save download directory if changed
     final restoredDownloadDir = _prefs!.getString(_downloadDirectoryKey);
@@ -448,10 +449,14 @@ class AppController extends StateNotifier<AppState> {
     );
 
     // Defer stream subscriber setup to avoid blocking app startup
-    unawaited(Future<void>(() async {
-      await Future<void>.delayed(Duration.zero); // Yield to allow UI to render
-      _setupStreamSubscribers();
-    }));
+    unawaited(
+      Future<void>(() async {
+        await Future<void>.delayed(
+          Duration.zero,
+        ); // Yield to allow UI to render
+        _setupStreamSubscribers();
+      }),
+    );
   }
 
   void _setupStreamSubscribers() {
@@ -637,7 +642,8 @@ class AppController extends StateNotifier<AppState> {
     List<String> filePaths, {
     String? pairingCode,
   }) async {
-    if (state.requirePairingCodeForDirectTransfers && !isTargetTrusted(target)) {
+    if (state.requirePairingCodeForDirectTransfers &&
+        !isTargetTrusted(target)) {
       throw StateError(
         'Device is not paired yet. Pair this device before sending files.',
       );
@@ -696,9 +702,7 @@ class AppController extends StateNotifier<AppState> {
     }
 
     if (!device.isOnline) {
-      throw StateError(
-        'Device must be online on the same network to pair.',
-      );
+      throw StateError('Device must be online on the same network to pair.');
     }
 
     final deviceId = device.deviceId.trim();
@@ -720,7 +724,9 @@ class AppController extends StateNotifier<AppState> {
       throw StateError('Pairing was rejected or timed out.');
     }
 
-    final trustedFingerprint = pairingResult.peerFingerprint.trim().toLowerCase();
+    final trustedFingerprint = pairingResult.peerFingerprint
+        .trim()
+        .toLowerCase();
     if (trustedFingerprint.isEmpty) {
       throw const HandshakeException(
         'Pairing failed because peer fingerprint could not be verified.',
@@ -759,7 +765,9 @@ class AppController extends StateNotifier<AppState> {
 
   Future<void> unpairDevice(DeviceModel device) async {
     final deviceId = device.deviceId.trim().toLowerCase();
-    final fingerprint = (device.tlsCertificateSha256 ?? '').trim().toLowerCase();
+    final fingerprint = (device.tlsCertificateSha256 ?? '')
+        .trim()
+        .toLowerCase();
     if (deviceId.isEmpty || fingerprint.isEmpty) {
       return;
     }
@@ -771,8 +779,8 @@ class AppController extends StateNotifier<AppState> {
         );
       }
 
-      final localFingerprint =
-          await _discovery.ensureLocalTlsCertificateSha256();
+      final localFingerprint = await _discovery
+          .ensureLocalTlsCertificateSha256();
       final accepted = await _transfer.requestUnpair(
         target: device,
         senderDeviceName: _taggedLocalName(),
@@ -843,7 +851,9 @@ class AppController extends StateNotifier<AppState> {
       0,
       TrustedPeer(
         deviceId: normalizedDeviceId,
-        deviceName: deviceName.trim().isEmpty ? normalizedDeviceId : deviceName.trim(),
+        deviceName: deviceName.trim().isEmpty
+            ? normalizedDeviceId
+            : deviceName.trim(),
         tlsCertificateSha256: normalizedFingerprint,
         pairedAt: DateTime.now(),
       ),
@@ -951,22 +961,51 @@ class AppController extends StateNotifier<AppState> {
     _transfer.rejectIncomingRequest(id);
   }
 
-  Future<void> startWebShare({int port = 8080, String pin = ''}) {
-    return _web.start(
+  Future<void> startWebShare({
+    int port = 8080,
+    String pin = '',
+    bool stopTemporaryShareIfRunning = false,
+  }) async {
+    if (state.tempLinkShare.running) {
+      if (!stopTemporaryShareIfRunning) {
+        throw StateError(
+          'Temporary link share is active. Stop it first or allow replacing it.',
+        );
+      }
+      await _tempShare.stop();
+      state = state.copyWith(tempLinkShare: _tempShare.currentState);
+    }
+
+    await _web.start(
       rootDirectory: state.downloadDirectory,
       hostDeviceName: _taggedLocalName(),
       port: port,
       pin: pin,
     );
+    state = state.copyWith(webState: _web.currentState);
   }
 
-  Future<void> stopWebShare() => _web.stop();
+  Future<void> stopWebShare() async {
+    await _web.stop();
+    state = state.copyWith(webState: _web.currentState);
+  }
 
   Future<void> startTemporaryLinkShare({
     required List<String> filePaths,
     Duration? ttl,
     String pin = '',
+    bool stopWebShareIfRunning = false,
   }) async {
+    if (state.webState.running) {
+      if (!stopWebShareIfRunning) {
+        throw StateError(
+          'Web server is active. Stop it first or allow replacing it.',
+        );
+      }
+      await _web.stop();
+      state = state.copyWith(webState: _web.currentState);
+    }
+
     final resolvedIp = await _discovery.getLocalIp();
     final hostIp = resolvedIp.isEmpty ? state.localIp : resolvedIp;
     if (hostIp.isEmpty) {
@@ -1043,6 +1082,7 @@ class AppController extends StateNotifier<AppState> {
 
   void setRequirePairingCodeForDirectTransfers(bool value) {
     state = state.copyWith(requirePairingCodeForDirectTransfers: value);
+    unawaited(_discovery.updatePairingModeEnabled(value));
     unawaited(_saveRequirePairingCode(value));
   }
 
@@ -1694,7 +1734,6 @@ class AppController extends StateNotifier<AppState> {
     }
     return null;
   }
-
 
   @override
   void dispose() {

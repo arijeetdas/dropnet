@@ -25,11 +25,64 @@ class _WebModeScreenState extends ConsumerState<WebModeScreen> {
   }
 
   Future<void> _startWebServer() async {
+    final appState = ref.read(appControllerProvider);
+    var replaceTemporaryShare = false;
+    if (appState.tempLinkShare.running) {
+      final decision = await _showWebServiceConflictDialog(
+        currentService: 'Temporary share link server',
+        nextService: 'Web server',
+      );
+      if (!mounted || decision == null) {
+        return;
+      }
+      replaceTemporaryShare = decision;
+    }
+
     final options = await _askWebServerOptions();
     if (options == null || !mounted) return;
-    await ref
-        .read(appControllerProvider.notifier)
-        .startWebShare(pin: options.pin);
+    try {
+      await ref
+          .read(appControllerProvider.notifier)
+          .startWebShare(
+            pin: options.pin,
+            stopTemporaryShareIfRunning: replaceTemporaryShare,
+          );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not start web server: $error')),
+      );
+    }
+  }
+
+  Future<bool?> _showWebServiceConflictDialog({
+    required String currentService,
+    required String nextService,
+  }) {
+    return showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          icon: const Icon(Icons.warning_amber_rounded),
+          title: const Text('Only One Web Service Allowed'),
+          content: Text(
+            '$currentService is already running. For security reasons, $nextService cannot run at the same time.\n\nStop the current service and continue?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(null),
+              child: const Text('Keep Current'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Stop Current & Continue'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   Future<({String pin})?> _askWebServerOptions() async {
@@ -87,9 +140,7 @@ class _WebModeScreenState extends ConsumerState<WebModeScreen> {
                       Text(
                         'Visitors must enter this PIN before accessing the web interface.',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.onSurfaceVariant,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
                         ),
                       ),
                     ],
@@ -103,8 +154,9 @@ class _WebModeScreenState extends ConsumerState<WebModeScreen> {
                 ),
                 FilledButton(
                   onPressed: () {
-                    final pin =
-                        usePinProtection ? pinController.text.trim() : '';
+                    final pin = usePinProtection
+                        ? pinController.text.trim()
+                        : '';
                     Navigator.of(context).pop((pin: pin));
                   },
                   child: const Text('Start'),
@@ -154,7 +206,9 @@ class _WebModeScreenState extends ConsumerState<WebModeScreen> {
                     border: Border(
                       left: BorderSide(
                         width: 4,
-                        color: web.running ? colorScheme.primary : colorScheme.outlineVariant,
+                        color: web.running
+                            ? colorScheme.primary
+                            : colorScheme.outlineVariant,
                       ),
                     ),
                   ),
@@ -164,13 +218,19 @@ class _WebModeScreenState extends ConsumerState<WebModeScreen> {
                       Row(
                         children: [
                           Icon(
-                            web.running ? Icons.check_circle_rounded : Icons.radio_button_unchecked_rounded,
-                            color: web.running ? colorScheme.primary : colorScheme.onSurfaceVariant,
+                            web.running
+                                ? Icons.check_circle_rounded
+                                : Icons.radio_button_unchecked_rounded,
+                            color: web.running
+                                ? colorScheme.primary
+                                : colorScheme.onSurfaceVariant,
                           ),
                           const SizedBox(width: 10),
                           Expanded(
                             child: Text(
-                              web.running ? 'Web server is running' : 'Web server is stopped',
+                              web.running
+                                  ? 'Web server is running'
+                                  : 'Web server is stopped',
                               style: theme.textTheme.titleMedium,
                             ),
                           ),
@@ -178,7 +238,10 @@ class _WebModeScreenState extends ConsumerState<WebModeScreen> {
                             Tooltip(
                               message: 'PIN: ${web.pin}',
                               child: Chip(
-                                avatar: const Icon(Icons.lock_rounded, size: 14),
+                                avatar: const Icon(
+                                  Icons.lock_rounded,
+                                  size: 14,
+                                ),
                                 label: Text(
                                   web.pin,
                                   style: const TextStyle(
@@ -194,7 +257,9 @@ class _WebModeScreenState extends ConsumerState<WebModeScreen> {
                           ],
                           Chip(
                             avatar: const Icon(Icons.devices_rounded, size: 16),
-                            label: Text('${state.connectedWebPeers.length} connected'),
+                            label: Text(
+                              '${state.connectedWebPeers.length} connected',
+                            ),
                           ),
                         ],
                       ),
@@ -225,25 +290,38 @@ class _WebModeScreenState extends ConsumerState<WebModeScreen> {
                             label: const Text('Start Web Server'),
                           ),
                           OutlinedButton.icon(
-                            onPressed: web.running ? () => ref.read(appControllerProvider.notifier).stopWebShare() : null,
+                            onPressed: web.running
+                                ? () => ref
+                                      .read(appControllerProvider.notifier)
+                                      .stopWebShare()
+                                : null,
                             icon: const Icon(Icons.stop_rounded),
                             label: const Text('Stop'),
                           ),
                           if (web.running)
                             FilledButton.tonalIcon(
                               onPressed: () async {
-                                await Clipboard.setData(ClipboardData(text: web.url));
+                                await Clipboard.setData(
+                                  ClipboardData(text: web.url),
+                                );
                                 if (!context.mounted) {
                                   return;
                                 }
-                                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Web link copied.')));
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('Web link copied.'),
+                                  ),
+                                );
                               },
                               icon: const Icon(Icons.copy_rounded),
                               label: const Text('Copy Link'),
                             ),
                           if (web.running)
                             OutlinedButton.icon(
-                              onPressed: () => launchUrl(Uri.parse(web.url), mode: LaunchMode.externalApplication),
+                              onPressed: () => launchUrl(
+                                Uri.parse(web.url),
+                                mode: LaunchMode.externalApplication,
+                              ),
                               icon: const Icon(Icons.open_in_browser_rounded),
                               label: const Text('Open'),
                             ),
@@ -273,29 +351,52 @@ class _WebModeScreenState extends ConsumerState<WebModeScreen> {
                                       padding: const EdgeInsets.all(12),
                                       decoration: BoxDecoration(
                                         borderRadius: BorderRadius.circular(16),
-                                        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
+                                        color: colorScheme
+                                            .surfaceContainerHighest
+                                            .withValues(alpha: 0.4),
                                       ),
                                       child: QrImageView(
                                         data: web.url,
                                         size: 200,
-                                        backgroundColor: isDark ? Colors.black : Colors.white,
-                                        eyeStyle: QrEyeStyle(color: isDark ? Colors.white : Colors.black),
-                                        dataModuleStyle: QrDataModuleStyle(color: isDark ? Colors.white : Colors.black),
+                                        backgroundColor: isDark
+                                            ? Colors.black
+                                            : Colors.white,
+                                        eyeStyle: QrEyeStyle(
+                                          color: isDark
+                                              ? Colors.white
+                                              : Colors.black,
+                                        ),
+                                        dataModuleStyle: QrDataModuleStyle(
+                                          color: isDark
+                                              ? Colors.white
+                                              : Colors.black,
+                                        ),
                                       ),
                                     ),
                                   );
 
                                   final details = Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
-                                      Text('Connection link', style: theme.textTheme.titleMedium),
+                                      Text(
+                                        'Connection link',
+                                        style: theme.textTheme.titleMedium,
+                                      ),
                                       const SizedBox(height: 8),
                                       Container(
                                         width: double.infinity,
-                                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 12,
+                                          vertical: 10,
+                                        ),
                                         decoration: BoxDecoration(
-                                          borderRadius: BorderRadius.circular(12),
-                                          color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
+                                          borderRadius: BorderRadius.circular(
+                                            12,
+                                          ),
+                                          color: colorScheme
+                                              .surfaceContainerHighest
+                                              .withValues(alpha: 0.35),
                                         ),
                                         child: SelectableText(web.url),
                                       ),
@@ -304,7 +405,8 @@ class _WebModeScreenState extends ConsumerState<WebModeScreen> {
 
                                   if (compact) {
                                     return Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
                                       children: [
                                         details,
                                         const SizedBox(height: 14),
@@ -314,7 +416,8 @@ class _WebModeScreenState extends ConsumerState<WebModeScreen> {
                                   }
 
                                   return Row(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
                                       Expanded(child: details),
                                       const SizedBox(width: 14),
@@ -332,14 +435,18 @@ class _WebModeScreenState extends ConsumerState<WebModeScreen> {
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Text('Connected devices', style: theme.textTheme.titleMedium),
+                                  Text(
+                                    'Connected devices',
+                                    style: theme.textTheme.titleMedium,
+                                  ),
                                   const SizedBox(height: 10),
                                   if (state.connectedWebPeers.isEmpty)
                                     Text(
                                       'No devices connected yet.',
-                                      style: theme.textTheme.bodySmall?.copyWith(
-                                        color: colorScheme.onSurfaceVariant,
-                                      ),
+                                      style: theme.textTheme.bodySmall
+                                          ?.copyWith(
+                                            color: colorScheme.onSurfaceVariant,
+                                          ),
                                     )
                                   else
                                     Wrap(
@@ -348,8 +455,13 @@ class _WebModeScreenState extends ConsumerState<WebModeScreen> {
                                       children: state.connectedWebPeers
                                           .map(
                                             (peer) => Chip(
-                                              avatar: const Icon(Icons.phone_android_rounded, size: 16),
-                                              label: Text('${peer.name} (${peer.ip})'),
+                                              avatar: const Icon(
+                                                Icons.phone_android_rounded,
+                                                size: 16,
+                                              ),
+                                              label: Text(
+                                                '${peer.name} (${peer.ip})',
+                                              ),
                                             ),
                                           )
                                           .toList(),

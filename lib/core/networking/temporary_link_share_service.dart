@@ -46,7 +46,7 @@ class TemporaryLinkShareState {
   final String pin; // empty = no pin required
   final List<TempShareClient> connectedClients;
 
-  String get url => running ? 'https://$host:$port/share/$token' : '';
+  String get url => running ? 'https://$host:$port/' : '';
 
   TemporaryLinkShareState copyWith({
     bool? running,
@@ -79,19 +79,19 @@ class TemporaryLinkShareState {
   }
 
   static TemporaryLinkShareState initial() => const TemporaryLinkShareState(
-        running: false,
-        host: '',
-        port: 0,
-        token: '',
-        deviceName: '',
-        platformLabel: '',
-        idSuffix: '',
-        fileCount: 0,
-        startedAt: null,
-        expiresAt: null,
-        pin: '',
-        connectedClients: [],
-      );
+    running: false,
+    host: '',
+    port: 0,
+    token: '',
+    deviceName: '',
+    platformLabel: '',
+    idSuffix: '',
+    fileCount: 0,
+    startedAt: null,
+    expiresAt: null,
+    pin: '',
+    connectedClients: [],
+  );
 }
 
 class _SharedFileEntry {
@@ -110,8 +110,7 @@ class _SharedFileEntry {
 
 class TemporaryLinkShareService {
   TemporaryLinkShareService({LocalTlsCertificateService? tlsCertificateService})
-    : _tlsCertificates =
-          tlsCertificateService ?? LocalTlsCertificateService();
+    : _tlsCertificates = tlsCertificateService ?? LocalTlsCertificateService();
 
   final LocalTlsCertificateService _tlsCertificates;
   final _controller = StreamController<TemporaryLinkShareState>.broadcast();
@@ -146,7 +145,9 @@ class TemporaryLinkShareService {
   }) async {
     await stop();
 
-    _pin = pin.trim();
+    // Token is no longer exposed in the URL. Require a PIN for baseline
+    // protection in addition to HTTPS.
+    _pin = pin.trim().isEmpty ? generatePin() : pin.trim();
     _validSessions.clear();
     _connectedClientsList.clear();
 
@@ -157,32 +158,33 @@ class TemporaryLinkShareService {
 
     final token = const Uuid().v4().replaceAll('-', '');
     final router = Router()
-      ..get('/share/<token>', (Request request, String tokenParam) async {
-        if (!_isAccessAllowed(tokenParam)) {
+      ..get('/', (Request request) async {
+        if (!_isAccessAllowed()) {
           return Response.forbidden('Invalid or expired link');
         }
-        if (_pin.isNotEmpty) {
-          final cookie = request.headers['cookie'] ?? '';
-          if (!_isValidSession(cookie)) {
-            return Response.ok(
-              _renderPinGatePage(token: tokenParam),
-              headers: {'content-type': 'text/html; charset=utf-8'},
-            );
-          }
+        final cookie = request.headers['cookie'] ?? '';
+        if (!_isValidSession(cookie)) {
+          return Response.ok(
+            _renderPinGatePage(),
+            headers: {'content-type': 'text/html; charset=utf-8'},
+          );
         }
         _trackConnection(request);
         final html = _renderSharePage();
-        return Response.ok(html, headers: {'content-type': 'text/html; charset=utf-8'});
+        return Response.ok(
+          html,
+          headers: {'content-type': 'text/html; charset=utf-8'},
+        );
       })
-      ..post('/share/<token>/verify', (Request request, String tokenParam) async {
-        if (!_isAccessAllowed(tokenParam)) {
+      ..post('/verify', (Request request) async {
+        if (!_isAccessAllowed()) {
           return Response.forbidden('Invalid or expired link');
         }
         final body = await request.readAsString();
         final submittedPin = Uri.splitQueryString(body)['pin'] ?? '';
         if (!_constantTimeEquals(submittedPin, _pin)) {
           return Response.ok(
-            _renderPinGatePage(token: tokenParam, error: true),
+            _renderPinGatePage(error: true),
             headers: {'content-type': 'text/html; charset=utf-8'},
           );
         }
@@ -190,21 +192,19 @@ class TemporaryLinkShareService {
         return Response(
           302,
           headers: {
-            'location': '/share/$tokenParam',
+            'location': '/',
             'set-cookie':
-                'dsid=$sid; Path=/share/$tokenParam; HttpOnly; Secure; SameSite=Strict',
+                'dsid=$sid; Path=/; HttpOnly; Secure; SameSite=Strict',
           },
         );
       })
-      ..get('/share/<token>/download/<id>', (Request request, String tokenParam, String id) async {
-        if (!_isAccessAllowed(tokenParam)) {
+      ..get('/download/<id>', (Request request, String id) async {
+        if (!_isAccessAllowed()) {
           return Response.forbidden('Invalid or expired link');
         }
-        if (_pin.isNotEmpty) {
-          final cookie = request.headers['cookie'] ?? '';
-          if (!_isValidSession(cookie)) {
-            return Response.forbidden('Pin required');
-          }
+        final cookie = request.headers['cookie'] ?? '';
+        if (!_isValidSession(cookie)) {
+          return Response.forbidden('Pin required');
         }
 
         final entry = _entries.where((item) => item.id == id).firstOrNull;
@@ -222,11 +222,17 @@ class TemporaryLinkShareService {
           headers: {
             'content-type': 'application/octet-stream',
             'content-length': entry.size.toString(),
-            'content-disposition': 'attachment; filename="${Uri.encodeComponent(entry.displayName)}"',
+            'content-disposition':
+                'attachment; filename="${Uri.encodeComponent(entry.displayName)}"',
           },
         );
       })
-      ..get('/', (Request request) => Response.forbidden('Invalid or expired link'));
+      ..get('/share/<token>', (Request request, String tokenParam) {
+        if (!_isAccessAllowed() || !_constantTimeEquals(tokenParam, token)) {
+          return Response.forbidden('Invalid or expired link');
+        }
+        return Response.movedPermanently('/');
+      });
 
     final tlsContext = await _tlsCertificates.createServerContext(
       commonName: 'DropNet Temporary Link Server',
@@ -256,8 +262,12 @@ class TemporaryLinkShareService {
       host: host,
       port: _server!.port,
       token: token,
-      deviceName: deviceName.trim().isEmpty ? 'DropNet Device' : deviceName.trim(),
-      platformLabel: platformLabel.trim().isEmpty ? 'Unknown' : platformLabel.trim(),
+      deviceName: deviceName.trim().isEmpty
+          ? 'DropNet Device'
+          : deviceName.trim(),
+      platformLabel: platformLabel.trim().isEmpty
+          ? 'Unknown'
+          : platformLabel.trim(),
       idSuffix: idSuffix.trim(),
       fileCount: entries.length,
       startedAt: now,
@@ -288,8 +298,8 @@ class TemporaryLinkShareService {
     await _controller.close();
   }
 
-  bool _isAccessAllowed(String tokenFromUrl) {
-    return _state.running && _constantTimeEquals(tokenFromUrl, _state.token);
+  bool _isAccessAllowed() {
+    return _state.running;
   }
 
   bool _constantTimeEquals(String a, String b) {
@@ -327,8 +337,7 @@ class TemporaryLinkShareService {
     final ip = connInfo?.remoteAddress.address ?? 'Unknown';
     final alreadyTracked = _connectedClientsList.any(
       (c) =>
-          c.ip == ip &&
-          DateTime.now().difference(c.connectedAt).inSeconds < 30,
+          c.ip == ip && DateTime.now().difference(c.connectedAt).inSeconds < 30,
     );
     if (!alreadyTracked) {
       _connectedClientsList.add(
@@ -383,11 +392,13 @@ class TemporaryLinkShareService {
     }
 
     final ext = p.extension(name);
-    final stem = ext.isEmpty ? name : name.substring(0, name.length - ext.length);
+    final stem = ext.isEmpty
+        ? name
+        : name.substring(0, name.length - ext.length);
     return '$stem ($count)$ext';
   }
 
-  String _renderPinGatePage({required String token, bool error = false}) {
+  String _renderPinGatePage({bool error = false}) {
     final errorHtml = error
         ? '<p class="err">Incorrect PIN. Please try again.</p>'
         : '';
@@ -420,7 +431,7 @@ class TemporaryLinkShareService {
     <div class="lock">🔒</div>
     <h1>PIN Required</h1>
     <p class="sub">This share is PIN-protected. Enter the PIN to access files.</p>
-    <form method="POST" action="/share/$token/verify">
+    <form method="POST" action="/verify">
       <label for="pin">PIN</label>
       <input type="password" id="pin" name="pin" autocomplete="one-time-code" autofocus required />
       $errorHtml
@@ -434,21 +445,23 @@ class TemporaryLinkShareService {
 
   String _renderSharePage() {
     final escape = const HtmlEscape(HtmlEscapeMode.element);
-    final suffix = _state.idSuffix.isEmpty ? '' : ' • ${escape.convert(_state.idSuffix)}';
+    final suffix = _state.idSuffix.isEmpty
+        ? ''
+        : ' • ${escape.convert(_state.idSuffix)}';
     final expiryMs = _state.expiresAt?.millisecondsSinceEpoch;
     final expiryScript = expiryMs != null
         ? '<script>!function(){var e=$expiryMs,el=document.getElementById("exp");'
-            'function t(){var r=Math.max(0,Math.round((e-Date.now())/1000)),m=Math.floor(r/60),s=r%60;'
-            'if(el)el.textContent=m+":"+String(s).padStart(2,"0");if(r>0)setTimeout(t,1000);}t();}();</script>'
+              'function t(){var r=Math.max(0,Math.round((e-Date.now())/1000)),m=Math.floor(r/60),s=r%60;'
+              'if(el)el.textContent=m+":"+String(s).padStart(2,"0");if(r>0)setTimeout(t,1000);}t();}();</script>'
         : '';
     final expiryBadge = expiryMs != null
         ? '<span id="exp" style="font-size:.78rem;background:rgba(45,212,191,.12);color:var(--accent);'
-            'padding:3px 10px;border-radius:999px;border:1px solid rgba(45,212,191,.25);margin-left:10px;">--:--</span>'
+              'padding:3px 10px;border-radius:999px;border:1px solid rgba(45,212,191,.25);margin-left:10px;">--:--</span>'
         : '';
     final filesHtml = _entries
         .map(
           (entry) =>
-              '<li><a href="/share/${_state.token}/download/${entry.id}">${escape.convert(entry.displayName)}</a> '
+              '<li><a href="/download/${entry.id}">${escape.convert(entry.displayName)}</a> '
               '<span>(${_formatBytes(entry.size)})</span></li>',
         )
         .join();
@@ -657,7 +670,9 @@ class TemporaryLinkShareService {
       value /= 1024;
       unitIndex++;
     }
-    final fixed = value >= 100 ? value.toStringAsFixed(0) : value.toStringAsFixed(1);
+    final fixed = value >= 100
+        ? value.toStringAsFixed(0)
+        : value.toStringAsFixed(1);
     return '$fixed ${units[unitIndex]}';
   }
 

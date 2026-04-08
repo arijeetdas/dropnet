@@ -39,18 +39,63 @@ class SendFilesScreen extends ConsumerStatefulWidget {
 
 class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
   static const Set<String> _imageExtensions = {
-    'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'heic', 'heif',
-    'tiff', 'tif', 'svg', 'ico', 'avif', 'raw', 'cr2', 'nef', 'dng',
+    'jpg',
+    'jpeg',
+    'png',
+    'gif',
+    'webp',
+    'bmp',
+    'heic',
+    'heif',
+    'tiff',
+    'tif',
+    'svg',
+    'ico',
+    'avif',
+    'raw',
+    'cr2',
+    'nef',
+    'dng',
   };
 
   static const Set<String> _videoExtensions = {
-    'mp4', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'webm', 'm4v',
-    '3gp', '3g2', 'ts', 'mts', 'm2ts', 'vob', 'ogv', 'rm', 'rmvb',
+    'mp4',
+    'mov',
+    'avi',
+    'mkv',
+    'wmv',
+    'flv',
+    'webm',
+    'm4v',
+    '3gp',
+    '3g2',
+    'ts',
+    'mts',
+    'm2ts',
+    'vob',
+    'ogv',
+    'rm',
+    'rmvb',
   };
 
   static const Set<String> _audioExtensions = {
-    'mp3', 'aac', 'flac', 'wav', 'ogg', 'm4a', 'wma', 'opus',
-    'aiff', 'aif', 'alac', 'ape', 'mid', 'midi', 'amr', 'ac3', 'dts',
+    'mp3',
+    'aac',
+    'flac',
+    'wav',
+    'ogg',
+    'm4a',
+    'wma',
+    'opus',
+    'aiff',
+    'aif',
+    'alac',
+    'ape',
+    'mid',
+    'midi',
+    'amr',
+    'ac3',
+    'dts',
   };
 
   final List<_SelectedFile> _files = [];
@@ -94,7 +139,7 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
                 Platform.isLinux ||
                 Platform.isMacOS));
     final enableScreenDrop =
-      supportsDragDrop && isActiveBranch && !widget.embedded;
+        supportsDragDrop && isActiveBranch && !widget.embedded;
     final tempShare = state.tempLinkShare;
     final isDark = theme.brightness == Brightness.dark;
     final isRootRouteVisible = !(Navigator.of(
@@ -1181,19 +1226,19 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
       if (path == null) {
         return;
       }
-      
+
       if (!mounted) {
         return;
       }
-      
+
       await _addPaths([path]);
     } catch (e) {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error adding text: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Error adding text: $e')));
     }
   }
 
@@ -1373,6 +1418,19 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
       return;
     }
 
+    final appState = ref.read(appControllerProvider);
+    var replaceWebServer = false;
+    if (appState.webState.running) {
+      final decision = await _showWebServiceConflictDialog(
+        currentService: 'Web server',
+        nextService: 'Temporary share link server',
+      );
+      if (!mounted || decision == null) {
+        return;
+      }
+      replaceWebServer = decision;
+    }
+
     try {
       await ref
           .read(appControllerProvider.notifier)
@@ -1380,6 +1438,7 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
             filePaths: filePaths,
             ttl: options.ttl,
             pin: options.pin,
+            stopWebShareIfRunning: replaceWebServer,
           );
       if (!mounted) {
         return;
@@ -1396,6 +1455,34 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
         SnackBar(content: Text('Could not start temporary share: $error')),
       );
     }
+  }
+
+  Future<bool?> _showWebServiceConflictDialog({
+    required String currentService,
+    required String nextService,
+  }) {
+    return showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          icon: const Icon(Icons.warning_amber_rounded),
+          title: const Text('Only One Web Service Allowed'),
+          content: Text(
+            '$currentService is already running. For security reasons, $nextService cannot run at the same time.\n\nStop the current service and continue?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(null),
+              child: const Text('Keep Current'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Stop Current & Continue'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   Future<void> _stopTemporaryShare() async {
@@ -1430,7 +1517,8 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
     ).showSnackBar(const SnackBar(content: Text('Link copied to clipboard.')));
   }
 
-  Future<({bool cancelled, Duration? ttl, String pin})> _askShareLinkOptions() async {
+  Future<({bool cancelled, Duration? ttl, String pin})>
+  _askShareLinkOptions() async {
     final timerController = TextEditingController(text: '30');
     final pinController = TextEditingController(
       text: TemporaryLinkShareService.generatePin(),
@@ -1461,9 +1549,10 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(12),
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
+                        color: Theme.of(context)
+                            .colorScheme
+                            .surfaceContainerHighest
+                            .withValues(alpha: 0.45),
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1484,7 +1573,9 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
                             onChanged: (value) => setLocalState(
                               () => useNoTimer = value ?? false,
                             ),
-                            title: const Text('Keep link active until stopped manually'),
+                            title: const Text(
+                              'Keep link active until stopped manually',
+                            ),
                             controlAffinity: ListTileControlAffinity.leading,
                             contentPadding: EdgeInsets.zero,
                           ),
@@ -1505,9 +1596,10 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(12),
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
+                        color: Theme.of(context)
+                            .colorScheme
+                            .surfaceContainerHighest
+                            .withValues(alpha: 0.45),
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1528,7 +1620,9 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
                             onChanged: (value) => setLocalState(
                               () => usePinProtection = value ?? false,
                             ),
-                            title: const Text('Require PIN before opening the link'),
+                            title: const Text(
+                              'Require PIN before opening the link',
+                            ),
                             controlAffinity: ListTileControlAffinity.leading,
                             contentPadding: EdgeInsets.zero,
                           ),
@@ -1551,11 +1645,12 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
                             const SizedBox(height: 4),
                             Text(
                               'Receivers must enter this PIN in the browser before accessing files.',
-                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurfaceVariant,
-                              ),
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.onSurfaceVariant,
+                                  ),
                             ),
                           ],
                         ],
@@ -1575,8 +1670,7 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
                   onPressed: () {
                     Duration? ttl;
                     if (!useNoTimer) {
-                      final minutes =
-                          int.tryParse(timerController.text.trim());
+                      final minutes = int.tryParse(timerController.text.trim());
                       if (minutes == null || minutes <= 0) {
                         return;
                       }
@@ -1585,9 +1679,9 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
                     final pin = usePinProtection
                         ? pinController.text.trim()
                         : '';
-                    Navigator.of(context).pop(
-                      (cancelled: false, ttl: ttl, pin: pin),
-                    );
+                    Navigator.of(
+                      context,
+                    ).pop((cancelled: false, ttl: ttl, pin: pin));
                   },
                   child: const Text('Start sharing'),
                 ),
@@ -1608,7 +1702,9 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
     if (!mounted) {
       return;
     }
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 }
 
@@ -1641,12 +1737,16 @@ class _CountdownChipState extends State<_CountdownChip> {
   @override
   void initState() {
     super.initState();
-    _remainingSeconds =
-        widget.expiresAt.difference(DateTime.now()).inSeconds.clamp(0, 86400);
+    _remainingSeconds = widget.expiresAt
+        .difference(DateTime.now())
+        .inSeconds
+        .clamp(0, 86400);
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
-      final secs =
-          widget.expiresAt.difference(DateTime.now()).inSeconds.clamp(0, 86400);
+      final secs = widget.expiresAt
+          .difference(DateTime.now())
+          .inSeconds
+          .clamp(0, 86400);
       setState(() => _remainingSeconds = secs);
     });
   }
@@ -1764,7 +1864,9 @@ class _AddTextDialogState extends State<_AddTextDialog> {
                     textInputAction: TextInputAction.newline,
                     keyboardType: TextInputType.multiline,
                     decoration: InputDecoration(
-                      hintText: trimmedText.isEmpty ? 'Type text to share...' : null,
+                      hintText: trimmedText.isEmpty
+                          ? 'Type text to share...'
+                          : null,
                       prefix: trimmedText.isEmpty
                           ? const Padding(
                               padding: EdgeInsets.only(right: 6),
@@ -2096,7 +2198,9 @@ class _InstalledAppsPickerDialogState
                                       app.packageName,
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
-                                      style: Theme.of(context).textTheme.bodySmall,
+                                      style: Theme.of(
+                                        context,
+                                      ).textTheme.bodySmall,
                                     ),
                                     const SizedBox(height: 4),
                                     Wrap(
@@ -2110,14 +2214,17 @@ class _InstalledAppsPickerDialogState
                                           ),
                                         if (app.apkSize > 0)
                                           _AppInfoChip(
-                                            label: FileUtils.formatBytes(app.apkSize.toDouble()),
+                                            label: FileUtils.formatBytes(
+                                              app.apkSize.toDouble(),
+                                            ),
                                             icon: Icons.storage_rounded,
                                             isPrimary: true,
                                           ),
                                         if (app.isSystemApp)
                                           _AppInfoChip(
                                             label: 'System',
-                                            icon: Icons.admin_panel_settings_rounded,
+                                            icon: Icons
+                                                .admin_panel_settings_rounded,
                                           ),
                                       ],
                                     ),

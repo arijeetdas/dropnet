@@ -23,6 +23,8 @@ class DiscoveryService {
 
   static const _discoveryPort = 45454;
   static const _broadcastAddress = '255.255.255.255';
+  static const _presenceTransportBroadcast = 'broadcast';
+  static const _presenceTransportReply = 'reply';
   static const _identityFileName = 'dropnet_identity.json';
   static const _tlsCertCommonName = 'DropNet Local';
   static const _tlsCertSans = <String>['localhost', '127.0.0.1'];
@@ -33,6 +35,7 @@ class DiscoveryService {
   int _deviceNumber;
   String _manufacturerTag = '';
   String _deviceId = '';
+  bool _pairingModeEnabled = false;
   final LocalTlsCertificateService _tlsCertificates;
   String _tlsCertificateFingerprint = '';
   String _tlsCertificatePem = '';
@@ -154,6 +157,33 @@ class DiscoveryService {
     }
   }
 
+  Future<void> updatePairingModeEnabled(bool enabled) async {
+    if (_pairingModeEnabled == enabled) {
+      return;
+    }
+    _pairingModeEnabled = enabled;
+
+    if (_devices.isNotEmpty) {
+      _devices.clear();
+      _emitDevices();
+    }
+
+    if (_socket == null) {
+      return;
+    }
+
+    await _announce();
+    if (!Platform.isWindows) {
+      await _mdnsSub?.cancel();
+      _mdnsSub = null;
+      await _mdnsDiscovery?.stop();
+      _mdnsDiscovery = null;
+      await _mdnsBroadcast?.stop();
+      _mdnsBroadcast = null;
+      await _startMdns();
+    }
+  }
+
   Future<void> resetManufacturerTagToAuto() async {
     final detected = await _detectManufacturerTag();
     final normalized = _normalizeManufacturer(detected);
@@ -231,84 +261,90 @@ class DiscoveryService {
     if (event != RawSocketEvent.read) {
       return;
     }
-    final datagram = _socket?.receive();
-    if (datagram == null) {
-      return;
+    while (true) {
+      final datagram = _socket?.receive();
+      if (datagram == null) {
+        break;
+      }
+
+      try {
+        final message = utf8.decode(datagram.data);
+        final parsed = jsonDecode(message) as Map<String, dynamic>;
+        if (parsed['kind'] != 'dropnet_presence') {
+          continue;
+        }
+
+        final payloadMap = (parsed['payload'] as Map?)?.cast<String, dynamic>();
+        if (payloadMap == null) {
+          continue;
+        }
+
+        if (!_isPresenceSecurityValid(
+          payload: payloadMap,
+          parsedPacket: parsed,
+        )) {
+          continue;
+        }
+
+        if (_parseBoolish(payloadMap['pairingModeEnabled']) !=
+            _pairingModeEnabled) {
+          continue;
+        }
+
+        final incoming = DeviceModel.fromJson(payloadMap);
+        final incomingId = incoming.deviceId.trim();
+        if (incomingId.isNotEmpty && incomingId == _deviceId) {
+          continue;
+        }
+
+        final seenAt = DateTime.now();
+        final key = incomingId.isNotEmpty
+            ? incomingId
+            : datagram.address.address;
+        final previous = _devices[key];
+        _upsertDiscoveredDevice(
+          key,
+          incoming.copyWith(
+            ipAddress: datagram.address.address,
+            isOnline: true,
+            lastSeen: seenAt,
+          ),
+        );
+        if (_shouldReplyToPresence(
+          packet: parsed,
+          previous: previous,
+          senderAddress: datagram.address.address,
+          seenAt: seenAt,
+        )) {
+          unawaited(_replyToPresence(datagram.address));
+        }
+      } catch (_) {}
     }
-
-    try {
-      final message = utf8.decode(datagram.data);
-      final parsed = jsonDecode(message) as Map<String, dynamic>;
-      if (parsed['kind'] != 'dropnet_presence') {
-        return;
-      }
-
-      final payloadMap = (parsed['payload'] as Map?)?.cast<String, dynamic>();
-      if (payloadMap == null) {
-        return;
-      }
-
-      if (!_isPresenceSecurityValid(
-        payload: payloadMap,
-        parsedPacket: parsed,
-      )) {
-        return;
-      }
-
-      final incoming = DeviceModel.fromJson(payloadMap);
-      final incomingId = incoming.deviceId.trim();
-      if (incomingId.isNotEmpty && incomingId == _deviceId) {
-        return;
-      }
-
-      final key = incomingId.isNotEmpty ? incomingId : datagram.address.address;
-      _upsertDiscoveredDevice(
-        key,
-        incoming.copyWith(
-          ipAddress: datagram.address.address,
-          isOnline: true,
-          lastSeen: DateTime.now(),
-        ),
-      );
-    } catch (_) {}
   }
 
   Future<void> _announce() async {
-    final ipAddress = await getLocalIp();
-    if (ipAddress.isEmpty) {
-      return;
-    }
-
-    await _refreshTlsFingerprintAndCertificate();
-    if (_tlsCertificateFingerprint.isEmpty) {
-      return;
-    }
-
-    final device = DeviceModel(
-      deviceId: _deviceId,
-      deviceName: deviceName,
-      manufacturer: _manufacturerTag,
-      platform: platformTag,
-      ipAddress: ipAddress,
-      deviceType: _detectType(),
-      isOnline: true,
-      lastSeen: DateTime.now(),
-      tlsCertificateSha256: _tlsCertificateFingerprint,
+    final packet = await _buildPresencePacket(
+      transport: _presenceTransportBroadcast,
     );
+    if (packet == null) {
+      return;
+    }
 
-    final timestampMs = DateTime.now().millisecondsSinceEpoch;
-    final nonce = const Uuid().v4();
-    final payload = {
-      'kind': 'dropnet_presence',
-      'payload': device.toJson(),
-      'security': {'version': 1, 'timestampMs': timestampMs, 'nonce': nonce},
-    };
-
-    final bytes = utf8.encode(jsonEncode(payload));
     final targets = await _collectBroadcastTargets();
     for (final target in targets) {
-      _socket?.send(bytes, target, _discoveryPort);
+      _socket?.send(packet, target, _discoveryPort);
     }
+  }
+
+  Future<void> _replyToPresence(InternetAddress target) async {
+    final packet = await _buildPresencePacket(
+      transport: _presenceTransportReply,
+      preferredPeerIp: target.address,
+    );
+    if (packet == null) {
+      return;
+    }
+    _socket?.send(packet, target, _discoveryPort);
   }
 
   Future<void> _startMdns() async {
@@ -332,6 +368,7 @@ class DiscoveryService {
         'manufacturer': _manufacturerTag,
         'platform': platformTag,
         'tlsCertificateSha256': _tlsCertificateFingerprint,
+        'pairingModeEnabled': _pairingModeEnabled ? '1' : '0',
       },
     );
 
@@ -370,6 +407,12 @@ class DiscoveryService {
               .trim()
               .toLowerCase();
       if (tlsCertificateSha256.isEmpty) {
+        return;
+      }
+      final incomingPairingMode = _parseBoolish(
+        service.attributes['pairingModeEnabled'],
+      );
+      if (incomingPairingMode != _pairingModeEnabled) {
         return;
       }
       final rawId = (service.attributes['deviceId']?.toString() ?? '').trim();
@@ -425,21 +468,26 @@ class DiscoveryService {
 
   Future<List<InternetAddress>> _collectBroadcastTargets() async {
     final targets = <String>{_broadcastAddress};
-    final wifiIp = await _networkInfo.getWifiIP();
-    if (wifiIp != null && wifiIp.isNotEmpty) {
+    final wifiBroadcast = (await _networkInfo.getWifiBroadcast())?.trim() ?? '';
+    if (_isUsableIpv4(wifiBroadcast)) {
+      targets.add(wifiBroadcast);
+    }
+
+    final wifiIp = (await _networkInfo.getWifiIP())?.trim() ?? '';
+    if (_isUsableIpv4(wifiIp)) {
       targets.add(_fallbackBroadcastForIp(wifiIp));
     }
 
-    final interfaces = await NetworkInterface.list(
-      type: InternetAddressType.IPv4,
-    );
-    for (final iface in interfaces) {
-      for (final address in iface.addresses) {
-        if (address.isLoopback || address.type != InternetAddressType.IPv4) {
-          continue;
-        }
-        targets.add(_fallbackBroadcastForIp(address.address));
-      }
+    final wifiGateway = (await _networkInfo.getWifiGatewayIP())?.trim() ?? '';
+    if (_isUsableIpv4(wifiGateway)) {
+      // Some Android hotspot/client combinations suppress L2 broadcast but still
+      // pass unicast via the gateway/host.
+      targets.add(wifiGateway);
+    }
+
+    final interfaces = await _listEligibleIpv4Addresses();
+    for (final endpoint in interfaces) {
+      targets.add(_fallbackBroadcastForIp(endpoint.address.address));
     }
 
     return targets.map(InternetAddress.new).toList(growable: false);
@@ -491,23 +539,38 @@ class DiscoveryService {
     }
   }
 
-  Future<String> getLocalIp() async {
-    final wifiIp = await _networkInfo.getWifiIP();
-    if (wifiIp != null && wifiIp.isNotEmpty) {
+  Future<String> getLocalIp({String? preferredPeerIp}) async {
+    final normalizedPeerIp = (preferredPeerIp ?? '').trim();
+    final wifiIp = (await _networkInfo.getWifiIP())?.trim() ?? '';
+    final interfaces = await _listEligibleIpv4Addresses();
+
+    if (_isUsableIpv4(normalizedPeerIp)) {
+      final sameSubnet = interfaces
+          .where((endpoint) {
+            return _same24Subnet(endpoint.address.address, normalizedPeerIp);
+          })
+          .toList(growable: false);
+      if (sameSubnet.isNotEmpty) {
+        sameSubnet.sort(_compareIpv4Endpoints);
+        return sameSubnet.first.address.address;
+      }
+    }
+
+    if (_isUsableIpv4(wifiIp)) {
+      for (final endpoint in interfaces) {
+        if (endpoint.address.address == wifiIp) {
+          return endpoint.address.address;
+        }
+      }
       return wifiIp;
     }
 
-    final interfaces = await NetworkInterface.list(
-      type: InternetAddressType.IPv4,
-    );
-    for (final iface in interfaces) {
-      for (final address in iface.addresses) {
-        if (!address.isLoopback && address.type == InternetAddressType.IPv4) {
-          return address.address;
-        }
-      }
+    if (interfaces.isEmpty) {
+      return '';
     }
-    return '';
+
+    interfaces.sort(_compareIpv4Endpoints);
+    return interfaces.first.address.address;
   }
 
   Future<void> randomizeBaseName() async {
@@ -780,6 +843,181 @@ class DiscoveryService {
     }
   }
 
+  Future<List<int>?> _buildPresencePacket({
+    required String transport,
+    String? preferredPeerIp,
+  }) async {
+    final ipAddress = await getLocalIp(preferredPeerIp: preferredPeerIp);
+    if (ipAddress.isEmpty) {
+      return null;
+    }
+
+    await _refreshTlsFingerprintAndCertificate();
+    if (_tlsCertificateFingerprint.isEmpty) {
+      return null;
+    }
+
+    final device = DeviceModel(
+      deviceId: _deviceId,
+      deviceName: deviceName,
+      manufacturer: _manufacturerTag,
+      platform: platformTag,
+      ipAddress: ipAddress,
+      deviceType: _detectType(),
+      isOnline: true,
+      lastSeen: DateTime.now(),
+      tlsCertificateSha256: _tlsCertificateFingerprint,
+    );
+
+    final timestampMs = DateTime.now().millisecondsSinceEpoch;
+    final nonce = const Uuid().v4();
+    return utf8.encode(
+      jsonEncode({
+        'kind': 'dropnet_presence',
+        'transport': transport,
+        'payload': {
+          ...device.toJson(),
+          'pairingModeEnabled': _pairingModeEnabled,
+        },
+        'security': {'version': 1, 'timestampMs': timestampMs, 'nonce': nonce},
+      }),
+    );
+  }
+
+  Future<List<_Ipv4Endpoint>> _listEligibleIpv4Addresses() async {
+    final interfaces = await NetworkInterface.list(
+      type: InternetAddressType.IPv4,
+    );
+    final results = <_Ipv4Endpoint>[];
+    for (final iface in interfaces) {
+      for (final address in iface.addresses) {
+        final value = address.address.trim();
+        if (!_isUsableIpv4(value) || address.isLoopback) {
+          continue;
+        }
+        results.add(_Ipv4Endpoint(interfaceName: iface.name, address: address));
+      }
+    }
+    return results;
+  }
+
+  bool _shouldReplyToPresence({
+    required Map<String, dynamic> packet,
+    required DeviceModel? previous,
+    required String senderAddress,
+    required DateTime seenAt,
+  }) {
+    final transport = (packet['transport']?.toString() ?? '').trim();
+    if (transport == _presenceTransportReply) {
+      return false;
+    }
+    if (!_isUsableIpv4(senderAddress)) {
+      return false;
+    }
+    if (previous == null) {
+      return true;
+    }
+    if (!previous.isOnline) {
+      return true;
+    }
+    if (previous.ipAddress != senderAddress) {
+      return true;
+    }
+    return seenAt.difference(previous.lastSeen) > const Duration(seconds: 6);
+  }
+
+  int _compareIpv4Endpoints(_Ipv4Endpoint left, _Ipv4Endpoint right) {
+    return _scoreIpv4Endpoint(right).compareTo(_scoreIpv4Endpoint(left));
+  }
+
+  int _scoreIpv4Endpoint(_Ipv4Endpoint endpoint) {
+    final lowerName = endpoint.interfaceName.toLowerCase();
+    var score = 0;
+    if (lowerName.contains('hotspot') || lowerName.contains('wi-fi direct')) {
+      score += 500;
+    }
+    if (lowerName.contains('wi-fi') ||
+        lowerName.contains('wifi') ||
+        lowerName.contains('wireless') ||
+        lowerName.contains('wlan')) {
+      score += 300;
+    }
+    if (lowerName.contains('ethernet')) {
+      score += 200;
+    }
+    if (_isPrivateIpv4(endpoint.address.address)) {
+      score += 100;
+    }
+    return score;
+  }
+
+  bool _isUsableIpv4(String value) {
+    if (value.isEmpty || value == '0.0.0.0') {
+      return false;
+    }
+    final address = InternetAddress.tryParse(value);
+    if (address == null || address.type != InternetAddressType.IPv4) {
+      return false;
+    }
+    return !address.isLoopback && !_isLinkLocalIpv4(value);
+  }
+
+  bool _isPrivateIpv4(String value) {
+    final octets = _parseIpv4Octets(value);
+    if (octets == null) {
+      return false;
+    }
+    return octets[0] == 10 ||
+        (octets[0] == 172 && octets[1] >= 16 && octets[1] <= 31) ||
+        (octets[0] == 192 && octets[1] == 168);
+  }
+
+  bool _isLinkLocalIpv4(String value) {
+    final octets = _parseIpv4Octets(value);
+    if (octets == null) {
+      return false;
+    }
+    return octets[0] == 169 && octets[1] == 254;
+  }
+
+  bool _same24Subnet(String left, String right) {
+    final leftOctets = _parseIpv4Octets(left);
+    final rightOctets = _parseIpv4Octets(right);
+    if (leftOctets == null || rightOctets == null) {
+      return false;
+    }
+    return leftOctets[0] == rightOctets[0] &&
+        leftOctets[1] == rightOctets[1] &&
+        leftOctets[2] == rightOctets[2];
+  }
+
+  List<int>? _parseIpv4Octets(String value) {
+    final parts = value.split('.');
+    if (parts.length != 4) {
+      return null;
+    }
+    final octets = <int>[];
+    for (final part in parts) {
+      final octet = int.tryParse(part);
+      if (octet == null || octet < 0 || octet > 255) {
+        return null;
+      }
+      octets.add(octet);
+    }
+    return octets;
+  }
+
+  bool _parseBoolish(dynamic value) {
+    if (value is bool) {
+      return value;
+    }
+    if (value is num) {
+      return value != 0;
+    }
+    final text = (value?.toString() ?? '').trim().toLowerCase();
+    return text == '1' || text == 'true' || text == 'yes' || text == 'on';
+  }
+
   bool _isPresenceSecurityValid({
     required Map<String, dynamic> payload,
     required Map<String, dynamic> parsedPacket,
@@ -858,6 +1096,7 @@ class DiscoveryService {
       'platform': (payload['platform']?.toString() ?? '').trim(),
       'ipAddress': (payload['ipAddress']?.toString() ?? '').trim(),
       'deviceType': (payload['deviceType']?.toString() ?? '').trim(),
+      'pairingModeEnabled': _parseBoolish(payload['pairingModeEnabled']),
       'tlsCertificateSha256':
           (payload['tlsCertificateSha256']?.toString() ?? '')
               .trim()
@@ -936,4 +1175,11 @@ class DiscoveryService {
         .firstWhere((value) => value.isNotEmpty, orElse: () => fallback);
     return _normalizeManufacturer(first);
   }
+}
+
+class _Ipv4Endpoint {
+  const _Ipv4Endpoint({required this.interfaceName, required this.address});
+
+  final String interfaceName;
+  final InternetAddress address;
 }
