@@ -29,19 +29,6 @@
     --ease: cubic-bezier(0.4, 0, 0.2, 1);
   }
 
-  @media (prefers-color-scheme: light) {
-    :root {
-      --bg: #f3f4f6;
-      --canvas: #ffffff;
-      --card: rgba(255, 255, 255, 0.8);
-      --card-border: rgba(0, 0, 0, 0.05);
-      --text: #111827;
-      --text-muted: #6b7280;
-      --accent: #0d9488;
-      --accent-soft: rgba(13, 148, 136, 0.1);
-    }
-  }
-
   * { 
     box-sizing: border-box; 
     -webkit-tap-highlight-color: transparent;
@@ -276,7 +263,62 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 14px;
     animation: fadeIn 0.5s var(--ease) both;
+  }
+
+  .file-main {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+    flex: 1;
+  }
+
+  .file-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 12px;
+    background: var(--accent-soft);
+    border: 1px solid rgba(45, 212, 191, 0.2);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+  }
+
+  .file-icon svg {
+    width: 18px;
+    height: 18px;
+    stroke: var(--accent);
+    fill: none;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .file-copy {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .file-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 600;
+  }
+
+  .file-meta {
+    color: var(--text-muted);
+    font-size: 0.78rem;
+  }
+
+  .file-action {
+    flex: 0 0 auto;
   }
 
   @keyframes fadeIn {
@@ -380,6 +422,28 @@
     
     .row { flex-direction: column; }
     button, input[type="text"] { width: 100%; }
+
+    .file-item {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 10px;
+    }
+
+    .file-item .file-main {
+      width: 100%;
+    }
+
+    .file-item .file-copy {
+      width: 100%;
+    }
+
+    .file-item .file-name {
+      max-width: 100%;
+    }
+
+    .file-item .file-action {
+      width: 100%;
+    }
     
     .status-line { width: 100%; justify-content: center; }
   }
@@ -505,6 +569,59 @@
       let pendingOffer = null;
       let activeOfferId = '';
 
+      function extOf(name) {
+        const clean = `${name || ''}`.trim();
+        const dot = clean.lastIndexOf('.');
+        return dot >= 0 ? clean.substring(dot).toLowerCase() : '';
+      }
+
+      function fileIconForName(name) {
+        return '<svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>';
+      }
+
+      function fileTypeLabel(name) {
+        const ext = extOf(name);
+        if (!ext) return 'File';
+        if (['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg', '.heic', '.heif'].includes(ext)) return 'Image';
+        if (['.mp4', '.mov', '.mkv', '.avi', '.webm', '.m4v', '.3gp'].includes(ext)) return 'Video';
+        if (['.mp3', '.wav', '.flac', '.aac', '.ogg', '.m4a', '.opus'].includes(ext)) return 'Audio';
+        if (['.pdf'].includes(ext)) return 'PDF';
+        if (['.doc', '.docx', '.odt', '.rtf'].includes(ext)) return 'Document';
+        if (['.xls', '.xlsx', '.csv', '.ods'].includes(ext)) return 'Spreadsheet';
+        if (['.ppt', '.pptx', '.odp'].includes(ext)) return 'Presentation';
+        if (['.txt', '.md', '.json', '.xml', '.yaml', '.yml', '.ini', '.log'].includes(ext)) return 'Text';
+        if (['.dart', '.js', '.ts', '.tsx', '.jsx', '.py', '.java', '.kt', '.cpp', '.c', '.h', '.hpp', '.cs', '.php', '.go', '.rs', '.swift', '.html', '.css', '.scss', '.sql', '.sh', '.bat', '.ps1'].includes(ext)) return 'Code';
+        if (['.zip', '.rar', '.7z', '.tar', '.gz'].includes(ext)) return 'Archive';
+        return ext.replace('.', '').toUpperCase();
+      }
+
+      function buildFileMain(name) {
+        const wrap = document.createElement('div');
+        wrap.className = 'file-main';
+
+        const icon = document.createElement('span');
+        icon.className = 'file-icon';
+        icon.innerHTML = fileIconForName(name);
+
+        const copy = document.createElement('div');
+        copy.className = 'file-copy';
+
+        const title = document.createElement('span');
+        title.className = 'file-name';
+        title.textContent = name;
+        title.title = name;
+
+        const meta = document.createElement('span');
+        meta.className = 'file-meta';
+        meta.textContent = fileTypeLabel(name);
+
+        copy.appendChild(title);
+        copy.appendChild(meta);
+        wrap.appendChild(icon);
+        wrap.appendChild(copy);
+        return wrap;
+      }
+
       function authHeaders(extraHeaders = {}) {
         if (!token) {
           return { ...extraHeaders };
@@ -536,37 +653,127 @@
         return q ? `${path}?${q}` : path;
       }
 
-      function detectBrowserDeviceName() {
+      async function detectBrowserDeviceName() {
         try {
           const ua = navigator.userAgent || '';
+          const uaData = navigator.userAgentData;
+          const filteredBrands = (uaData?.brands || [])
+            .map((entry) => (entry?.brand || '').trim())
+            .filter((brand) => brand && !/not.?a.?brand|chromium/i.test(brand));
+          const browserBrand = filteredBrands.length > 0
+            ? filteredBrands[0]
+            : ((navigator.vendor || 'Browser').replace(/\s+inc\.?$/i, '').trim() || 'Browser');
+
+          function normalizeAndroidModel(rawValue) {
+            let value = `${rawValue || ''}`.trim();
+            if (!value) return '';
+            value = value
+              .replace(/^Linux;?\s*/i, '')
+              .replace(/\bwv\b/ig, '')
+              .replace(/\s+/g, ' ')
+              .trim();
+            if (!value) return '';
+            if (/^[A-Za-z]$/.test(value)) return '';
+            return value;
+          }
+
+          function mergeBrandModel(brand, model) {
+            const cleanedBrand = `${brand || ''}`.trim();
+            const cleanedModel = `${model || ''}`.trim();
+            if (!cleanedModel) return '';
+            if (!cleanedBrand) return cleanedModel;
+            if (cleanedModel.toLowerCase().includes(cleanedBrand.toLowerCase())) {
+              return cleanedModel;
+            }
+            return `${cleanedBrand} ${cleanedModel}`.trim();
+          }
+
+          function inferAndroidBrand(modelValue) {
+            const model = `${modelValue || ''}`.trim();
+            if (!model) return '';
+            const upper = model.toUpperCase();
+
+            if (/NOTHING/.test(upper) || /^A\d{3,4}$/.test(upper)) return 'Nothing';
+            if (/^SM-|^GT-|^SCH-|^SGH-|^SHV-/.test(upper)) return 'Samsung';
+            if (/^PIXEL\s?\d|^GOOGLE\sPIXEL/.test(upper)) return 'Google';
+            if (/^V\d{4}|^VIVO/.test(upper)) return 'vivo';
+            if (/^I\d{4}|^IQOO/.test(upper)) return 'iQOO';
+            if (/^CPH\d{4}|^OPPO/.test(upper)) return 'OPPO';
+            if (/^RMX\d{4}|^REALME/.test(upper)) return 'realme';
+            if (/^IN\d{4}|^ONEPLUS/.test(upper)) return 'OnePlus';
+            if (/^M\d{4}|^REDMI|^MI\s|^XIAOMI|^POCO/.test(upper)) return 'Xiaomi';
+
+            const leadingWord = model.split(/[\s_-]+/)[0] || '';
+            if (/^[A-Za-z]{3,}$/.test(leadingWord) && !/^android$/i.test(leadingWord)) {
+              return leadingWord;
+            }
+            return '';
+          }
+
+          const isAndroid = /Android/i.test(ua);
+          if (isAndroid && uaData?.getHighEntropyValues) {
+            try {
+              const highEntropy = await uaData.getHighEntropyValues(['model']);
+              const hintedModel = normalizeAndroidModel(highEntropy?.model);
+              if (hintedModel) {
+                const manufacturerBrand =
+                  inferAndroidBrand(hintedModel) || browserBrand || 'Android';
+                const merged = mergeBrandModel(manufacturerBrand, hintedModel);
+                if (merged) {
+                  return merged;
+                }
+              }
+            } catch (_) {}
+          }
+
           const androidBuildModel = ua.match(/Android\s[\d.]+;\s*([^;\)]+?)\s+Build\//i);
           if (androidBuildModel && androidBuildModel[1]) {
-            const raw = androidBuildModel[1].trim();
-            const token = raw.split(/[\s,_-]+/).find((part) => /^[A-Za-z]\d{2,}[A-Za-z0-9]*$/i.test(part));
-            if (token) {
-              return token;
-            }
-            if (raw) {
-              return raw;
+            const model = normalizeAndroidModel(androidBuildModel[1]);
+            if (model) {
+              const manufacturerBrand =
+                inferAndroidBrand(model) || browserBrand || 'Android';
+              const merged = mergeBrandModel(manufacturerBrand, model);
+              if (merged) {
+                return merged;
+              }
             }
           }
 
-          const uaData = navigator.userAgentData;
           const platform = uaData?.platform || navigator.platform || 'Unknown';
           const isMobile = uaData?.mobile ?? /Android|iPhone|iPad|Mobile/i.test(ua);
-          const brand = (uaData?.brands && uaData.brands.length) ? uaData.brands[0].brand : (navigator.vendor || 'Browser');
           const modelMatch = ua.match(/SM-[A-Z0-9]+|Pixel\s\d+[A-Za-z ]*|iPhone|iPad|M\d{4}[A-Z0-9]*/i);
           const model = modelMatch ? modelMatch[0].trim() : '';
-          if (model) return `${brand} ${model}`.trim();
+          if (model) {
+            const merged = mergeBrandModel(browserBrand, model);
+            if (merged) {
+              return merged;
+            }
+          }
           const androidDevice = ua.match(/Android\s[\d.]+;\s([^;\)]+)/i);
           if (androidDevice && androidDevice[1]) {
-            const raw = androidDevice[1].trim();
-            const token = raw.split(/[\s,_-]+/).find((part) => /^[A-Za-z]\d{2,}[A-Za-z0-9]*$/i.test(part));
-            return (token || raw);
+            const normalized = normalizeAndroidModel(androidDevice[1]);
+            if (normalized) {
+              const merged = mergeBrandModel(
+                inferAndroidBrand(normalized) || 'Android',
+                normalized,
+              );
+              if (merged) {
+                return merged;
+              }
+            }
           }
-          return `${brand} ${platform}${isMobile ? ' Mobile' : ''}`.trim();
+          return `${browserBrand} ${platform}${isMobile ? ' Mobile' : ''}`.trim();
         } catch (_) {
           return 'Web Browser Device';
+        }
+      }
+
+      async function initializeClientName() {
+        try {
+          const detected = await detectBrowserDeviceName();
+          clientNameInput.value = (detected || '').trim() || 'Web Browser Device';
+        } catch (_) {
+          clientNameInput.value = 'Web Browser Device';
         }
       }
 
@@ -658,7 +865,7 @@
         for (const item of selectedItems.slice(0, 30)) {
           const row = document.createElement('div');
           row.className = 'selected-item';
-          row.textContent = item.relativePath;
+          row.appendChild(buildFileMain(item.relativePath));
           selectedListEl.appendChild(row);
         }
         if (selectedItems.length > 30) {
@@ -776,15 +983,13 @@
         for (const name of data.files) {
           const row = document.createElement('div');
           row.className = 'file-item';
-          const label = document.createElement('span');
-          label.textContent = name;
+          row.appendChild(buildFileMain(name));
 
           const downloadButton = document.createElement('button');
-          downloadButton.className = 'secondary';
+          downloadButton.className = 'secondary file-action';
           downloadButton.textContent = 'Download';
           downloadButton.onclick = () => downloadIncomingFile(name);
 
-          row.appendChild(label);
           row.appendChild(downloadButton);
           filesEl.appendChild(row);
         }
@@ -817,7 +1022,7 @@
         for (const fileName of offer.files || []) {
           const row = document.createElement('div');
           row.className = 'selected-item';
-          row.textContent = fileName;
+          row.appendChild(buildFileMain(fileName));
           incomingFiles.appendChild(row);
         }
         incomingOverlay.classList.remove('hidden');
@@ -868,7 +1073,7 @@
       document.getElementById('pickerMedia').addEventListener('change', (event) => addSelectedFiles(Array.from(event.target.files || [])));
       document.getElementById('pickerFolder').addEventListener('change', (event) => addSelectedFiles(Array.from(event.target.files || [])));
 
-      clientNameInput.value = detectBrowserDeviceName();
+      initializeClientName();
       loadAvailableDevices();
       setInterval(() => refreshOfferAndFiles(false), 2000);
     </script>

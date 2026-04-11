@@ -471,7 +471,9 @@ class TcpTransferService {
         final toRead = min(remain, _chunkSize);
         final plain = await reader.read(toRead);
         if (plain.isEmpty) {
-          break;
+          throw const FileSystemException(
+            'Unexpected EOF while reading source file during transfer.',
+          );
         }
         final iv = _aes.generateIvBytes();
         final encrypted = _aes.encryptChunk(
@@ -579,7 +581,11 @@ class TcpTransferService {
         ),
       );
       _archiveTransfer(transferId);
-      final retryable = error is SocketException || error is TimeoutException;
+      final retryable =
+          error is SocketException ||
+          error is TimeoutException ||
+          (error is FileSystemException &&
+              error.message.contains('Unexpected EOF'));
       return retryable && maxAttempts > attempt;
     } finally {
       await lineIterator?.cancel();
@@ -1124,6 +1130,9 @@ class TcpTransferService {
 
   String _humanizeTransferError(Object error) {
     final raw = error.toString();
+    if (raw.contains('Unexpected EOF while reading source file')) {
+      return 'Source file became unavailable while sending. Please reselect the file and try again.';
+    }
     if (raw.contains('SocketException')) {
       return 'Network error while transferring file.';
     }

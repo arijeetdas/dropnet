@@ -35,14 +35,20 @@ class HomeScreen extends ConsumerWidget {
           actions: [
             Padding(
               padding: const EdgeInsets.only(right: 12),
-              child: Badge.count(
-                count: state.pendingIncomingRequests.length,
-                isLabelVisible: state.pendingIncomingRequests.isNotEmpty,
-                child: IconButton(
-                  tooltip: 'Incoming requests',
-                  onPressed: () => context.push('/receive'),
-                  icon: const Icon(Icons.notifications_active_outlined),
-                ),
+              child: Builder(
+                builder: (context) {
+                  final pendingCount = state.pendingIncomingRequests.length +
+                      state.pendingPairingRequests.length;
+                  return Badge.count(
+                    count: pendingCount,
+                    isLabelVisible: pendingCount > 0,
+                    child: IconButton(
+                      tooltip: 'Incoming requests',
+                      onPressed: () => context.push('/receive'),
+                      icon: const Icon(Icons.notifications_active_outlined),
+                    ),
+                  );
+                },
               ),
             ),
           ],

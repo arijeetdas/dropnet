@@ -106,7 +106,6 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
   bool _refreshingNearby = false;
   bool _extractingApk = false;
   bool _importingSharedFiles = false;
-  bool _tempShareLinkCopied = false;
   Timer? _tempShareCopyResetTimer;
 
   @override
@@ -588,66 +587,47 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
         if (tempShare.running) ...[
           const SizedBox(height: 12),
 
-          // URL row
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Expanded(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 10,
-                  ),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(12),
-                    color: colorScheme.surfaceContainerHighest.withValues(
-                      alpha: 0.35,
+          // One row per adapter URL
+          for (final url in (tempShare.urls.isNotEmpty ? tempShare.urls : [tempShare.url]))
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(18),
+                        color: colorScheme.surfaceContainerHighest.withValues(
+                          alpha: 0.35,
+                        ),
+                      ),
+                      child: SelectableText(
+                        url,
+                        style: theme.textTheme.bodySmall,
+                      ),
                     ),
                   ),
-                  child: SelectableText(
-                    tempShare.url,
-                    style: theme.textTheme.bodySmall,
+                  const SizedBox(width: 4),
+                  IconButton(
+                    tooltip: 'Copy link',
+                    icon: const Icon(Icons.copy_rounded),
+                    onPressed: () => _copyTemporaryShareLink(url),
                   ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              IconButton.filledTonal(
-                tooltip: _tempShareLinkCopied ? 'Copied' : 'Copy link',
-                onPressed: () => _copyTemporaryShareLink(tempShare.url),
-                icon: Icon(
-                  _tempShareLinkCopied
-                      ? Icons.check_rounded
-                      : Icons.copy_rounded,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-
-          // QR code
-          Center(
-            child: Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(16),
-                color: colorScheme.surfaceContainerHighest.withValues(
-                  alpha: 0.4,
-                ),
-              ),
-              child: QrImageView(
-                data: tempShare.url,
-                size: 200,
-                backgroundColor: isDark ? Colors.black : Colors.white,
-                eyeStyle: QrEyeStyle(
-                  color: isDark ? Colors.white : Colors.black,
-                ),
-                dataModuleStyle: QrDataModuleStyle(
-                  color: isDark ? Colors.white : Colors.black,
-                ),
+                  IconButton(
+                    tooltip: 'Show QR code',
+                    icon: const Icon(Icons.qr_code_rounded),
+                    onPressed: () => _showTempShareQrDialog(url),
+                  ),
+                ],
               ),
             ),
-          ),
-          const SizedBox(height: 10),
+
+          const SizedBox(height: 4),
 
           // Status chips (PIN + countdown)
           if (tempShare.pin.isNotEmpty || tempShare.expiresAt != null)
@@ -724,6 +704,7 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
     final key = 'device:${device.deviceId}';
     final selected = _selectedTargets.contains(key);
     final trusted = _isTrustedDevice(appState, device);
+    final favorite = _isFavoriteDevice(appState, device);
     final pairingRequired = appState.requirePairingCodeForDirectTransfers;
     final colorScheme = Theme.of(context).colorScheme;
     return AnimatedContainer(
@@ -756,6 +737,18 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
               color: device.isOnline ? Colors.green : Colors.grey,
             ),
             const SizedBox(width: 6),
+            IconButton(
+              tooltip: favorite ? 'Remove from favorites' : 'Add to favorites',
+              onPressed: _sending
+                  ? null
+                  : () => _toggleFavoriteDevice(device, favorite: favorite),
+              icon: Icon(
+                favorite
+                    ? Icons.favorite_rounded
+                    : Icons.favorite_border_rounded,
+                color: favorite ? Colors.red : null,
+              ),
+            ),
             if (pairingRequired)
               IconButton(
                 tooltip: trusted ? 'Unpair device' : 'Pair and verify device',
@@ -839,6 +832,7 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
       );
 
       var dialogOpen = false;
+      var userDismissedEarly = false;
       if (mounted) {
         dialogOpen = true;
         unawaited(
@@ -860,11 +854,17 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
             displayCode: pairingCode,
           ),
         );
+
+        // If the dialog closed but the future hasn't resolved yet the user
+        // pressed the dialog's own close button — suppress any follow-up message.
+        userDismissedEarly = dialogOpen;
         dialogOpen = false;
       }
 
       await pairingFuture;
-      _showMessage('Device paired. You can now send files securely.');
+      if (!userDismissedEarly) {
+        _showMessage('Device paired. You can now send files securely.');
+      }
     } catch (error) {
       _showMessage('$error');
     }
@@ -914,6 +914,35 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
                   _selectedTargets.add(key);
                 }
               }),
+      ),
+    );
+  }
+
+  bool _isFavoriteDevice(AppState state, DeviceModel device) {
+    final id = device.deviceId.trim().toLowerCase();
+    if (id.isEmpty) {
+      return false;
+    }
+    return state.favoritePeers.any(
+      (peer) => peer.deviceId.trim().toLowerCase() == id,
+    );
+  }
+
+  Future<void> _toggleFavoriteDevice(
+    DeviceModel device, {
+    required bool favorite,
+  }) async {
+    await ref.read(appControllerProvider.notifier).toggleFavoriteDevice(device);
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          favorite
+              ? 'Removed from favorite devices.'
+              : 'Added to favorite devices.',
+        ),
       ),
     );
   }
@@ -1501,20 +1530,60 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
     }
     await Clipboard.setData(ClipboardData(text: url));
     _tempShareCopyResetTimer?.cancel();
-    if (mounted) {
-      setState(() => _tempShareLinkCopied = true);
-    }
-    _tempShareCopyResetTimer = Timer(const Duration(seconds: 2), () {
-      if (mounted) {
-        setState(() => _tempShareLinkCopied = false);
-      }
-    });
     if (!mounted) {
       return;
     }
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(const SnackBar(content: Text('Link copied to clipboard.')));
+  }
+
+  void _showTempShareQrDialog(String url) {
+    if (url.trim().isEmpty) return;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('QR Code'),
+        content: SizedBox(
+          width: 220,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(16),
+                child: Container(
+                  color: isDark ? Colors.black : Colors.white,
+                  padding: const EdgeInsets.all(8),
+                  child: QrImageView(
+                    data: url,
+                    size: 184,
+                    eyeStyle: QrEyeStyle(
+                      color: isDark ? Colors.white : Colors.black,
+                    ),
+                    dataModuleStyle: QrDataModuleStyle(
+                      color: isDark ? Colors.white : Colors.black,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              SelectableText(
+                url,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 11),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<({bool cancelled, Duration? ttl, String pin})>

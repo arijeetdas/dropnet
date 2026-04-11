@@ -34,6 +34,7 @@ class DiscoveryService {
   String _deviceBaseName;
   int _deviceNumber;
   String _manufacturerTag = '';
+  String _cpuArchitectureTag = '';
   String _deviceId = '';
   bool _pairingModeEnabled = false;
   final LocalTlsCertificateService _tlsCertificates;
@@ -58,6 +59,7 @@ class DiscoveryService {
   Stream<List<DeviceModel>> get devicesStream => _devicesController.stream;
   String get deviceName => '$_deviceBaseName #$_deviceNumber';
   String get manufacturerTag => _manufacturerTag;
+  String get cpuArchitectureTag => _cpuArchitectureTag;
   String get platformTag => _detectPlatformTag();
   String get deviceBaseName => _deviceBaseName;
   int get deviceNumber => _deviceNumber;
@@ -573,6 +575,18 @@ class DiscoveryService {
     return interfaces.first.address.address;
   }
 
+  /// Returns all eligible local IPv4 addresses, sorted by preference
+  /// (Wi-Fi > Ethernet > others). Useful for binding servers that should be
+  /// reachable on every active network adapter.
+  Future<List<String>> getAllLocalIps() async {
+    final interfaces = await _listEligibleIpv4Addresses();
+    if (interfaces.isEmpty) {
+      return const <String>[];
+    }
+    interfaces.sort(_compareIpv4Endpoints);
+    return interfaces.map((e) => e.address.address).toList(growable: false);
+  }
+
   Future<void> randomizeBaseName() async {
     _deviceBaseName = _defaultBaseName();
     await _saveIdentity();
@@ -736,6 +750,7 @@ class DiscoveryService {
       if (!await file.exists()) {
         _deviceNumber = _randomNumber();
         _manufacturerTag = await _detectManufacturerTag();
+        _cpuArchitectureTag = await _detectCpuArchitectureTag();
         _deviceId = const Uuid().v4();
         await _saveIdentity();
         return;
@@ -763,6 +778,7 @@ class DiscoveryService {
       if (_manufacturerTag.isEmpty) {
         _manufacturerTag = await _detectManufacturerTag();
       }
+      _cpuArchitectureTag = await _detectCpuArchitectureTag();
       _deviceId = storedDeviceId.isNotEmpty
           ? storedDeviceId
           : const Uuid().v4();
@@ -770,6 +786,7 @@ class DiscoveryService {
     } catch (_) {
       _deviceNumber = _randomNumber();
       _manufacturerTag = await _detectManufacturerTag();
+      _cpuArchitectureTag = await _detectCpuArchitectureTag();
       _deviceId = const Uuid().v4();
       await _saveIdentity();
     }
@@ -827,6 +844,27 @@ class DiscoveryService {
       }
     } catch (_) {}
     return 'PC';
+  }
+
+  Future<String> _detectCpuArchitectureTag() async {
+    try {
+      if (kIsWeb || !Platform.isAndroid) {
+        return '';
+      }
+
+      final info = await _deviceInfo.androidInfo;
+      final abis = info.supportedAbis;
+      if (abis.isNotEmpty) {
+        return abis.join(', ');
+      }
+
+      // Fallback for older/limited metadata.
+      final fallback = info.supported32BitAbis;
+      if (fallback.isNotEmpty) {
+        return fallback.join(', ');
+      }
+    } catch (_) {}
+    return '';
   }
 
   Future<void> _refreshTlsFingerprintAndCertificate() async {

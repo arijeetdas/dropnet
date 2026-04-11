@@ -24,6 +24,52 @@ class _WebModeScreenState extends ConsumerState<WebModeScreen> {
     return scope == null || scope.currentIndex == 2;
   }
 
+  void _showQrDialog(BuildContext context, String url, bool isDark) {
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('QR Code'),
+        content: SizedBox(
+          width: 220,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(16),
+                child: Container(
+                  color: isDark ? Colors.black : Colors.white,
+                  padding: const EdgeInsets.all(8),
+                  child: QrImageView(
+                    data: url,
+                    size: 184,
+                    eyeStyle: QrEyeStyle(
+                      color: isDark ? Colors.white : Colors.black,
+                    ),
+                    dataModuleStyle: QrDataModuleStyle(
+                      color: isDark ? Colors.white : Colors.black,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              SelectableText(
+                url,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 11),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _startWebServer() async {
     final appState = ref.read(appControllerProvider);
     var replaceTemporaryShare = false;
@@ -298,33 +344,6 @@ class _WebModeScreenState extends ConsumerState<WebModeScreen> {
                             icon: const Icon(Icons.stop_rounded),
                             label: const Text('Stop'),
                           ),
-                          if (web.running)
-                            FilledButton.tonalIcon(
-                              onPressed: () async {
-                                await Clipboard.setData(
-                                  ClipboardData(text: web.url),
-                                );
-                                if (!context.mounted) {
-                                  return;
-                                }
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                    content: Text('Web link copied.'),
-                                  ),
-                                );
-                              },
-                              icon: const Icon(Icons.copy_rounded),
-                              label: const Text('Copy Link'),
-                            ),
-                          if (web.running)
-                            OutlinedButton.icon(
-                              onPressed: () => launchUrl(
-                                Uri.parse(web.url),
-                                mode: LaunchMode.externalApplication,
-                              ),
-                              icon: const Icon(Icons.open_in_browser_rounded),
-                              label: const Text('Open'),
-                            ),
                         ],
                       ),
                     ],
@@ -343,88 +362,76 @@ class _WebModeScreenState extends ConsumerState<WebModeScreen> {
                           Card(
                             child: Padding(
                               padding: const EdgeInsets.all(16),
-                              child: LayoutBuilder(
-                                builder: (context, constraints) {
-                                  final compact = constraints.maxWidth < 620;
-                                  final qr = Center(
-                                    child: Container(
-                                      padding: const EdgeInsets.all(12),
-                                      decoration: BoxDecoration(
-                                        borderRadius: BorderRadius.circular(16),
-                                        color: colorScheme
-                                            .surfaceContainerHighest
-                                            .withValues(alpha: 0.4),
-                                      ),
-                                      child: QrImageView(
-                                        data: web.url,
-                                        size: 200,
-                                        backgroundColor: isDark
-                                            ? Colors.black
-                                            : Colors.white,
-                                        eyeStyle: QrEyeStyle(
-                                          color: isDark
-                                              ? Colors.white
-                                              : Colors.black,
-                                        ),
-                                        dataModuleStyle: QrDataModuleStyle(
-                                          color: isDark
-                                              ? Colors.white
-                                              : Colors.black,
-                                        ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Connection links',
+                                    style: theme.textTheme.titleMedium,
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    'First-time browser access may show a local certificate warning before continuing.',
+                                    style: theme.textTheme.bodySmall?.copyWith(
+                                      color: colorScheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  // One row per adapter URL
+                                  for (final url in (web.urls.isNotEmpty ? web.urls : [web.url]))
+                                    Padding(
+                                      padding: const EdgeInsets.only(bottom: 8),
+                                      child: Row(
+                                        children: [
+                                          Expanded(
+                                            child: Container(
+                                              padding: const EdgeInsets.symmetric(
+                                                horizontal: 12,
+                                                vertical: 10,
+                                              ),
+                                              decoration: BoxDecoration(
+                                                borderRadius: BorderRadius.circular(18),
+                                                color: colorScheme
+                                                    .surfaceContainerHighest
+                                                    .withValues(alpha: 0.35),
+                                              ),
+                                              child: SelectableText(
+                                                url,
+                                                style: theme.textTheme.bodySmall,
+                                              ),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 4),
+                                          IconButton(
+                                            tooltip: 'Copy link',
+                                            icon: const Icon(Icons.copy_rounded),
+                                            onPressed: () async {
+                                              await Clipboard.setData(
+                                                ClipboardData(text: url),
+                                              );
+                                              if (!context.mounted) return;
+                                              ScaffoldMessenger.of(context).showSnackBar(
+                                                const SnackBar(content: Text('Link copied.')),
+                                              );
+                                            },
+                                          ),
+                                          IconButton(
+                                            tooltip: 'Show QR code',
+                                            icon: const Icon(Icons.qr_code_rounded),
+                                            onPressed: () => _showQrDialog(context, url, isDark),
+                                          ),
+                                          IconButton(
+                                            tooltip: 'Open in browser',
+                                            icon: const Icon(Icons.open_in_browser_rounded),
+                                            onPressed: () => launchUrl(
+                                              Uri.parse(url),
+                                              mode: LaunchMode.externalApplication,
+                                            ),
+                                          ),
+                                        ],
                                       ),
                                     ),
-                                  );
-
-                                  final details = Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        'Connection link',
-                                        style: theme.textTheme.titleMedium,
-                                      ),
-                                      const SizedBox(height: 8),
-                                      Container(
-                                        width: double.infinity,
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 12,
-                                          vertical: 10,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          borderRadius: BorderRadius.circular(
-                                            12,
-                                          ),
-                                          color: colorScheme
-                                              .surfaceContainerHighest
-                                              .withValues(alpha: 0.35),
-                                        ),
-                                        child: SelectableText(web.url),
-                                      ),
-                                    ],
-                                  );
-
-                                  if (compact) {
-                                    return Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        details,
-                                        const SizedBox(height: 14),
-                                        qr,
-                                      ],
-                                    );
-                                  }
-
-                                  return Row(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Expanded(child: details),
-                                      const SizedBox(width: 14),
-                                      qr,
-                                    ],
-                                  );
-                                },
+                                ],
                               ),
                             ),
                           ),

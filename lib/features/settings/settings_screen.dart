@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../models/trusted_peer_model.dart';
 import '../../core/state/app_state.dart';
@@ -27,6 +28,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   late final TextEditingController _nameController;
   late final TextEditingController _manufacturerController;
+  late final TextEditingController _maxIncomingRequestsController;
+  late final TextEditingController _incomingRequestTimeoutController;
+  late final FocusNode _maxIncomingRequestsFocusNode;
+  late final FocusNode _incomingRequestTimeoutFocusNode;
   Timer? _nameDebounce;
   Timer? _manufacturerDebounce;
   String _appVersion = '';
@@ -36,6 +41,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     super.initState();
     _nameController = TextEditingController();
     _manufacturerController = TextEditingController();
+    _maxIncomingRequestsController = TextEditingController();
+    _incomingRequestTimeoutController = TextEditingController();
+    _maxIncomingRequestsFocusNode = FocusNode();
+    _incomingRequestTimeoutFocusNode = FocusNode();
     _loadAppVersion();
   }
 
@@ -48,6 +57,24 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
     if (_manufacturerController.text.isEmpty && state.localDeviceManufacturer.isNotEmpty) {
       _manufacturerController.text = state.localDeviceManufacturer;
+    }
+    if (!_maxIncomingRequestsFocusNode.hasFocus) {
+      final valueText = state.maxIncomingRequests.toString();
+      if (_maxIncomingRequestsController.text != valueText) {
+        _maxIncomingRequestsController.value = TextEditingValue(
+          text: valueText,
+          selection: TextSelection.collapsed(offset: valueText.length),
+        );
+      }
+    }
+    if (!_incomingRequestTimeoutFocusNode.hasFocus) {
+      final valueText = state.incomingRequestTimeoutSeconds.toString();
+      if (_incomingRequestTimeoutController.text != valueText) {
+        _incomingRequestTimeoutController.value = TextEditingValue(
+          text: valueText,
+          selection: TextSelection.collapsed(offset: valueText.length),
+        );
+      }
     }
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
@@ -153,8 +180,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       title: const Text('Require Pairing Code for Direct Transfers'),
                       subtitle: Text(
                         state.requirePairingCodeForDirectTransfers
-                            ? 'Transfers require a 6-digit code verification'
-                            : 'Transfers work without additional verification',
+                            ? 'Only paired devices can transfer files.'
+                            : 'Direct transfers are open to discovered devices.',
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
                       value: state.requirePairingCodeForDirectTransfers,
@@ -166,9 +193,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      state.requirePairingCodeForDirectTransfers
-                        ? 'When enabled: Security controls appear in Send, pairing requires 6-digit verification, and only verified paired devices can transfer files.'
-                        : 'When disabled: Security pairing controls are hidden in Send and direct transfers can proceed without pairing verification.',
+                      'Enable this for safer direct transfers using device pairing.',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                             color: Theme.of(context)
                                 .colorScheme
@@ -178,6 +203,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     const SizedBox(height: 16),
                     const Divider(),
                     const SizedBox(height: 8),
+
                     Text(
                       'Paired Devices',
                       style: Theme.of(context).textTheme.labelMedium,
@@ -202,6 +228,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                             const SizedBox(height: 6),
                         itemBuilder: (context, index) {
                           final peer = state.trustedPeers[index];
+                          final pairingEnabled =
+                            state.requirePairingCodeForDirectTransfers;
                           final title = peer.deviceName.trim().isEmpty
                               ? peer.deviceId
                               : peer.deviceName;
@@ -217,15 +245,132 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                               '${_shortFingerprint(peer.tlsCertificateSha256)}\nPaired ${_formatPairedAt(peer.pairedAt)}',
                             ),
                             isThreeLine: true,
-                            trailing: OutlinedButton(
-                              onPressed: () => _unpairTrustedPeer(peer),
-                              child: const Text('Unpair'),
+                            trailing: Tooltip(
+                              message: pairingEnabled
+                                  ? 'Remove this paired device'
+                                  : 'Enable pairing mode to unpair devices',
+                              child: OutlinedButton(
+                                onPressed: pairingEnabled
+                                    ? () => _unpairTrustedPeer(peer)
+                                    : null,
+                                child: const Text('Unpair'),
+                              ),
                             ),
                           );
                         },
                       ),
+                    const SizedBox(height: 16),
+                    const Divider(),
+                    const SizedBox(height: 8),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Show incoming request list'),
+                      subtitle: Text(
+                        state.showIncomingRequestList
+                            ? 'Requests will be queued before approval.'
+                            : 'Requests will show approval dialog immediately.',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                      value: state.showIncomingRequestList,
+                      onChanged: (value) {
+                        ref
+                            .read(appControllerProvider.notifier)
+                            .setShowIncomingRequestList(value);
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    if (state.showIncomingRequestList) ...[
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                'Maximum incoming requests',
+                                style: Theme.of(context).textTheme.bodyMedium,
+                              ),
+                            ),
+                            SizedBox(
+                              width: 80,
+                              child: TextField(
+                                controller: _maxIncomingRequestsController,
+                                focusNode: _maxIncomingRequestsFocusNode,
+                                decoration: InputDecoration(
+                                  isDense: true,
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                                ),
+                                keyboardType: TextInputType.number,
+                                onChanged: (value) {
+                                  final parsed = int.tryParse(value);
+                                  if (parsed != null) {
+                                    ref
+                                        .read(appControllerProvider.notifier)
+                                        .setMaxIncomingRequests(parsed);
+                                  }
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                'Request timeout (seconds)',
+                                style: Theme.of(context).textTheme.bodyMedium,
+                              ),
+                            ),
+                            SizedBox(
+                              width: 80,
+                              child: TextField(
+                                controller: _incomingRequestTimeoutController,
+                                focusNode: _incomingRequestTimeoutFocusNode,
+                                decoration: InputDecoration(
+                                  isDense: true,
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                                ),
+                                keyboardType: TextInputType.number,
+                                onChanged: (value) {
+                                  final parsed = int.tryParse(value);
+                                  if (parsed != null) {
+                                    ref
+                                        .read(appControllerProvider.notifier)
+                                        .setIncomingRequestTimeoutSeconds(parsed);
+                                  }
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ],
                 ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text('Favorites', style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 8),
+            Card(
+              child: ListTile(
+                title: const Text('Favorite devices'),
+                subtitle: Text(
+                  state.favoritePeers.isEmpty
+                      ? 'No favorites yet'
+                      : '${state.favoritePeers.length} device(s) saved',
+                ),
+                leading: const Icon(Icons.favorite_outline_rounded),
+                trailing: const Icon(Icons.chevron_right_rounded),
+                onTap: () => context.push('/settings/favorites'),
               ),
             ),
             const SizedBox(height: 10),
@@ -372,6 +517,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     'Version $_appVersion',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
+                  if (!kIsWeb &&
+                      defaultTargetPlatform == TargetPlatform.android &&
+                      state.localDeviceCpuArchitecture.trim().isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(
+                        'CPU ABI: ${state.localDeviceCpuArchitecture.trim()}',
+                        style: Theme.of(context).textTheme.bodySmall,
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
                   const SizedBox(height: 2),
                   Text(
                     'Developed by Arijeet Das',
@@ -441,6 +597,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     _manufacturerDebounce?.cancel();
     _nameController.dispose();
     _manufacturerController.dispose();
+    _maxIncomingRequestsController.dispose();
+    _incomingRequestTimeoutController.dispose();
+    _maxIncomingRequestsFocusNode.dispose();
+    _incomingRequestTimeoutFocusNode.dispose();
     super.dispose();
   }
 

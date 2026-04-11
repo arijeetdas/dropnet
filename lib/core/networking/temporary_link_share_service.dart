@@ -21,6 +21,7 @@ class TemporaryLinkShareState {
   const TemporaryLinkShareState({
     required this.running,
     required this.host,
+    required this.hosts,
     required this.port,
     required this.token,
     required this.deviceName,
@@ -34,7 +35,10 @@ class TemporaryLinkShareState {
   });
 
   final bool running;
+  /// Primary display host (first eligible adapter).
   final String host;
+  /// All adapter IPs on which the server is reachable.
+  final List<String> hosts;
   final int port;
   final String token;
   final String deviceName;
@@ -46,11 +50,14 @@ class TemporaryLinkShareState {
   final String pin; // empty = no pin required
   final List<TempShareClient> connectedClients;
 
-  String get url => running ? 'https://$host:$port/' : '';
+  String get url => running && host.isNotEmpty ? 'https://$host:$port/' : '';
+  List<String> get urls =>
+      running ? hosts.map((h) => 'https://$h:$port/').toList(growable: false) : const [];
 
   TemporaryLinkShareState copyWith({
     bool? running,
     String? host,
+    List<String>? hosts,
     int? port,
     String? token,
     String? deviceName,
@@ -65,6 +72,7 @@ class TemporaryLinkShareState {
     return TemporaryLinkShareState(
       running: running ?? this.running,
       host: host ?? this.host,
+      hosts: hosts ?? this.hosts,
       port: port ?? this.port,
       token: token ?? this.token,
       deviceName: deviceName ?? this.deviceName,
@@ -81,6 +89,7 @@ class TemporaryLinkShareState {
   static TemporaryLinkShareState initial() => const TemporaryLinkShareState(
     running: false,
     host: '',
+    hosts: [],
     port: 0,
     token: '',
     deviceName: '',
@@ -145,9 +154,7 @@ class TemporaryLinkShareService {
   }) async {
     await stop();
 
-    // Token is no longer exposed in the URL. Require a PIN for baseline
-    // protection in addition to HTTPS.
-    _pin = pin.trim().isEmpty ? generatePin() : pin.trim();
+    _pin = pin.trim();
     _validSessions.clear();
     _connectedClientsList.clear();
 
@@ -162,12 +169,14 @@ class TemporaryLinkShareService {
         if (!_isAccessAllowed()) {
           return Response.forbidden('Invalid or expired link');
         }
-        final cookie = request.headers['cookie'] ?? '';
-        if (!_isValidSession(cookie)) {
-          return Response.ok(
-            _renderPinGatePage(),
-            headers: {'content-type': 'text/html; charset=utf-8'},
-          );
+        if (_pin.isNotEmpty) {
+          final cookie = request.headers['cookie'] ?? '';
+          if (!_isValidSession(cookie)) {
+            return Response.ok(
+              _renderPinGatePage(),
+              headers: {'content-type': 'text/html; charset=utf-8'},
+            );
+          }
         }
         _trackConnection(request);
         final html = _renderSharePage();
@@ -202,9 +211,11 @@ class TemporaryLinkShareService {
         if (!_isAccessAllowed()) {
           return Response.forbidden('Invalid or expired link');
         }
-        final cookie = request.headers['cookie'] ?? '';
-        if (!_isValidSession(cookie)) {
-          return Response.forbidden('Pin required');
+        if (_pin.isNotEmpty) {
+          final cookie = request.headers['cookie'] ?? '';
+          if (!_isValidSession(cookie)) {
+            return Response.forbidden('Pin required');
+          }
         }
 
         final entry = _entries.where((item) => item.id == id).firstOrNull;
@@ -236,7 +247,7 @@ class TemporaryLinkShareService {
 
     final tlsContext = await _tlsCertificates.createServerContext(
       commonName: 'DropNet Temporary Link Server',
-      subjectAlternativeNames: <String>[host],
+      subjectAlternativeNames: _buildSans(host),
     );
 
     _server = await shelf_io.serve(
@@ -247,6 +258,7 @@ class TemporaryLinkShareService {
       shared: true,
     );
 
+    final allHosts = await _collectAllLocalIps(primary: host);
     final now = DateTime.now();
     final expiresAt = ttl == null ? null : now.add(ttl);
 
@@ -259,7 +271,8 @@ class TemporaryLinkShareService {
     _entries = entries;
     _state = TemporaryLinkShareState(
       running: true,
-      host: host,
+      host: allHosts.isNotEmpty ? allHosts.first : host,
+      hosts: allHosts,
       port: _server!.port,
       token: token,
       deviceName: deviceName.trim().isEmpty
@@ -312,6 +325,53 @@ class TemporaryLinkShareService {
       diff |= a.codeUnitAt(index) ^ b.codeUnitAt(index);
     }
     return diff == 0;
+  }
+
+  /// Returns all eligible local IPv4 addresses, with [primary] first.
+  Future<List<String>> _collectAllLocalIps({required String primary}) async {
+    final interfaces = await NetworkInterface.list(
+      type: InternetAddressType.IPv4,
+    );
+    final seen = <String>{};
+    final result = <String>[];
+    if (_isUsableIpv4(primary)) {
+      seen.add(primary);
+      result.add(primary);
+    }
+    for (final iface in interfaces) {
+      for (final address in iface.addresses) {
+        final ip = address.address.trim();
+        if (address.isLoopback || !_isUsableIpv4(ip) || seen.contains(ip)) {
+          continue;
+        }
+        seen.add(ip);
+        result.add(ip);
+      }
+    }
+    if (result.isEmpty && primary.isNotEmpty) {
+      result.add(primary);
+    }
+    return result;
+  }
+
+  List<String> _buildSans(String primary) {
+    return <String>[
+      if (_isUsableIpv4(primary)) primary,
+      'localhost',
+      '127.0.0.1',
+    ];
+  }
+
+  bool _isUsableIpv4(String value) {
+    if (value.isEmpty || value == '0.0.0.0') return false;
+    final address = InternetAddress.tryParse(value);
+    if (address == null || address.type != InternetAddressType.IPv4) {
+      return false;
+    }
+    final octets = address.rawAddress;
+    if (octets[0] == 127) return false;
+    if (octets[0] == 169 && octets[1] == 254) return false;
+    return true;
   }
 
   String _createSession() {
@@ -460,9 +520,17 @@ class TemporaryLinkShareService {
         : '';
     final filesHtml = _entries
         .map(
-          (entry) =>
-              '<li><a href="/download/${entry.id}">${escape.convert(entry.displayName)}</a> '
-              '<span>(${_formatBytes(entry.size)})</span></li>',
+          (entry) {
+            final escapedName = escape.convert(entry.displayName);
+            return '<li><div class="file-info">'
+                '<div class="file-name-row">'
+                '<span class="file-icon" aria-hidden="true">${_fileIconForName(entry.displayName)}</span>'
+                '<span class="file-name" title="$escapedName">$escapedName</span>'
+                '</div>'
+                '<span>${_fileTypeLabel(entry.displayName)} • ${_formatBytes(entry.size)}</span>'
+                '</div>'
+                '<a class="download-btn" href="/download/${entry.id}">Download</a></li>';
+          },
         )
         .join();
 
@@ -586,6 +654,7 @@ class TemporaryLinkShareService {
       display: flex;
       justify-content: space-between;
       align-items: center;
+      gap: 16px;
       transition: all 0.3s var(--ease);
     }
 
@@ -595,22 +664,60 @@ class TemporaryLinkShareService {
       transform: translateX(4px);
     }
 
-    /* Container for the filename and size */
     li div.file-info {
       display: flex;
       flex-direction: column;
-      gap: 2px;
-      max-width: 60%;
+      gap: 4px;
+      min-width: 0;
+      flex: 1;
     }
 
-    /* Styling the dynamic span (size) */
+    .file-name-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .file-icon {
+      width: 36px;
+      height: 36px;
+      border-radius: 12px;
+      background: var(--accent-soft);
+      border: 1px solid rgba(45, 212, 191, 0.18);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex: 0 0 auto;
+    }
+
+    .file-icon svg {
+      width: 18px;
+      height: 18px;
+      stroke: var(--accent);
+      fill: none;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .file-name {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-weight: 600;
+    }
+
     li span { 
       color: var(--text-muted); 
       font-size: 0.8rem; 
-      font-weight: 500;
+      font-size: 0.62rem;
+      font-weight: 800;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
     }
 
-    /* The Link transformed into a Download Button */
     li a { 
       background: var(--accent);
       color: #003d35;
@@ -624,6 +731,7 @@ class TemporaryLinkShareService {
       align-items: center;
       justify-content: center;
       box-shadow: 0 4px 12px rgba(45, 212, 191, 0.2);
+      flex: 0 0 auto;
     }
 
     li a:hover { 
@@ -639,6 +747,7 @@ class TemporaryLinkShareService {
       .card { padding: 24px; }
       li { flex-direction: column; align-items: flex-start; gap: 16px; }
       li a { width: 100%; }
+      .file-info { width: 100%; }
       h1 { font-size: 1.5rem; }
     }
   </style>
@@ -674,6 +783,28 @@ class TemporaryLinkShareService {
         ? value.toStringAsFixed(0)
         : value.toStringAsFixed(1);
     return '$fixed ${units[unitIndex]}';
+  }
+
+  String _fileIconForName(String name) {
+    return '<svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>';
+  }
+
+  String _fileTypeLabel(String name) {
+    final ext = p.extension(name).toLowerCase();
+    if (ext.isEmpty) {
+      return 'File';
+    }
+    if ({'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg', '.heic', '.heif'}.contains(ext)) return 'Image';
+    if ({'.mp4', '.mov', '.mkv', '.avi', '.webm', '.m4v', '.3gp'}.contains(ext)) return 'Video';
+    if ({'.mp3', '.wav', '.flac', '.aac', '.ogg', '.m4a', '.opus'}.contains(ext)) return 'Audio';
+    if ({'.pdf'}.contains(ext)) return 'PDF';
+    if ({'.doc', '.docx', '.odt', '.rtf'}.contains(ext)) return 'Document';
+    if ({'.xls', '.xlsx', '.csv', '.ods'}.contains(ext)) return 'Spreadsheet';
+    if ({'.ppt', '.pptx', '.odp'}.contains(ext)) return 'Presentation';
+    if ({'.txt', '.md', '.json', '.xml', '.yaml', '.yml', '.ini', '.log'}.contains(ext)) return 'Text';
+    if ({'.dart', '.js', '.ts', '.tsx', '.jsx', '.py', '.java', '.kt', '.cpp', '.c', '.h', '.hpp', '.cs', '.php', '.go', '.rs', '.swift', '.html', '.css', '.scss', '.sql', '.sh', '.bat', '.ps1'}.contains(ext)) return 'Code';
+    if ({'.zip', '.rar', '.7z', '.tar', '.gz'}.contains(ext)) return 'Archive';
+    return ext.substring(1).toUpperCase();
   }
 
   void _emit() {

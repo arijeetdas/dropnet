@@ -615,7 +615,17 @@ class MainActivity : FlutterFragmentActivity() {
 		val displayName = queryDisplayName(uri) ?: "shared_${System.currentTimeMillis()}"
 		val safeName = displayName.replace(Regex("[^a-zA-Z0-9._-]+"), "_")
 		val targetDir = File(cacheDir, "shared_imports").apply { mkdirs() }
-		val target = File(targetDir, "${System.currentTimeMillis()}_$safeName")
+		var target = File(targetDir, safeName)
+		if (target.exists()) {
+			val dotIndex = safeName.lastIndexOf('.')
+			val stem = if (dotIndex > 0) safeName.substring(0, dotIndex) else safeName
+			val ext = if (dotIndex > 0) safeName.substring(dotIndex) else ""
+			var counter = 2
+			while (target.exists()) {
+				target = File(targetDir, "${stem}_$counter$ext")
+				counter++
+			}
+		}
 
 		input.use { source ->
 			target.outputStream().use { out ->

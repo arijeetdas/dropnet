@@ -75,22 +75,29 @@ class WebShareState {
   const WebShareState({
     required this.running,
     required this.host,
+    required this.hosts,
     required this.port,
     required this.token,
     required this.pin,
   });
 
   final bool running;
+  /// Primary display host (first eligible adapter).
   final String host;
+  /// All adapter IPs on which the server is reachable.
+  final List<String> hosts;
   final int port;
   final String token;
   final String pin; // empty = no pin
 
-  String get url => running ? 'https://$host:$port/' : '';
+  String get url => running && host.isNotEmpty ? 'https://$host:$port/' : '';
+  List<String> get urls =>
+      running ? hosts.map((h) => 'https://$h:$port/').toList(growable: false) : const [];
 
   WebShareState copyWith({
     bool? running,
     String? host,
+    List<String>? hosts,
     int? port,
     String? token,
     String? pin,
@@ -98,6 +105,7 @@ class WebShareState {
     return WebShareState(
       running: running ?? this.running,
       host: host ?? this.host,
+      hosts: hosts ?? this.hosts,
       port: port ?? this.port,
       token: token ?? this.token,
       pin: pin ?? this.pin,
@@ -107,6 +115,7 @@ class WebShareState {
   static WebShareState initial() => const WebShareState(
         running: false,
         host: '',
+        hosts: [],
         port: 8080,
         token: '',
         pin: '',
@@ -212,6 +221,7 @@ class WebServerService {
     _validPinSessions.clear();
 
     final host = await _resolveLocalIp();
+    final allHosts = await _collectAllLocalIps(primary: host);
     final token = _generateToken();
 
     final router = Router()
@@ -515,7 +525,11 @@ class WebServerService {
     final handler = const Pipeline().addMiddleware(logRequests()).addHandler(router.call);
     final tlsContext = await _tlsCertificates.createServerContext(
       commonName: 'DropNet Web Server',
-      subjectAlternativeNames: <String>[host],
+      subjectAlternativeNames: <String>[
+        if (host.isNotEmpty) host,
+        'localhost',
+        '127.0.0.1',
+      ],
     );
 
     _server = await shelf_io.serve(
@@ -528,7 +542,8 @@ class WebServerService {
     _update(
       _state.copyWith(
         running: true,
-        host: host,
+        host: allHosts.isNotEmpty ? allHosts.first : host,
+        hosts: allHosts,
         port: port,
         token: token,
         pin: _webPin,
@@ -917,15 +932,70 @@ class WebServerService {
   }
 
   Future<String> _resolveLocalIp() async {
-    final interfaces = await NetworkInterface.list(type: InternetAddressType.IPv4);
+    final interfaces = await NetworkInterface.list(
+      type: InternetAddressType.IPv4,
+    );
+    final candidates = <({String name, String ip})>[];
     for (final iface in interfaces) {
       for (final address in iface.addresses) {
-        if (!address.isLoopback) {
-          return address.address;
-        }
+        final ip = address.address.trim();
+        if (address.isLoopback) continue;
+        final octets = address.rawAddress;
+        if (octets[0] == 169 && octets[1] == 254) continue; // link-local
+        if (ip == '0.0.0.0') continue;
+        candidates.add((name: iface.name.toLowerCase(), ip: ip));
       }
     }
-    return '127.0.0.1';
+    if (candidates.isEmpty) return '127.0.0.1';
+    // Score: prefer Wi-Fi > Ethernet > other.
+    int score(String name) {
+      if (name.contains('wi-fi') ||
+          name.contains('wifi') ||
+          name.contains('wireless') ||
+          name.contains('wlan')) return 300;
+      if (name.contains('ethernet') || name.contains('eth')) return 200;
+      return 0;
+    }
+    candidates.sort((a, b) => score(b.name).compareTo(score(a.name)));
+    return candidates.first.ip;
+  }
+
+  Future<List<String>> _collectAllLocalIps({required String primary}) async {
+    final interfaces = await NetworkInterface.list(
+      type: InternetAddressType.IPv4,
+    );
+    final seen = <String>{};
+    final result = <String>[];
+    if (_isUsableIpv4(primary)) {
+      seen.add(primary);
+      result.add(primary);
+    }
+    for (final iface in interfaces) {
+      for (final address in iface.addresses) {
+        final ip = address.address.trim();
+        if (address.isLoopback || !_isUsableIpv4(ip) || seen.contains(ip)) {
+          continue;
+        }
+        seen.add(ip);
+        result.add(ip);
+      }
+    }
+    if (result.isEmpty && primary.isNotEmpty) {
+      result.add(primary);
+    }
+    return result;
+  }
+
+  bool _isUsableIpv4(String value) {
+    if (value.isEmpty || value == '0.0.0.0') return false;
+    final address = InternetAddress.tryParse(value);
+    if (address == null || address.type != InternetAddressType.IPv4) {
+      return false;
+    }
+    final octets = address.rawAddress;
+    if (octets[0] == 127) return false;
+    if (octets[0] == 169 && octets[1] == 254) return false;
+    return true;
   }
 
   void _update(WebShareState state) {

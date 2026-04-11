@@ -233,9 +233,34 @@ class AdaptiveNavScaffold extends ConsumerWidget {
               'Platform: ${state.localDevicePlatform.isEmpty ? 'Unknown' : state.localDevicePlatform}',
             ),
             const SizedBox(height: 6),
-            Text(
-              'IP: ${state.localIp.isEmpty ? 'Unavailable' : state.localIp}',
-            ),
+            if (state.localIps.isEmpty)
+              Text('IP: ${state.localIp.isEmpty ? 'Unavailable' : state.localIp}')
+            else
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('IP addresses:'),
+                  for (final ip in state.localIps)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 8, top: 4),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.only(top: 2, right: 6),
+                            child: Icon(
+                              Icons.lan_rounded,
+                              size: 14,
+                              color: Theme.of(context).colorScheme.primary,
+                            ),
+                          ),
+                          Flexible(child: SelectableText(ip)),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
             const SizedBox(height: 6),
             Text('Port: ${TcpTransferService.defaultPort}'),
           ],

@@ -11,6 +11,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../models/device_model.dart';
+import '../../models/favorite_peer_model.dart';
 import '../../models/trusted_peer_model.dart';
 import '../../models/transfer_model.dart';
 import '../platform/media_store_service.dart';
@@ -61,6 +62,8 @@ bool isDeviceTrusted({
   );
 }
 
+enum QuickSaveMode { off, favorites, on }
+
 class AppState {
   const AppState({
     required this.devices,
@@ -77,9 +80,11 @@ class AppState {
     required this.localDeviceId,
     required this.localDeviceManufacturer,
     required this.localDevicePlatform,
+    required this.localDeviceCpuArchitecture,
     required this.localDeviceBaseName,
     required this.localDeviceNumber,
     required this.localIp,
+    required this.localIps,
     required this.pendingWebPeerRequests,
     required this.connectedWebPeers,
     required this.pendingWebIncomingUploads,
@@ -92,8 +97,14 @@ class AppState {
     required this.pendingTransferPreviewFiles,
     required this.pendingSystemMessages,
     required this.trustedPeers,
+    required this.favoritePeers,
+    required this.quickSaveMode,
+    required this.quickSaveInfoDismissedModes,
     required this.saveMediaToGallery,
     required this.requirePairingCodeForDirectTransfers,
+    required this.showIncomingRequestList,
+    required this.maxIncomingRequests,
+    required this.incomingRequestTimeoutSeconds,
   });
 
   final List<DeviceModel> devices;
@@ -110,9 +121,12 @@ class AppState {
   final String localDeviceId;
   final String localDeviceManufacturer;
   final String localDevicePlatform;
+  final String localDeviceCpuArchitecture;
   final String localDeviceBaseName;
   final int localDeviceNumber;
   final String localIp;
+  /// All eligible local IPv4 addresses, sorted by preference.
+  final List<String> localIps;
   final List<WebPeerConnectRequest> pendingWebPeerRequests;
   final List<WebPeer> connectedWebPeers;
   final List<WebIncomingUploadRequest> pendingWebIncomingUploads;
@@ -125,8 +139,14 @@ class AppState {
   final List<TransferModel> pendingTransferPreviewFiles;
   final List<String> pendingSystemMessages;
   final List<TrustedPeer> trustedPeers;
+  final List<FavoritePeer> favoritePeers;
+  final QuickSaveMode quickSaveMode;
+  final Set<QuickSaveMode> quickSaveInfoDismissedModes;
   final bool saveMediaToGallery;
   final bool requirePairingCodeForDirectTransfers;
+  final bool showIncomingRequestList;
+  final int maxIncomingRequests;
+  final int incomingRequestTimeoutSeconds;
 
   static AppState initial() => AppState(
     devices: const [],
@@ -143,9 +163,11 @@ class AppState {
     localDeviceId: '',
     localDeviceManufacturer: '',
     localDevicePlatform: '',
+    localDeviceCpuArchitecture: '',
     localDeviceBaseName: '',
     localDeviceNumber: 0,
     localIp: '',
+    localIps: const [],
     pendingWebPeerRequests: const [],
     connectedWebPeers: const [],
     pendingWebIncomingUploads: const [],
@@ -158,8 +180,14 @@ class AppState {
     pendingTransferPreviewFiles: const [],
     pendingSystemMessages: const [],
     trustedPeers: const [],
+    favoritePeers: const [],
+    quickSaveMode: QuickSaveMode.off,
+    quickSaveInfoDismissedModes: const <QuickSaveMode>{},
     saveMediaToGallery: true,
     requirePairingCodeForDirectTransfers: false,
+    showIncomingRequestList: false,
+    maxIncomingRequests: 5,
+    incomingRequestTimeoutSeconds: 60,
   );
 
   AppState copyWith({
@@ -177,9 +205,11 @@ class AppState {
     String? localDeviceId,
     String? localDeviceManufacturer,
     String? localDevicePlatform,
+    String? localDeviceCpuArchitecture,
     String? localDeviceBaseName,
     int? localDeviceNumber,
     String? localIp,
+    List<String>? localIps,
     List<WebPeerConnectRequest>? pendingWebPeerRequests,
     List<WebPeer>? connectedWebPeers,
     List<WebIncomingUploadRequest>? pendingWebIncomingUploads,
@@ -192,8 +222,14 @@ class AppState {
     List<TransferModel>? pendingTransferPreviewFiles,
     List<String>? pendingSystemMessages,
     List<TrustedPeer>? trustedPeers,
+    List<FavoritePeer>? favoritePeers,
+    QuickSaveMode? quickSaveMode,
+    Set<QuickSaveMode>? quickSaveInfoDismissedModes,
     bool? saveMediaToGallery,
     bool? requirePairingCodeForDirectTransfers,
+    bool? showIncomingRequestList,
+    int? maxIncomingRequests,
+    int? incomingRequestTimeoutSeconds,
   }) {
     return AppState(
       devices: devices ?? this.devices,
@@ -213,9 +249,12 @@ class AppState {
       localDeviceManufacturer:
           localDeviceManufacturer ?? this.localDeviceManufacturer,
       localDevicePlatform: localDevicePlatform ?? this.localDevicePlatform,
+        localDeviceCpuArchitecture:
+          localDeviceCpuArchitecture ?? this.localDeviceCpuArchitecture,
       localDeviceBaseName: localDeviceBaseName ?? this.localDeviceBaseName,
       localDeviceNumber: localDeviceNumber ?? this.localDeviceNumber,
       localIp: localIp ?? this.localIp,
+      localIps: localIps ?? this.localIps,
       pendingWebPeerRequests:
           pendingWebPeerRequests ?? this.pendingWebPeerRequests,
       connectedWebPeers: connectedWebPeers ?? this.connectedWebPeers,
@@ -235,10 +274,17 @@ class AppState {
       pendingSystemMessages:
           pendingSystemMessages ?? this.pendingSystemMessages,
       trustedPeers: trustedPeers ?? this.trustedPeers,
+        favoritePeers: favoritePeers ?? this.favoritePeers,
+        quickSaveMode: quickSaveMode ?? this.quickSaveMode,
+        quickSaveInfoDismissedModes:
+          quickSaveInfoDismissedModes ?? this.quickSaveInfoDismissedModes,
       saveMediaToGallery: saveMediaToGallery ?? this.saveMediaToGallery,
       requirePairingCodeForDirectTransfers:
           requirePairingCodeForDirectTransfers ??
           this.requirePairingCodeForDirectTransfers,
+      showIncomingRequestList: showIncomingRequestList ?? this.showIncomingRequestList,
+      maxIncomingRequests: maxIncomingRequests ?? this.maxIncomingRequests,
+      incomingRequestTimeoutSeconds: incomingRequestTimeoutSeconds ?? this.incomingRequestTimeoutSeconds,
     );
   }
 }
@@ -336,8 +382,14 @@ class AppController extends StateNotifier<AppState> {
   static const _downloadDirectoryKey = 'settings.downloadDirectory';
   static const _saveMediaToGalleryKey = 'settings.saveMediaToGallery';
   static const _trustedPeersKey = 'security.trustedPeers';
+  static const _favoritePeersKey = 'peers.favoritePeers';
   static const _historyKey = 'history.entries';
   static const _requirePairingCodeKey = 'security.requirePairingCode';
+  static const _quickSaveModeKey = 'receive.quickSaveMode';
+  static const _quickSaveDismissedModesKey = 'receive.quickSaveDismissedModes';
+  static const _showIncomingRequestListKey = 'receive.showIncomingRequestList';
+  static const _maxIncomingRequestsKey = 'receive.maxIncomingRequests';
+  static const _incomingRequestTimeoutSecondsKey = 'receive.incomingRequestTimeoutSeconds';
 
   StreamSubscription<List<DeviceModel>>? _devicesSub;
   StreamSubscription<List<TransferModel>>? _activeSub;
@@ -361,6 +413,7 @@ class AppController extends StateNotifier<AppState> {
       <String, TransferModel>{};
   final Set<String> _gallerySyncedPaths = <String>{};
   final Set<String> _processedRemoteUnpairNoticeIds = <String>{};
+  final Set<String> _knownIncomingRequestIds = <String>{};
 
   Future<void> bootstrap() async {
     await ensureStoragePermission();
@@ -379,8 +432,23 @@ class AppController extends StateNotifier<AppState> {
     final restoredTrustedPeers = _restoreTrustedPeers(
       _prefs!.getStringList(_trustedPeersKey) ?? const <String>[],
     );
+    final restoredFavoritePeers = _restoreFavoritePeers(
+      _prefs!.getStringList(_favoritePeersKey) ?? const <String>[],
+    );
     final restoredRequirePairingCode =
         _prefs!.getBool(_requirePairingCodeKey) ?? false;
+    final restoredQuickSaveMode = _quickSaveModeFromName(
+      _prefs!.getString(_quickSaveModeKey),
+    );
+    final restoredDismissedModes = _restoreQuickSaveDismissedModes(
+      _prefs!.getStringList(_quickSaveDismissedModesKey) ?? const <String>[],
+    );
+    final restoredShowIncomingRequestList =
+        _prefs!.getBool(_showIncomingRequestListKey) ?? false;
+    final restoredMaxIncomingRequests =
+        _prefs!.getInt(_maxIncomingRequestsKey) ?? 5;
+    final restoredIncomingRequestTimeoutSeconds =
+        _prefs!.getInt(_incomingRequestTimeoutSecondsKey) ?? 60;
     _persistedHistory = _restoreHistory(
       _prefs!.getStringList(_historyKey) ?? const <String>[],
     );
@@ -390,16 +458,22 @@ class AppController extends StateNotifier<AppState> {
       preferred: _prefs!.getString(_downloadDirectoryKey),
     );
     final localIpFuture = _discovery.getLocalIp();
+    final localIpsFuture = _discovery.getAllLocalIps();
     final shareIntentFuture = Future<void>(() async {
       await _shareIntent.initialize();
     });
 
     final downloadDir = await downloadDirFuture;
     final localIp = await localIpFuture;
+    final localIps = await localIpsFuture;
     await shareIntentFuture;
     final initialShared = await _shareIntent.consumePendingSharedPayload();
 
     await _discovery.updatePairingModeEnabled(restoredRequirePairingCode);
+
+    final effectiveQuickSaveMode = restoredRequirePairingCode
+      ? QuickSaveMode.off
+      : restoredQuickSaveMode;
 
     // Save download directory if changed
     final restoredDownloadDir = _prefs!.getString(_downloadDirectoryKey);
@@ -417,16 +491,28 @@ class AppController extends StateNotifier<AppState> {
       localDeviceId: _discovery.deviceId,
       localDeviceManufacturer: _discovery.manufacturerTag,
       localDevicePlatform: _discovery.platformTag,
+      localDeviceCpuArchitecture: _discovery.cpuArchitectureTag,
       localDeviceBaseName: _discovery.deviceBaseName,
       localDeviceNumber: _discovery.deviceNumber,
       localIp: localIp,
+      localIps: localIps,
       history: _persistedHistory,
       saveMediaToGallery: restoredSaveMediaToGallery,
       pendingSharedFilePaths: initialShared.filePaths,
       pendingSharedTexts: initialShared.texts,
       trustedPeers: restoredTrustedPeers,
+      favoritePeers: restoredFavoritePeers,
+      quickSaveMode: effectiveQuickSaveMode,
+      quickSaveInfoDismissedModes: restoredDismissedModes,
       requirePairingCodeForDirectTransfers: restoredRequirePairingCode,
+      showIncomingRequestList: restoredShowIncomingRequestList,
+      maxIncomingRequests: restoredMaxIncomingRequests,
+      incomingRequestTimeoutSeconds: restoredIncomingRequestTimeoutSeconds,
     );
+
+    if (effectiveQuickSaveMode != restoredQuickSaveMode) {
+      unawaited(_saveQuickSaveMode(effectiveQuickSaveMode));
+    }
 
     // Parallelize discovery and transfer startup
     await Future.wait<void>([
@@ -442,6 +528,7 @@ class AppController extends StateNotifier<AppState> {
           localDeviceId: _discovery.deviceId,
           localDeviceManufacturer: _discovery.manufacturerTag,
           localDevicePlatform: _discovery.platformTag,
+          localDeviceCpuArchitecture: _discovery.cpuArchitectureTag,
           localDeviceBaseName: _discovery.deviceBaseName,
           localDeviceNumber: _discovery.deviceNumber,
         );
@@ -461,7 +548,15 @@ class AppController extends StateNotifier<AppState> {
 
   void _setupStreamSubscribers() {
     _devicesSub ??= _discovery.devicesStream.listen((devices) {
-      state = state.copyWith(devices: devices);
+      final previousFavorites = state.favoritePeers;
+      final syncedFavorites = _syncFavoritePeersWithDevices(
+        previousFavorites,
+        devices,
+      );
+      state = state.copyWith(devices: devices, favoritePeers: syncedFavorites);
+      if (!_sameFavoritePeerList(syncedFavorites, previousFavorites)) {
+        unawaited(_saveFavoritePeers(syncedFavorites));
+      }
     });
 
     _activeSub ??= _transfer.activeTransfersStream.listen((activeTransfers) {
@@ -520,19 +615,52 @@ class AppController extends StateNotifier<AppState> {
     });
 
     _incomingSub ??= _transfer.incomingRequestsStream.listen((requests) {
-      if (!state.requirePairingCodeForDirectTransfers) {
-        state = state.copyWith(pendingIncomingRequests: requests);
+      var incomingRequests = requests;
+
+      if (state.requirePairingCodeForDirectTransfers) {
+        final trustedRequests = <IncomingTransferRequest>[];
+        for (final request in requests) {
+          if (_isIncomingRequestTrusted(request)) {
+            trustedRequests.add(request);
+            continue;
+          }
+          _transfer.rejectIncomingRequest(request.id);
+        }
+        incomingRequests = trustedRequests;
+      }
+
+      if (state.showIncomingRequestList) {
+        final maxRequests = state.maxIncomingRequests.clamp(1, 100);
+        if (incomingRequests.length > maxRequests) {
+          final overflow = incomingRequests.skip(maxRequests);
+          for (final request in overflow) {
+            _transfer.rejectIncomingRequest(request.id);
+          }
+          incomingRequests = incomingRequests.take(maxRequests).toList(
+            growable: false,
+          );
+        }
+      }
+
+      final nextIds = incomingRequests.map((request) => request.id).toSet();
+      final hasNewIncoming = nextIds.any(
+        (requestId) => !_knownIncomingRequestIds.contains(requestId),
+      );
+      _knownIncomingRequestIds
+        ..clear()
+        ..addAll(nextIds);
+
+      if (state.showIncomingRequestList && hasNewIncoming) {
+        final pendingMessages = List<String>.from(state.pendingSystemMessages)
+          ..add('New incoming request detected');
+        state = state.copyWith(
+          pendingIncomingRequests: incomingRequests,
+          pendingSystemMessages: pendingMessages,
+        );
         return;
       }
-      final trustedRequests = <IncomingTransferRequest>[];
-      for (final request in requests) {
-        if (_isIncomingRequestTrusted(request)) {
-          trustedRequests.add(request);
-          continue;
-        }
-        _transfer.rejectIncomingRequest(request.id);
-      }
-      state = state.copyWith(pendingIncomingRequests: trustedRequests);
+
+      state = state.copyWith(pendingIncomingRequests: incomingRequests);
     });
 
     _incomingPairingSub ??= _transfer.incomingPairingRequestsStream.listen((
@@ -566,13 +694,12 @@ class AppController extends StateNotifier<AppState> {
         if (next.length != trustedPeers.length) {
           trustedPeers = next;
           trustedPeersUpdated = true;
+          final fromName = notice.fromDeviceName.trim().isEmpty
+              ? 'A paired device'
+              : notice.fromDeviceName.trim();
+          pendingMessages.add('$fromName unpaired this device.');
+          messagesAdded = true;
         }
-
-        final fromName = notice.fromDeviceName.trim().isEmpty
-            ? 'A paired device'
-            : notice.fromDeviceName.trim();
-        pendingMessages.add('$fromName unpaired this device.');
-        messagesAdded = true;
       }
 
       if (trustedPeersUpdated) {
@@ -794,7 +921,22 @@ class AppController extends StateNotifier<AppState> {
       }
     }
 
-    await _removeTrustedPeerByKey(trustedPeerKey(deviceId, fingerprint));
+    // First try exact key (deviceId + current fingerprint).
+    final exactKey = trustedPeerKey(deviceId, fingerprint);
+    final beforeCount = state.trustedPeers.length;
+    await _removeTrustedPeerByKey(exactKey);
+
+    // If nothing was removed the stored entry has a stale fingerprint (cert
+    // rotation). Remove the orphan by deviceId alone so it doesn't get stuck.
+    if (state.trustedPeers.length == beforeCount) {
+      final updated = state.trustedPeers
+          .where(
+            (peer) => peer.deviceId.trim().toLowerCase() != deviceId,
+          )
+          .toList(growable: false);
+      state = state.copyWith(trustedPeers: updated);
+      await _saveTrustedPeers(updated);
+    }
   }
 
   Future<void> unpairTrustedPeer(TrustedPeer target) async {
@@ -802,18 +944,26 @@ class AppController extends StateNotifier<AppState> {
       target.deviceId,
       target.tlsCertificateSha256,
     );
+    final normalizedTargetId = target.deviceId.trim().toLowerCase();
 
     if (state.requirePairingCodeForDirectTransfers) {
-      final matchedDevice = state.devices.where((device) {
-        final fingerprint = (device.tlsCertificateSha256 ?? '')
-            .trim()
-            .toLowerCase();
-        if (fingerprint.isEmpty || !device.isOnline) {
-          return false;
-        }
-        final key = trustedPeerKey(device.deviceId, fingerprint);
-        return key == targetKey;
-      }).firstOrNull;
+      // Try to find the device by the stored fingerprint first; if the peer
+      // has rotated its cert, fall back to matching by deviceId alone so an
+      // online peer with a new cert can still be remotely unpaired.
+      final matchedDevice = state.devices
+          .where((device) {
+            if (!device.isOnline || device.deviceId.trim().isEmpty) {
+              return false;
+            }
+            final fp = (device.tlsCertificateSha256 ?? '').trim().toLowerCase();
+            if (fp.isNotEmpty &&
+                trustedPeerKey(device.deviceId, fp) == targetKey) {
+              return true;
+            }
+            // Cert-rotation fallback: match by deviceId only.
+            return device.deviceId.trim().toLowerCase() == normalizedTargetId;
+          })
+          .firstOrNull;
 
       if (matchedDevice == null) {
         throw StateError(
@@ -826,6 +976,52 @@ class AppController extends StateNotifier<AppState> {
     }
 
     await _removeTrustedPeerByKey(targetKey);
+  }
+
+  Future<void> toggleFavoriteDevice(DeviceModel device) async {
+    final normalizedId = device.deviceId.trim();
+    if (normalizedId.isEmpty) {
+      return;
+    }
+
+    final lowerId = normalizedId.toLowerCase();
+    final existing = state.favoritePeers.where(
+      (peer) => peer.deviceId.trim().toLowerCase() == lowerId,
+    );
+    if (existing.isNotEmpty) {
+      await removeFavoritePeerByDeviceId(normalizedId);
+      return;
+    }
+
+    final now = DateTime.now();
+    final updated = <FavoritePeer>[
+      FavoritePeer(
+        deviceId: normalizedId,
+        deviceName: device.taggedName.trim().isEmpty
+            ? device.deviceName.trim()
+            : device.taggedName.trim(),
+        manufacturer: device.manufacturer.trim(),
+        platform: device.platform.trim(),
+        lastKnownIp: device.ipAddress.trim(),
+        addedAt: now,
+        lastSeenAt: device.lastSeen,
+      ),
+      ...state.favoritePeers,
+    ];
+    state = state.copyWith(favoritePeers: updated);
+    await _saveFavoritePeers(updated);
+  }
+
+  Future<void> removeFavoritePeerByDeviceId(String deviceId) async {
+    final normalized = deviceId.trim().toLowerCase();
+    if (normalized.isEmpty) {
+      return;
+    }
+    final updated = state.favoritePeers
+        .where((peer) => peer.deviceId.trim().toLowerCase() != normalized)
+        .toList(growable: false);
+    state = state.copyWith(favoritePeers: updated);
+    await _saveFavoritePeers(updated);
   }
 
   Future<void> _upsertTrustedPeer({
@@ -1081,9 +1277,58 @@ class AppController extends StateNotifier<AppState> {
   }
 
   void setRequirePairingCodeForDirectTransfers(bool value) {
-    state = state.copyWith(requirePairingCodeForDirectTransfers: value);
+    final forcedMode = value ? QuickSaveMode.off : state.quickSaveMode;
+    state = state.copyWith(
+      requirePairingCodeForDirectTransfers: value,
+      quickSaveMode: forcedMode,
+    );
     unawaited(_discovery.updatePairingModeEnabled(value));
     unawaited(_saveRequirePairingCode(value));
+    if (value) {
+      unawaited(_saveQuickSaveMode(QuickSaveMode.off));
+    }
+  }
+
+  void setQuickSaveMode(QuickSaveMode mode) {
+    final nextMode = state.requirePairingCodeForDirectTransfers
+        ? QuickSaveMode.off
+        : mode;
+    if (nextMode == state.quickSaveMode) {
+      return;
+    }
+    state = state.copyWith(quickSaveMode: nextMode);
+    unawaited(_saveQuickSaveMode(nextMode));
+  }
+
+  void setQuickSaveInfoDismissed({
+    required QuickSaveMode mode,
+    required bool dismissed,
+  }) {
+    final updated = Set<QuickSaveMode>.from(state.quickSaveInfoDismissedModes);
+    if (dismissed) {
+      updated.add(mode);
+    } else {
+      updated.remove(mode);
+    }
+    state = state.copyWith(quickSaveInfoDismissedModes: updated);
+    unawaited(_saveQuickSaveDismissedModes(updated));
+  }
+
+  void setShowIncomingRequestList(bool value) {
+    state = state.copyWith(showIncomingRequestList: value);
+    unawaited(_saveShowIncomingRequestList(value));
+  }
+
+  void setMaxIncomingRequests(int value) {
+    final validValue = value.clamp(1, 100);
+    state = state.copyWith(maxIncomingRequests: validValue);
+    unawaited(_saveMaxIncomingRequests(validValue));
+  }
+
+  void setIncomingRequestTimeoutSeconds(int value) {
+    final validValue = value.clamp(10, 600);
+    state = state.copyWith(incomingRequestTimeoutSeconds: validValue);
+    unawaited(_saveIncomingRequestTimeoutSeconds(validValue));
   }
 
   void addPendingSharedFiles(List<String> filePaths) {
@@ -1157,6 +1402,7 @@ class AppController extends StateNotifier<AppState> {
       localDeviceName: _discovery.deviceName,
       localDeviceManufacturer: _discovery.manufacturerTag,
       localDevicePlatform: _discovery.platformTag,
+      localDeviceCpuArchitecture: _discovery.cpuArchitectureTag,
       localDeviceBaseName: _discovery.deviceBaseName,
       localDeviceNumber: _discovery.deviceNumber,
     );
@@ -1168,6 +1414,7 @@ class AppController extends StateNotifier<AppState> {
       localDeviceName: _discovery.deviceName,
       localDeviceManufacturer: _discovery.manufacturerTag,
       localDevicePlatform: _discovery.platformTag,
+      localDeviceCpuArchitecture: _discovery.cpuArchitectureTag,
       localDeviceBaseName: _discovery.deviceBaseName,
       localDeviceNumber: _discovery.deviceNumber,
     );
@@ -1179,6 +1426,7 @@ class AppController extends StateNotifier<AppState> {
       localDeviceName: _discovery.deviceName,
       localDeviceManufacturer: _discovery.manufacturerTag,
       localDevicePlatform: _discovery.platformTag,
+      localDeviceCpuArchitecture: _discovery.cpuArchitectureTag,
       localDeviceBaseName: _discovery.deviceBaseName,
       localDeviceNumber: _discovery.deviceNumber,
     );
@@ -1190,6 +1438,7 @@ class AppController extends StateNotifier<AppState> {
       localDeviceName: _discovery.deviceName,
       localDeviceManufacturer: _discovery.manufacturerTag,
       localDevicePlatform: _discovery.platformTag,
+      localDeviceCpuArchitecture: _discovery.cpuArchitectureTag,
       localDeviceBaseName: _discovery.deviceBaseName,
       localDeviceNumber: _discovery.deviceNumber,
     );
@@ -1492,6 +1741,109 @@ class AppController extends StateNotifier<AppState> {
     await _prefs!.setStringList(_trustedPeersKey, encoded);
   }
 
+  List<FavoritePeer> _restoreFavoritePeers(List<String> encodedItems) {
+    final restored = <FavoritePeer>[];
+    final seen = <String>{};
+    for (final encoded in encodedItems) {
+      try {
+        final decoded = jsonDecode(encoded);
+        if (decoded is! Map<String, dynamic>) {
+          continue;
+        }
+        final peer = FavoritePeer.fromJson(decoded);
+        if (peer == null) {
+          continue;
+        }
+        final key = peer.deviceId.trim().toLowerCase();
+        if (key.isEmpty || !seen.add(key)) {
+          continue;
+        }
+        restored.add(peer);
+      } catch (_) {}
+    }
+    restored.sort((a, b) => b.addedAt.compareTo(a.addedAt));
+    return restored;
+  }
+
+  Future<void> _saveFavoritePeers(List<FavoritePeer> peers) async {
+    _prefs ??= await SharedPreferences.getInstance();
+    final encoded = peers
+        .map((peer) => jsonEncode(peer.toJson()))
+        .toList(growable: false);
+    await _prefs!.setStringList(_favoritePeersKey, encoded);
+  }
+
+  List<FavoritePeer> _syncFavoritePeersWithDevices(
+    List<FavoritePeer> favorites,
+    List<DeviceModel> devices,
+  ) {
+    if (favorites.isEmpty || devices.isEmpty) {
+      return favorites;
+    }
+
+    final byId = <String, DeviceModel>{};
+    for (final device in devices) {
+      final id = device.deviceId.trim().toLowerCase();
+      if (id.isEmpty) {
+        continue;
+      }
+      byId[id] = device;
+    }
+
+    if (byId.isEmpty) {
+      return favorites;
+    }
+
+    var changed = false;
+    final updated = favorites.map((favorite) {
+      final device = byId[favorite.deviceId.trim().toLowerCase()];
+      if (device == null) {
+        return favorite;
+      }
+
+      final next = favorite.copyWith(
+        deviceName: device.taggedName.trim().isEmpty
+            ? device.deviceName.trim()
+            : device.taggedName.trim(),
+        manufacturer: device.manufacturer.trim(),
+        platform: device.platform.trim(),
+        lastKnownIp: device.ipAddress.trim(),
+        lastSeenAt: device.lastSeen,
+      );
+      if (!_sameFavoritePeer(next, favorite)) {
+        changed = true;
+      }
+      return next;
+    }).toList(growable: false);
+
+    return changed ? updated : favorites;
+  }
+
+  bool _sameFavoritePeer(FavoritePeer a, FavoritePeer b) {
+    return a.deviceId == b.deviceId &&
+        a.deviceName == b.deviceName &&
+        a.manufacturer == b.manufacturer &&
+        a.platform == b.platform &&
+        a.lastKnownIp == b.lastKnownIp &&
+        a.addedAt == b.addedAt &&
+        a.lastSeenAt == b.lastSeenAt;
+  }
+
+  bool _sameFavoritePeerList(List<FavoritePeer> a, List<FavoritePeer> b) {
+    if (identical(a, b)) {
+      return true;
+    }
+    if (a.length != b.length) {
+      return false;
+    }
+    for (var i = 0; i < a.length; i++) {
+      if (!_sameFavoritePeer(a[i], b[i])) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   List<String> _mergeUnique(List<String> current, List<String> incoming) {
     if (incoming.isEmpty) {
       return current;
@@ -1587,6 +1939,54 @@ class AppController extends StateNotifier<AppState> {
   Future<void> _saveRequirePairingCode(bool value) async {
     _prefs ??= await SharedPreferences.getInstance();
     await _prefs!.setBool(_requirePairingCodeKey, value);
+  }
+
+  Future<void> _saveShowIncomingRequestList(bool value) async {
+    _prefs ??= await SharedPreferences.getInstance();
+    await _prefs!.setBool(_showIncomingRequestListKey, value);
+  }
+
+  Future<void> _saveMaxIncomingRequests(int value) async {
+    _prefs ??= await SharedPreferences.getInstance();
+    await _prefs!.setInt(_maxIncomingRequestsKey, value);
+  }
+
+  Future<void> _saveIncomingRequestTimeoutSeconds(int value) async {
+    _prefs ??= await SharedPreferences.getInstance();
+    await _prefs!.setInt(_incomingRequestTimeoutSecondsKey, value);
+  }
+
+  QuickSaveMode _quickSaveModeFromName(String? name) {
+    switch ((name ?? '').trim().toLowerCase()) {
+      case 'on':
+        return QuickSaveMode.on;
+      case 'favorites':
+        return QuickSaveMode.favorites;
+      case 'off':
+      default:
+        return QuickSaveMode.off;
+    }
+  }
+
+  Set<QuickSaveMode> _restoreQuickSaveDismissedModes(List<String> names) {
+    final restored = <QuickSaveMode>{};
+    for (final name in names) {
+      restored.add(_quickSaveModeFromName(name));
+    }
+    return restored;
+  }
+
+  Future<void> _saveQuickSaveMode(QuickSaveMode mode) async {
+    _prefs ??= await SharedPreferences.getInstance();
+    await _prefs!.setString(_quickSaveModeKey, mode.name);
+  }
+
+  Future<void> _saveQuickSaveDismissedModes(Set<QuickSaveMode> modes) async {
+    _prefs ??= await SharedPreferences.getInstance();
+    await _prefs!.setStringList(
+      _quickSaveDismissedModesKey,
+      modes.map((mode) => mode.name).toList(growable: false),
+    );
   }
 
   Future<String> _resolveDownloadDirectory({String? preferred}) async {

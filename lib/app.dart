@@ -15,7 +15,9 @@ import 'features/home/home_screen.dart';
 import 'features/receive/receive_screen.dart';
 import 'features/receive/received_file_screen.dart';
 import 'features/receive/shared_text_screen.dart';
+import 'features/receive/incoming_requests_screen.dart';
 import 'features/send/send_files_screen.dart';
+import 'features/settings/favorite_devices_screen.dart';
 import 'features/settings/settings_screen.dart';
 import 'features/transfers/active_transfers_screen.dart';
 import 'features/transfers/transfer_session_screen.dart';
@@ -87,6 +89,14 @@ final _router = GoRouter(
     GoRoute(
       path: '/settings',
       builder: (context, state) => const SettingsScreen(),
+    ),
+    GoRoute(
+      path: '/settings/favorites',
+      builder: (context, state) => const FavoriteDevicesScreen(),
+    ),
+    GoRoute(
+      path: '/receive/incoming-requests',
+      builder: (context, state) => const IncomingRequestsScreen(),
     ),
     GoRoute(
       path: '/shared-text',
@@ -505,6 +515,41 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
     }
 
     final appState = ref.read(appControllerProvider);
+
+    // If incoming request list feature is enabled, don't show dialog immediately.
+    // The request will be handled from the incoming requests screen.
+    if (appState.showIncomingRequestList) {
+      return;
+    }
+
+    // Quick Save auto-approval policy (only active when pairing mode is off).
+    if (!appState.requirePairingCodeForDirectTransfers) {
+      final quickSaveMode = appState.quickSaveMode;
+      if (quickSaveMode == QuickSaveMode.on) {
+        ref.read(appControllerProvider.notifier).approveIncomingRequest(request.id);
+        return;
+      }
+      if (quickSaveMode == QuickSaveMode.favorites) {
+        final incomingId = (request.fromDeviceId ?? '').trim().toLowerCase();
+        final incomingAddress = request.fromAddress.trim();
+        final isFavorite = appState.favoritePeers.any((peer) {
+          final favoriteId = peer.deviceId.trim().toLowerCase();
+          if (incomingId.isNotEmpty && favoriteId == incomingId) {
+            return true;
+          }
+          return incomingId.isEmpty &&
+              peer.lastKnownIp.trim().isNotEmpty &&
+              peer.lastKnownIp.trim() == incomingAddress;
+        });
+        if (isFavorite) {
+          ref
+              .read(appControllerProvider.notifier)
+              .approveIncomingRequest(request.id);
+          return;
+        }
+      }
+    }
+
     final requiresCodeVerification =
         appState.requirePairingCodeForDirectTransfers &&
             request.pairingCode != null;
