@@ -42,9 +42,8 @@ final _router = GoRouter(
           routes: [
             GoRoute(
               path: '/receive',
-              pageBuilder: (context, state) => const NoTransitionPage(
-                child: ReceiveScreen(embedded: true),
-              ),
+              pageBuilder: (context, state) =>
+                  const NoTransitionPage(child: ReceiveScreen(embedded: true)),
             ),
           ],
         ),
@@ -62,9 +61,8 @@ final _router = GoRouter(
           routes: [
             GoRoute(
               path: '/web',
-              pageBuilder: (context, state) => const NoTransitionPage(
-                child: WebModeScreen(embedded: true),
-              ),
+              pageBuilder: (context, state) =>
+                  const NoTransitionPage(child: WebModeScreen(embedded: true)),
             ),
           ],
         ),
@@ -203,8 +201,7 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
             !next.pendingIncomingRequests.any((request) => request.id == id),
       );
       _pairingDialogShownFor.removeWhere(
-        (id) =>
-            !next.pendingPairingRequests.any((request) => request.id == id),
+        (id) => !next.pendingPairingRequests.any((request) => request.id == id),
       );
       _peerDialogShownFor.removeWhere(
         (id) => !next.pendingWebPeerRequests.any((request) => request.id == id),
@@ -423,7 +420,9 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
     }
   }
 
-  Future<void> _showIncomingPairingDialog(IncomingPairingRequest request) async {
+  Future<void> _showIncomingPairingDialog(
+    IncomingPairingRequest request,
+  ) async {
     final dialogContext = _rootNavigatorKey.currentContext;
     if (!mounted || dialogContext == null) {
       return;
@@ -445,7 +444,7 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
 
     await ref
         .read(appControllerProvider.notifier)
-      .respondToIncomingPairingRequest(request, approved: approved == true);
+        .respondToIncomingPairingRequest(request, approved: approved == true);
 
     if (!mounted) {
       return;
@@ -459,11 +458,15 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
     final messenger = ScaffoldMessenger.maybeOf(activeContext);
     if (approved == true) {
       messenger?.showSnackBar(
-        SnackBar(content: Text('${request.fromDeviceName} paired successfully.')),
+        SnackBar(
+          content: Text('${request.fromDeviceName} paired successfully.'),
+        ),
       );
     } else {
       messenger?.showSnackBar(
-        const SnackBar(content: Text('Pairing verification failed or canceled.')),
+        const SnackBar(
+          content: Text('Pairing verification failed or canceled.'),
+        ),
       );
     }
   }
@@ -516,17 +519,13 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
 
     final appState = ref.read(appControllerProvider);
 
-    // If incoming request list feature is enabled, don't show dialog immediately.
-    // The request will be handled from the incoming requests screen.
-    if (appState.showIncomingRequestList) {
-      return;
-    }
-
     // Quick Save auto-approval policy (only active when pairing mode is off).
     if (!appState.requirePairingCodeForDirectTransfers) {
       final quickSaveMode = appState.quickSaveMode;
       if (quickSaveMode == QuickSaveMode.on) {
-        ref.read(appControllerProvider.notifier).approveIncomingRequest(request.id);
+        ref
+            .read(appControllerProvider.notifier)
+            .approveIncomingRequest(request.id);
         return;
       }
       if (quickSaveMode == QuickSaveMode.favorites) {
@@ -550,9 +549,15 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
       }
     }
 
+    // If incoming request list is enabled, non-auto-approved requests are
+    // handled from the incoming requests screen.
+    if (appState.showIncomingRequestList) {
+      return;
+    }
+
     final requiresCodeVerification =
         appState.requirePairingCodeForDirectTransfers &&
-            request.pairingCode != null;
+        request.pairingCode != null;
 
     final details = <_DecisionDetail>[
       _DecisionDetail(
@@ -744,7 +749,8 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
       }
 
       WebPeerConnectRequest? pendingRequest;
-      for (final item in ref.read(appControllerProvider).pendingWebPeerRequests) {
+      for (final item
+          in ref.read(appControllerProvider).pendingWebPeerRequests) {
         if (item.id == requestId) {
           pendingRequest = item;
           break;
@@ -833,7 +839,8 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
       }
 
       WebIncomingUploadRequest? pendingRequest;
-      for (final item in ref.read(appControllerProvider).pendingWebIncomingUploads) {
+      for (final item
+          in ref.read(appControllerProvider).pendingWebIncomingUploads) {
         if (item.id == requestId) {
           pendingRequest = item;
           break;
@@ -913,10 +920,7 @@ class _DecisionScreen extends StatelessWidget {
       child: Container(
         decoration: BoxDecoration(
           gradient: LinearGradient(
-            colors: [
-              accent.withValues(alpha: 0.09),
-              colorScheme.surface,
-            ],
+            colors: [accent.withValues(alpha: 0.09), colorScheme.surface],
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
           ),
@@ -940,7 +944,9 @@ class _DecisionScreen extends StatelessWidget {
                                 vertical: 8,
                               ),
                               decoration: BoxDecoration(
-                                color: colorScheme.surface.withValues(alpha: 0.82),
+                                color: colorScheme.surface.withValues(
+                                  alpha: 0.82,
+                                ),
                                 borderRadius: BorderRadius.circular(999),
                               ),
                               child: Text(eyebrow),
@@ -961,15 +967,21 @@ class _DecisionScreen extends StatelessWidget {
                                 const SizedBox(width: 18),
                                 Expanded(
                                   child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
-                                      Text(title, style: theme.textTheme.headlineMedium),
+                                      Text(
+                                        title,
+                                        style: theme.textTheme.headlineMedium,
+                                      ),
                                       const SizedBox(height: 8),
                                       Text(
                                         subtitle,
-                                        style: theme.textTheme.bodyLarge?.copyWith(
-                                          color: colorScheme.onSurfaceVariant,
-                                        ),
+                                        style: theme.textTheme.bodyLarge
+                                            ?.copyWith(
+                                              color:
+                                                  colorScheme.onSurfaceVariant,
+                                            ),
                                       ),
                                     ],
                                   ),
@@ -984,7 +996,9 @@ class _DecisionScreen extends StatelessWidget {
                                 color: colorScheme.surfaceContainerLow,
                                 borderRadius: BorderRadius.circular(28),
                                 border: Border.all(
-                                  color: colorScheme.outlineVariant.withValues(alpha: 0.65),
+                                  color: colorScheme.outlineVariant.withValues(
+                                    alpha: 0.65,
+                                  ),
                                 ),
                               ),
                               child: Row(
@@ -1002,15 +1016,21 @@ class _DecisionScreen extends StatelessWidget {
                                   const SizedBox(width: 14),
                                   Expanded(
                                     child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
                                       children: [
-                                        Text(highlightTitle, style: theme.textTheme.titleLarge),
+                                        Text(
+                                          highlightTitle,
+                                          style: theme.textTheme.titleLarge,
+                                        ),
                                         const SizedBox(height: 4),
                                         Text(
                                           highlightSubtitle,
-                                          style: theme.textTheme.bodyMedium?.copyWith(
-                                            color: colorScheme.onSurfaceVariant,
-                                          ),
+                                          style: theme.textTheme.bodyMedium
+                                              ?.copyWith(
+                                                color: colorScheme
+                                                    .onSurfaceVariant,
+                                              ),
                                         ),
                                       ],
                                     ),
@@ -1030,25 +1050,34 @@ class _DecisionScreen extends StatelessWidget {
                                         padding: const EdgeInsets.all(16),
                                         decoration: BoxDecoration(
                                           color: colorScheme.surface,
-                                          borderRadius: BorderRadius.circular(22),
+                                          borderRadius: BorderRadius.circular(
+                                            22,
+                                          ),
                                           border: Border.all(
-                                            color: colorScheme.outlineVariant.withValues(alpha: 0.65),
+                                            color: colorScheme.outlineVariant
+                                                .withValues(alpha: 0.65),
                                           ),
                                         ),
                                         child: Row(
-                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
                                           children: [
                                             Icon(detail.icon, color: accent),
                                             const SizedBox(width: 12),
                                             Expanded(
                                               child: Column(
-                                                crossAxisAlignment: CrossAxisAlignment.start,
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
                                                 children: [
                                                   Text(
                                                     detail.label,
-                                                    style: theme.textTheme.labelLarge?.copyWith(
-                                                      color: colorScheme.onSurfaceVariant,
-                                                    ),
+                                                    style: theme
+                                                        .textTheme
+                                                        .labelLarge
+                                                        ?.copyWith(
+                                                          color: colorScheme
+                                                              .onSurfaceVariant,
+                                                        ),
                                                   ),
                                                   const SizedBox(height: 4),
                                                   Text(detail.value),

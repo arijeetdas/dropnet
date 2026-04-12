@@ -1,4 +1,0 @@
-enum ServerType {
-  readOnly,
-  readAndWrite,
-}

@@ -15,7 +15,8 @@ class ReceiveScreen extends ConsumerStatefulWidget {
   ConsumerState<ReceiveScreen> createState() => _ReceiveScreenState();
 }
 
-class _ReceiveScreenState extends ConsumerState<ReceiveScreen> with SingleTickerProviderStateMixin {
+class _ReceiveScreenState extends ConsumerState<ReceiveScreen>
+    with SingleTickerProviderStateMixin {
   late final AnimationController _pulseController;
   late final Animation<double> _scaleAnimation;
   late final Animation<double> _opacityAnimation;
@@ -75,6 +76,7 @@ class _ReceiveScreenState extends ConsumerState<ReceiveScreen> with SingleTicker
       ),
     );
     final quickSaveLocked = state.pairingRequired;
+    final disableQuickSaveOn = state.showIncomingRequestList;
     final content = GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: () => FocusScope.of(context).unfocus(),
@@ -82,160 +84,164 @@ class _ReceiveScreenState extends ConsumerState<ReceiveScreen> with SingleTicker
         padding: const EdgeInsets.all(16),
         child: Stack(
           children: [
-          Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                SizedBox(
-                  width: 180,
-                  height: 180,
-                  child: Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      AnimatedBuilder(
-                        animation: _pulseController,
-                        builder: (context, child) {
-                          return Transform.scale(
-                            scale: _scaleAnimation.value,
-                            child: Container(
-                              width: 180,
-                              height: 180,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: _opacityAnimation.value),
+            Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  SizedBox(
+                    width: 180,
+                    height: 180,
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        AnimatedBuilder(
+                          animation: _pulseController,
+                          builder: (context, child) {
+                            return Transform.scale(
+                              scale: _scaleAnimation.value,
+                              child: Container(
+                                width: 180,
+                                height: 180,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .primaryContainer
+                                      .withValues(
+                                        alpha: _opacityAnimation.value,
+                                      ),
+                                ),
                               ),
-                            ),
-                          );
-                        },
-                      ),
-                      Icon(
-                        Icons.adjust_rounded,
-                        size: 120,
-                        color: Theme.of(context).colorScheme.primary,
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 26),
-                Text(
-                  state.localDeviceBaseName.isEmpty
-                      ? 'DropNet Device'
-                      : state.localDeviceBaseName,
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.displaySmall,
-                ),
-                const SizedBox(height: 10),
-                Text(
-                  '#${state.localDeviceNumber}',
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-              ],
-            ),
-          ),
-          Align(
-            alignment: Alignment.bottomCenter,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 6),
-                  child: Text(
-                    'Quick Save',
-                    style: Theme.of(context).textTheme.labelLarge,
-                  ),
-                ),
-                if (quickSaveLocked)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 6),
-                    child: Text(
-                      'Quick Save is disabled while pairing mode is enabled.',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-                Material(
-                  color: Theme.of(context)
-                      .colorScheme
-                      .surfaceContainerHighest
-                      .withValues(alpha: 0.55),
-                  borderRadius: BorderRadius.circular(999),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 6,
-                      vertical: 6,
-                    ),
-                    child: SegmentedButton<QuickSaveMode>(
-                      showSelectedIcon: false,
-                      style: ButtonStyle(
-                        shape: WidgetStatePropertyAll(
-                          RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(999),
-                          ),
+                            );
+                          },
                         ),
-                      ),
-                      segments: const [
-                        ButtonSegment<QuickSaveMode>(
-                          value: QuickSaveMode.on,
-                          label: Text('On'),
-                        ),
-                        ButtonSegment<QuickSaveMode>(
-                          value: QuickSaveMode.favorites,
-                          label: Text('Favorites'),
-                        ),
-                        ButtonSegment<QuickSaveMode>(
-                          value: QuickSaveMode.off,
-                          label: Text('Off'),
+                        Icon(
+                          Icons.adjust_rounded,
+                          size: 120,
+                          color: Theme.of(context).colorScheme.primary,
                         ),
                       ],
-                      selected: {state.quickSaveMode},
-                      onSelectionChanged: quickSaveLocked
-                          ? null
-                          : (selection) => _onQuickSaveModeTapped(
-                                selection.first,
-                                dismissedModes:
-                                    state.quickSaveDismissedModes,
-                              ),
                     ),
                   ),
-                ),
-                const SizedBox(height: 8),
-              ],
-            ),
-          ),
-          if (state.showIncomingRequestList)
-            Align(
-              alignment: Alignment.topRight,
-              child: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  OutlinedButton.icon(
-                    onPressed: () => context.push('/receive/incoming-requests'),
-                    icon: const Icon(Icons.mail_outline_rounded),
-                    label: const Text('Incoming Request'),
+                  const SizedBox(height: 26),
+                  Text(
+                    state.localDeviceBaseName.isEmpty
+                        ? 'DropNet Device'
+                        : state.localDeviceBaseName,
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.displaySmall,
                   ),
-                  if (state.pendingRequestsCount > 0)
-                    Positioned(
-                      right: -2,
-                      top: -2,
-                      child: FadeTransition(
-                        opacity: _pulseController.drive(
-                          Tween<double>(begin: 0.28, end: 1),
-                        ),
-                        child: Container(
-                          width: 10,
-                          height: 10,
-                          decoration: BoxDecoration(
-                            color: Theme.of(context).colorScheme.error,
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                      ),
-                    ),
+                  const SizedBox(height: 10),
+                  Text(
+                    '#${state.localDeviceNumber}',
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
                 ],
               ),
             ),
+            Align(
+              alignment: Alignment.bottomCenter,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: Text(
+                      'Quick Save',
+                      style: Theme.of(context).textTheme.labelLarge,
+                    ),
+                  ),
+                  if (quickSaveLocked)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Text(
+                        'Quick Save is disabled while pairing mode is enabled.',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  Material(
+                    color: Theme.of(context).colorScheme.surfaceContainerHighest
+                        .withValues(alpha: 0.55),
+                    borderRadius: BorderRadius.circular(999),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 6,
+                      ),
+                      child: SegmentedButton<QuickSaveMode>(
+                        showSelectedIcon: false,
+                        style: ButtonStyle(
+                          shape: WidgetStatePropertyAll(
+                            RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                          ),
+                        ),
+                        segments: [
+                          ButtonSegment<QuickSaveMode>(
+                            value: QuickSaveMode.on,
+                            enabled: !disableQuickSaveOn,
+                            label: Text('On'),
+                          ),
+                          ButtonSegment<QuickSaveMode>(
+                            value: QuickSaveMode.favorites,
+                            label: Text('Favorites'),
+                          ),
+                          ButtonSegment<QuickSaveMode>(
+                            value: QuickSaveMode.off,
+                            label: Text('Off'),
+                          ),
+                        ],
+                        selected: {state.quickSaveMode},
+                        onSelectionChanged: quickSaveLocked
+                            ? null
+                            : (selection) => _onQuickSaveModeTapped(
+                                selection.first,
+                                dismissedModes: state.quickSaveDismissedModes,
+                              ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                ],
+              ),
+            ),
+            if (state.showIncomingRequestList)
+              Align(
+                alignment: Alignment.topRight,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed: () =>
+                          context.push('/receive/incoming-requests'),
+                      icon: const Icon(Icons.mail_outline_rounded),
+                      label: const Text('Incoming Request'),
+                    ),
+                    if (state.pendingRequestsCount > 0)
+                      Positioned(
+                        right: -2,
+                        top: -2,
+                        child: FadeTransition(
+                          opacity: _pulseController.drive(
+                            Tween<double>(begin: 0.28, end: 1),
+                          ),
+                          child: Container(
+                            width: 10,
+                            height: 10,
+                            decoration: BoxDecoration(
+                              color: Theme.of(context).colorScheme.error,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
           ],
         ),
       ),
@@ -243,10 +249,7 @@ class _ReceiveScreenState extends ConsumerState<ReceiveScreen> with SingleTicker
     if (widget.embedded) {
       return content;
     }
-    return AdaptiveNavScaffold(
-      currentIndex: 0,
-      child: content,
-    );
+    return AdaptiveNavScaffold(currentIndex: 0, child: content);
   }
 
   Future<void> _onQuickSaveModeTapped(
@@ -293,9 +296,8 @@ class _ReceiveScreenState extends ConsumerState<ReceiveScreen> with SingleTicker
                   const SizedBox(height: 10),
                   CheckboxListTile(
                     value: dontShowAgain,
-                    onChanged: (value) => setLocalState(
-                      () => dontShowAgain = value ?? false,
-                    ),
+                    onChanged: (value) =>
+                        setLocalState(() => dontShowAgain = value ?? false),
                     title: const Text('Do not show again'),
                     contentPadding: EdgeInsets.zero,
                     controlAffinity: ListTileControlAffinity.leading,

@@ -125,6 +125,7 @@ class AppState {
   final String localDeviceBaseName;
   final int localDeviceNumber;
   final String localIp;
+
   /// All eligible local IPv4 addresses, sorted by preference.
   final List<String> localIps;
   final List<WebPeerConnectRequest> pendingWebPeerRequests;
@@ -249,7 +250,7 @@ class AppState {
       localDeviceManufacturer:
           localDeviceManufacturer ?? this.localDeviceManufacturer,
       localDevicePlatform: localDevicePlatform ?? this.localDevicePlatform,
-        localDeviceCpuArchitecture:
+      localDeviceCpuArchitecture:
           localDeviceCpuArchitecture ?? this.localDeviceCpuArchitecture,
       localDeviceBaseName: localDeviceBaseName ?? this.localDeviceBaseName,
       localDeviceNumber: localDeviceNumber ?? this.localDeviceNumber,
@@ -274,17 +275,19 @@ class AppState {
       pendingSystemMessages:
           pendingSystemMessages ?? this.pendingSystemMessages,
       trustedPeers: trustedPeers ?? this.trustedPeers,
-        favoritePeers: favoritePeers ?? this.favoritePeers,
-        quickSaveMode: quickSaveMode ?? this.quickSaveMode,
-        quickSaveInfoDismissedModes:
+      favoritePeers: favoritePeers ?? this.favoritePeers,
+      quickSaveMode: quickSaveMode ?? this.quickSaveMode,
+      quickSaveInfoDismissedModes:
           quickSaveInfoDismissedModes ?? this.quickSaveInfoDismissedModes,
       saveMediaToGallery: saveMediaToGallery ?? this.saveMediaToGallery,
       requirePairingCodeForDirectTransfers:
           requirePairingCodeForDirectTransfers ??
           this.requirePairingCodeForDirectTransfers,
-      showIncomingRequestList: showIncomingRequestList ?? this.showIncomingRequestList,
+      showIncomingRequestList:
+          showIncomingRequestList ?? this.showIncomingRequestList,
       maxIncomingRequests: maxIncomingRequests ?? this.maxIncomingRequests,
-      incomingRequestTimeoutSeconds: incomingRequestTimeoutSeconds ?? this.incomingRequestTimeoutSeconds,
+      incomingRequestTimeoutSeconds:
+          incomingRequestTimeoutSeconds ?? this.incomingRequestTimeoutSeconds,
     );
   }
 }
@@ -389,7 +392,8 @@ class AppController extends StateNotifier<AppState> {
   static const _quickSaveDismissedModesKey = 'receive.quickSaveDismissedModes';
   static const _showIncomingRequestListKey = 'receive.showIncomingRequestList';
   static const _maxIncomingRequestsKey = 'receive.maxIncomingRequests';
-  static const _incomingRequestTimeoutSecondsKey = 'receive.incomingRequestTimeoutSeconds';
+  static const _incomingRequestTimeoutSecondsKey =
+      'receive.incomingRequestTimeoutSeconds';
 
   StreamSubscription<List<DeviceModel>>? _devicesSub;
   StreamSubscription<List<TransferModel>>? _activeSub;
@@ -471,9 +475,12 @@ class AppController extends StateNotifier<AppState> {
 
     await _discovery.updatePairingModeEnabled(restoredRequirePairingCode);
 
-    final effectiveQuickSaveMode = restoredRequirePairingCode
-      ? QuickSaveMode.off
-      : restoredQuickSaveMode;
+    final effectiveQuickSaveMode =
+        restoredRequirePairingCode ||
+            (restoredShowIncomingRequestList &&
+                restoredQuickSaveMode == QuickSaveMode.on)
+        ? QuickSaveMode.off
+        : restoredQuickSaveMode;
 
     // Save download directory if changed
     final restoredDownloadDir = _prefs!.getString(_downloadDirectoryKey);
@@ -636,9 +643,9 @@ class AppController extends StateNotifier<AppState> {
           for (final request in overflow) {
             _transfer.rejectIncomingRequest(request.id);
           }
-          incomingRequests = incomingRequests.take(maxRequests).toList(
-            growable: false,
-          );
+          incomingRequests = incomingRequests
+              .take(maxRequests)
+              .toList(growable: false);
         }
       }
 
@@ -930,9 +937,7 @@ class AppController extends StateNotifier<AppState> {
     // rotation). Remove the orphan by deviceId alone so it doesn't get stuck.
     if (state.trustedPeers.length == beforeCount) {
       final updated = state.trustedPeers
-          .where(
-            (peer) => peer.deviceId.trim().toLowerCase() != deviceId,
-          )
+          .where((peer) => peer.deviceId.trim().toLowerCase() != deviceId)
           .toList(growable: false);
       state = state.copyWith(trustedPeers: updated);
       await _saveTrustedPeers(updated);
@@ -950,20 +955,17 @@ class AppController extends StateNotifier<AppState> {
       // Try to find the device by the stored fingerprint first; if the peer
       // has rotated its cert, fall back to matching by deviceId alone so an
       // online peer with a new cert can still be remotely unpaired.
-      final matchedDevice = state.devices
-          .where((device) {
-            if (!device.isOnline || device.deviceId.trim().isEmpty) {
-              return false;
-            }
-            final fp = (device.tlsCertificateSha256 ?? '').trim().toLowerCase();
-            if (fp.isNotEmpty &&
-                trustedPeerKey(device.deviceId, fp) == targetKey) {
-              return true;
-            }
-            // Cert-rotation fallback: match by deviceId only.
-            return device.deviceId.trim().toLowerCase() == normalizedTargetId;
-          })
-          .firstOrNull;
+      final matchedDevice = state.devices.where((device) {
+        if (!device.isOnline || device.deviceId.trim().isEmpty) {
+          return false;
+        }
+        final fp = (device.tlsCertificateSha256 ?? '').trim().toLowerCase();
+        if (fp.isNotEmpty && trustedPeerKey(device.deviceId, fp) == targetKey) {
+          return true;
+        }
+        // Cert-rotation fallback: match by deviceId only.
+        return device.deviceId.trim().toLowerCase() == normalizedTargetId;
+      }).firstOrNull;
 
       if (matchedDevice == null) {
         throw StateError(
@@ -1290,7 +1292,9 @@ class AppController extends StateNotifier<AppState> {
   }
 
   void setQuickSaveMode(QuickSaveMode mode) {
-    final nextMode = state.requirePairingCodeForDirectTransfers
+    final nextMode =
+        state.requirePairingCodeForDirectTransfers ||
+            (state.showIncomingRequestList && mode == QuickSaveMode.on)
         ? QuickSaveMode.off
         : mode;
     if (nextMode == state.quickSaveMode) {
@@ -1315,8 +1319,18 @@ class AppController extends StateNotifier<AppState> {
   }
 
   void setShowIncomingRequestList(bool value) {
-    state = state.copyWith(showIncomingRequestList: value);
+    final previousMode = state.quickSaveMode;
+    final forcedMode = value && previousMode == QuickSaveMode.on
+        ? QuickSaveMode.off
+        : previousMode;
+    state = state.copyWith(
+      showIncomingRequestList: value,
+      quickSaveMode: forcedMode,
+    );
     unawaited(_saveShowIncomingRequestList(value));
+    if (forcedMode != previousMode) {
+      unawaited(_saveQuickSaveMode(forcedMode));
+    }
   }
 
   void setMaxIncomingRequests(int value) {
@@ -1795,26 +1809,28 @@ class AppController extends StateNotifier<AppState> {
     }
 
     var changed = false;
-    final updated = favorites.map((favorite) {
-      final device = byId[favorite.deviceId.trim().toLowerCase()];
-      if (device == null) {
-        return favorite;
-      }
+    final updated = favorites
+        .map((favorite) {
+          final device = byId[favorite.deviceId.trim().toLowerCase()];
+          if (device == null) {
+            return favorite;
+          }
 
-      final next = favorite.copyWith(
-        deviceName: device.taggedName.trim().isEmpty
-            ? device.deviceName.trim()
-            : device.taggedName.trim(),
-        manufacturer: device.manufacturer.trim(),
-        platform: device.platform.trim(),
-        lastKnownIp: device.ipAddress.trim(),
-        lastSeenAt: device.lastSeen,
-      );
-      if (!_sameFavoritePeer(next, favorite)) {
-        changed = true;
-      }
-      return next;
-    }).toList(growable: false);
+          final next = favorite.copyWith(
+            deviceName: device.taggedName.trim().isEmpty
+                ? device.deviceName.trim()
+                : device.taggedName.trim(),
+            manufacturer: device.manufacturer.trim(),
+            platform: device.platform.trim(),
+            lastKnownIp: device.ipAddress.trim(),
+            lastSeenAt: device.lastSeen,
+          );
+          if (!_sameFavoritePeer(next, favorite)) {
+            changed = true;
+          }
+          return next;
+        })
+        .toList(growable: false);
 
     return changed ? updated : favorites;
   }

@@ -37,7 +37,8 @@ class HomeScreen extends ConsumerWidget {
               padding: const EdgeInsets.only(right: 12),
               child: Builder(
                 builder: (context) {
-                  final pendingCount = state.pendingIncomingRequests.length +
+                  final pendingCount =
+                      state.pendingIncomingRequests.length +
                       state.pendingPairingRequests.length;
                   return Badge.count(
                     count: pendingCount,
@@ -79,11 +80,6 @@ class HomeScreen extends ConsumerWidget {
                           onPressed: () => context.push('/transfers'),
                           icon: const Icon(Icons.swap_horiz),
                           label: const Text('Transfers'),
-                        ),
-                        OutlinedButton.icon(
-                          onPressed: () => context.push('/ftp'),
-                          icon: const Icon(Icons.storage),
-                          label: const Text('FTPS Mode'),
                         ),
                         OutlinedButton.icon(
                           onPressed: () => context.push('/web'),
