@@ -1,4 +1,4 @@
-# 🚀 DropNet — Production-Grade Local Peer-to-Peer File & Text Sharing
+# 🚀 DropNet
 
 <p align="center">
   <img src="assets/icon/app_icon.png" width="140" height="140" style="border-radius: 32px; box-shadow: 0 12px 30px rgba(0,0,0,0.25);" alt="DropNet App Icon" />
@@ -7,7 +7,7 @@
 <h3 align="center">DropNet</h3>
 
 <p align="center">
-  <strong>Blazing fast, zero-trust local peer-to-peer file & text streaming designed with a highly responsive, glassmorphic Material 3 interface.</strong>
+  <strong>Blazing fast, zero-trust local peer-to-peer file and text streaming wrapped in a highly responsive, glassmorphic Material 3 interface.</strong>
 </p>
 
 <p align="center">
@@ -21,71 +21,51 @@
 
 ---
 
-## 🎯 Recruiter & Tech-Lead TL;DR
+## 📖 Project Overview
 
-**DropNet** is a high-performance cross-platform local sharing utility built to showcase production-grade application architecture and network engineering. Instead of relying on centralized cloud endpoints, DropNet establishes direct, secure socket pipes over local local area networks (LANs). 
+**DropNet** is a high-performance cross-platform local sharing utility built to showcase production-grade application architecture and network engineering. Instead of relying on centralized cloud endpoints, DropNet establishes direct, secure socket pipes over local area networks (LANs), allowing immediate transfers at maximum wireless hardware interface speeds.
 
-### 🏆 Engineering Highlights:
-*   **Zero-Trust Security Model:** Cryptographically secured peer-to-peer handshakes with local self-signed TLS certificates (2048-bit RSA) and strict SHA-256 fingerprint pinning to prevent Man-in-the-Middle (MITM) attacks.
-*   **Dual-Discovery Subsystem:** Combines Multicast DNS (mDNS) via Bonsoir with a high-availability UDP Datagram Broadcast socket (`255.255.255.255:45454`) to guarantee bulletproof discoverability across sandboxed runtimes (e.g., Windows firewalls).
-*   **High-Throughput Streaming Engine:** High-performance, flow-controlled TCP Socket streams using dynamic 64KB chunk-level byte buffering and isolated event offloading.
-*   **Embedded Micro-Web Server:** Built-in `shelf`-powered web portal with dynamic HTML injection, secure cookie-based PIN gates (`wsid` session tracking), and dynamic QR pairing, enabling zero-install file uploads/downloads for guest platforms (such as iOS/Desktop).
-*   **Clean Architecture (SOLID):** Highly decoupled, testable structure utilizing **Riverpod** for reactive, compile-safe state machines and dynamic theme seeding.
-
----
-
-## 📖 Project Overview & Rationale
-
-When transferring files between devices in close proximity, modern consumers are faced with a trade-off: upload files to cloud servers (wasting bandwidth, latency, and compromising privacy) or struggle with proprietary platforms (AirDrop, Quick Share) that don't natively interoperate with Windows, Linux, or iOS.
-
-DropNet solves this by operating as a **purely local utility** that requires zero cloud configurations, cellular data, or account creation. Rendering a premium tactile experience at 60/120fps across all screens, DropNet demonstrates that consumer-grade software can achieve near-zero-latency data delivery without sacrificing aesthetic elegance or security standards.
+### Key Capabilities
+*   **Encrypted Transmission:** Native point-to-point network tunnels utilizing raw TCP sockets wrapped in a secure **TLS 1.3** pipeline.
+*   **Dual-Discovery Subsystem:** Combines Multicast DNS (mDNS) with an automated high-availability UDP Datagram Broadcast socket to guarantee robust connectivity across complex local networks.
+*   **Zero-Install Web Portal:** An embedded micro-web server allowing any guest device (iOS, macOS, Linux, etc.) to securely upload and download files via a local, PIN-gated browser dashboard without installing the client application.
+*   **Dynamic UX Framework:** A sleek, animated Material 3 user interface featuring dynamic theme color seeds, responsive glassmorphism, and seamless concurrency.
 
 ---
 
-## 🛠 Architectural Tech Stack & Rationale
+## ⚙️ Core Architecture & Distributed System Design
 
-DropNet’s tech stack is carefully curated to achieve optimal speed, UI response, and strict type safety:
+DropNet operates entirely within a Local Area Network, demonstrating how low-level systems programming can be seamlessly integrated into cross-platform application frameworks.
 
-| Technology | Architectural Role | Technical Justification |
-| :--- | :--- | :--- |
-| **Flutter SDK** | Cross-Platform UI Rendering | Compiled natively to ARM64/x86 machinery via Flutter’s Impeller/Skia engine, guaranteeing smooth transitions, complex canvas paints, and single-codebase UI parity. |
-| **Dart Runtime** | Non-blocking Socket I/O | Out-of-the-box support for Event-Driven loops, non-blocking asynchronous socket streams, and Ahead-of-Time (AOT) machine compilation. |
-| **Riverpod** | Uni-directional State Engine | Ensures compile-safe state graphs, fully decoupling data models, platform MethodChannels, and local databases from reactive widgets. |
-| **mDNS & UDP Sockets** | Peer Discovery Daemon | Multicast DNS (RFC 6762) over multicast address `224.0.0.251:5353` combined with fallback UDP socket broadcasts guarantees robust discovery on all local topologies. |
-| **Secure TCP Sockets** | Encrypted Transport Layer | Implements raw Point-to-Point TCP Sockets wrapped in **TLS 1.3** (`SecureSocket`) to ensure reliable, in-order, error-checked data pipelines. |
-| **Shelf (Dart)** | Embedded Web Portal | A lightweight, composable middleware HTTP server pipeline that transforms the host device into a localized fileshare portal for external devices. |
+### 1. Hybrid Network Discovery (mDNS & UDP Broadcasts)
+Establishing peer-to-peer relationships on local subnets requires solid discovery logic. Because local subnets have diverse firewall layouts, DropNet employs a redundant, dual-channel presence daemon:
+*   **mDNS Channel (Multicast):** On supportive runtimes, DropNet uses multicast DNS records via **Bonsoir** to announce and resolve service records over multicast address `224.0.0.251:5353`.
+*   **UDP Fallback Socket (Unicast/Broadcast):** To bypass aggressive desktop sandbox rules (like Windows firewall policies), DropNet runs a concurrent socket listener using `RawDatagramSocket` on port `45454`. It broadcasts structured, cryptographically hashed JSON presence records to `255.255.255.255`.
+*   **Presence Lifecycle:** Discovered peers are held in an in-memory registry. A continuous background prune daemon sweeps the table every 3 seconds, removing nodes that have not refreshed their heartbeat within a 12-second clock-skew window.
 
----
-
-## 🎓 Computer Science Undergrad Fundamentals Explained
-
-DropNet is a practical sandbox representing core CS engineering principles in a consumer-ready mobile/desktop application:
-
-### 1. Computer Networks (OSI Transport & Network Layers)
-DropNet uses the socket API to establish two distinct networking layers:
-*   **Discovery (UDP / Connectionless):** Devices broadcast structured presence JSON payloads containing ephemeral cryptographic nonces, CPU architectures, dynamic pairing states, and public key fingerprints over port `45454` using UDP Broadcast (`255.255.255.255`). Simultaneously, a multicast group listener scans port `5353` (mDNS) to resolve PTR/SRV/TXT records. A dedicated daemon prunes idle records if no packet is received for 12 seconds.
-*   **Data Delivery (TCP / Connection-Oriented):** Once transfers are initiated, the app spins up a raw `SecureServerSocket` on port `45455`. Raw TCP sockets utilize standard sliding window flow control to prevent buffer exhaustion.
-*   **Custom Framing Protocol:** Raw socket buffers are written using a custom binary frame format:
+### 2. Encrypted Transmission Pipe & Custom Binary Framing
+Once peers agree to a transfer, DropNet spins up a raw `SecureServerSocket` binding dynamically over port `45455`.
+*   **Packet Fragmentation Mitigation:** Because TCP streams are continuous byte pipes with no native boundary indicators, reading raw JSON headers directly can result in fragmentation failures. To resolve this, DropNet implements a custom binary framing protocol:
     ```
     ┌─────────────────────────┬─────────────────────────┬─────────────────────────┬─────────────────────────┐
     │  Frame Length (4 Bytes) │     IV (16 Bytes)       │  SHA-256 Hash (32 Bytes)│ Ciphertext (Variable)   │
     │  (Big-Endian uint32)    │   (AES Initial Vector)  │   (Plaintext Integrity) │  (Encrypted Payload)    │
     └─────────────────────────┴─────────────────────────┴─────────────────────────┴─────────────────────────┘
     ```
-    This framing solves TCP socket stream fragmentation, ensuring the receiving socket reads exact segment boundaries before attempting AES decryption.
+*   **Flow Control:** Files are read and written sequentially in optimized **64KB byte chunks**. This prevents massive file payloads from overwhelming device memory, keeping buffer thresholds stable.
 
-### 2. Operating Systems (Concurrency & Event-Driven I/O)
-Dart operates on a single-threaded **Event Loop** architecture. Performing high-speed multi-gigabyte networking on the main isolate would starve the graphics pipeline, causing massive UI frame dropping (jank).
-*   **Asynchronous I/O:** Socket streams (`Socket` and `ServerSocket`) are non-blocking, driven by low-level OS multiplexers (like `epoll` on Linux/Android and `kqueue` on iOS/macOS).
-*   **Background Multi-Threaded Isolates:** Heavy computations—such as dynamic ZIP generation, calculating file checksums (SHA-256), and high-frequency disk writes—are spawned in dedicated Dart **Isolates**. Isolates are isolated OS-level threads with independent memory heaps. By communicating via message passing (`SendPort`/`ReceivePort`), the main thread's UI thread is kept entirely free, ensuring constant fluid animations.
+### 3. Asynchronous Concurrency & Thread Isolation
+Dart operates on a single-threaded **Event Loop** architecture. Performing high-throughput disk reads, SHA-256 integrity hashing, and cryptographic decryption on the main loop would immediately starve the graphics pipeline, resulting in noticeable UI frame drops.
+*   **Non-blocking I/O:** Sockets utilize low-level OS multiplexers (like `epoll` on Linux/Android and `kqueue` on iOS/macOS) to process events asynchronously without blocking execution.
+*   **Multi-Threaded Isolates:** Heavy CPU computations—such as dynamic ZIP packaging, high-speed disk writes, and large block AES cryptosystems—are dynamically offloaded to dedicated Dart **Isolates**. These isolates run on separate OS threads with independent memory heaps, communicating back to the main UI thread via message passing (`SendPort`/`ReceivePort`).
 
-### 3. Cryptography & Cybersecurity (Zero-Trust Security Model)
-To completely prevent LAN eavesdropping or malicious client spoofing, DropNet implements an advanced trust model:
-*   **TLS on LAN:** On startup, `LocalTlsCertificateService` generates an ephemeral 2048-bit RSA key pair and a self-signed X.509 certificate specifying standard Subject Alternative Names (SANs) dynamically mapped to current active local adapter IPs.
-*   **Strict Fingerprint Pinning:** During the mDNS/UDP discovery phase, peers advertise the SHA-256 fingerprint of their local X.509 certificate. When a socket connection is formed, the connection intercepts the handshakes (`onBadCertificate` callback) and programmatically verifies the peer's actual public key against the advertised fingerprint. Connections with a mismatched fingerprint are terminated instantly.
-*   **Zero-Trust Pairing Codes:** Direct pairings mandate a 6-digit cryptographic verification code. This code forms a dynamic shared secret. Payloads are encrypted with **AES-CBC-256** using an ephemeral session key wrapped securely and transmitted via the TLS-secured socket.
+### 4. Zero-Trust Security & Trust Framework
+To guarantee absolute immunity from local eavesdropping or malicious client spoofing, DropNet enforces a decentralized trust framework:
+*   **Dynamic TLS on LAN:** On boot, the `LocalTlsCertificateService` generates an ephemeral 2048-bit RSA key pair and a self-signed X.509 certificate specifying dynamic Subject Alternative Names (SANs) bound to the device's current active local network adapters.
+*   **Fingerprint Pinning:** During the initial discovery exchange, peers advertise the SHA-256 fingerprint of their local X.509 certificate. When a socket connection is formed, the app intercepts the TLS handshake and programmatically verifies the peer's certificate against the advertised fingerprint. Mismatched connections are terminated instantly.
+*   **Zero-Trust Pairing Codes:** Establishing trusted pairings utilizes a 6-digit interactive challenge code. Once verified, files are encrypted with **AES-CBC-256** using an ephemeral session key wrapped securely and transmitted via the TLS-secured socket.
 
-### 4. Deterministic State Machines
+### 5. Finite State Machine (FSM) Lifecycle
 State changes follow a rigorous, mathematical state machine. Decoupled from visual render trees, it prevents race conditions (e.g., trying to write to a closed socket):
 
 ```
@@ -122,9 +102,30 @@ State changes follow a rigorous, mathematical state machine. Decoupled from visu
 
 ---
 
-## 🌟 Premium Application Features
+## 🛠 Tech Stack & Decoupled Rationale
 
-*   **Fluid Sonar Pulse Radar:** A custom-painted concentric scanning sonar visualizer with rotating vector lines simulating active LAN scanning. Features a dynamic green pulsing badge indicating "Ready to Receive".
+DropNet’s tech stack is carefully curated to achieve optimal speed, UI response, and strict type safety:
+
+| Technology | Role | Rationale |
+| :--- | :--- | :--- |
+| **Flutter** | Cross-Platform UI | Enables a single, high-performance C++ engine compiled codebase rendering at 60/120fps with absolute design consistency across mobile, desktop, and web. |
+| **Dart** | Asynchronous Logic | Out-of-the-box support for Event-Driven loops, non-blocking asynchronous socket I/O, Streams, and robust Ahead-of-Time (AOT) compiler target compilation. |
+| **Riverpod** | State Management | Ensures compile-safe, unidirectional data flows and modular reactive state binding across complex peer connections, active socket streams, and configurations. |
+| **mDNS / Bonsoir** | Peer Discovery | Utilizes Zero-Configuration networking (ZeroConf) over multicast DNS (RFC 6762) to scan, resolve, and connect local devices automatically without IP entry. |
+| **TCP Sockets** | Transfer Engine | Implements raw, point-to-point raw TCP sockets (RFC 793) with chunked byte-array streaming, ensuring flow-controlled, reliable local network delivery. |
+| **Web Server (Shelf)** | Web Portal Engine | Hosts a micro HTTP server directly on the host device, enabling any browser-enabled client to download and upload files without installing the DropNet app. |
+
+---
+
+## 🤖 AI-Assisted Development & Engineering Workflow
+
+DropNet was developed using a modern, synergistic engineering workflow. By utilizing AI pair-programmers to accelerate boilerplate scaffolding, dynamic UI transitions, and routine package layouts, full human attention was dedicated to the critical design bottlenecks: high-performance socket streaming, cryptographic X.509 handshake pipelines, state machine invariants, and native platform bindings. This hybrid human-AI partnership showcases how modern tools can dramatically accelerate the time-to-market of sophisticated, robust software architecture.
+
+---
+
+## 🌟 Premium UX & System Features
+
+*   **Fluid Sonar Pulse Radar:** A custom-painted concentric scanning sonar visualizer accompanied by rotating vector lines simulating active LAN scanning. Features a dynamic green pulsing badge indicating "Ready to Receive".
 *   **Device Identity Panel:** A gorgeous glassmorphic card displaying the active platform OS (Android, iOS, Windows, etc.), custom numeric tag, device name, **Device Manufacturer** details, and the active **Local IP Address** for easy LAN diagnostic checks.
 *   **Zero-Trust Pairing System:** Offers pairing-code connection verification to establish cryptographic fingerprints between devices, ensuring absolute immunity to local man-in-the-middle attacks.
 *   **Floating Transfer Queue Card:** A prominent, glowing, color-shifting banner that slides into view at the top of the Receive screen when files are waiting in the queue, providing tactile feedback.
@@ -134,9 +135,9 @@ State changes follow a rigorous, mathematical state machine. Decoupled from visu
 
 ---
 
-## 📂 Codebase Architecture & Navigation
+## 📂 Project Architecture
 
-DropNet is built upon **Clean Architecture** principles, enforcing a strict separation of concerns:
+The codebase follows Clean Architecture principles, ensuring strict separation of concerns, high modularity, and modular testability:
 
 ```
 lib/
@@ -175,9 +176,9 @@ lib/
 ## 📦 Getting Started & Build Instructions
 
 ### Prerequisites
-*   [Flutter SDK](https://docs.flutter.dev/get-started/install) (v3.19.0 or higher)
-*   [Dart SDK](https://dart.dev/get-started) (v3.10.0 or higher)
-*   An Android Device / Emulator (API Level 21+) or iOS / Windows / macOS / Linux target.
+- [Flutter SDK](https://docs.flutter.dev/get-started/install) (v3.19+ recommended)
+- [Dart SDK](https://dart.dev/get-started)
+- Git
 
 ### 1. Clone the Repository
 ```bash
@@ -191,72 +192,68 @@ flutter pub get
 ```
 
 ### 3. Run Static Code Quality Check
-Ensure the codebase remains warning and error-free:
 ```bash
 flutter analyze
 ```
 
-### 4. Run the Application locally
+### 4. Run the Application
 ```bash
-# Launches the app on your connected device
+# Run in debug mode on your connected device
 flutter run
 ```
 
-### 5. Compile Build Artifacts
-Compile high-performance production binaries:
+### 5. Build for Android
 ```bash
 # Build a universal release APK containing all ABIs
 flutter build apk --release
 
-# Build split APKS (individually packaged for arm64-v8a, armeabi-v7a, x86_64)
+# Build split APKS (separated by arm64-v8a, armeabi-v7a, x86_64)
 flutter build apk --split-per-abi --release
 ```
 
 ---
 
-## 🤝 Contributing Guidelines
+## 🤝 How to Contribute & Raise Issues
 
-DropNet is open-source, and contributions are highly appreciated! Here is how you can help:
+Contributions make the open-source community an amazing place to learn, inspire, and create. Any contributions you make are **greatly appreciated**.
 
-### 🐛 Reporting Issues & Requests
-1. Navigate to the **Issues** tab.
-2. Search past issues to avoid duplicates.
-3. Click **New Issue**, select a template, and provide absolute clarity. For bugs, include log outputs and OS specifications. For enhancements, include system topologies or design mocks.
+### Reporting a Bug or Suggesting a Feature
+1. Navigate to the **Issues** tab of the repository.
+2. Click **New Issue**.
+3. Use a clear, descriptive title and provide detailed reproduction steps (for bugs) or clear system diagrams (for features).
+4. Label the issue appropriately (e.g. `bug`, `enhancement`).
 
-### 💻 Pull Request Workflow
-1. **Fork** the repository and create a descriptive branch:
+### Submission Workflow
+1. **Fork** the Project.
+2. Create your Feature Branch:
    ```bash
-   git checkout -b feature/AmazingNewFeature
+   git checkout -b feature/AmazingFeature
    ```
-2. Commit your changes using standard conventional commit formats:
+3. Commit your changes:
    ```bash
-   git commit -m "feat: implement dynamic peer encryption handshakes"
+   git commit -m "feat: Add some AmazingFeature"
    ```
-3. Push to your fork:
+4. Push to the Branch:
    ```bash
-   git push origin feature/AmazingNewFeature
+   git push origin feature/AmazingFeature
    ```
-4. Open a **Pull Request** targeting the `main` branch. 
-5. Ensure the PR passes `flutter analyze` and builds successfully on target platforms before requesting review.
+5. Open a **Pull Request** targeting the main branch. Ensure all code passes `flutter analyze` with no lints or warnings.
 
 ---
 
 ## 🛡 License
 
-This project is licensed under the terms of the **MIT License**. See [LICENSE](file:///d:/flutter_projects/dropnet/LICENSE) for more details.
+Distributed under the **MIT License**. See `LICENSE` for more information.
 
 ---
 
 ## 👤 Developer & Contact
 
 **Arijeet Das**  
-*Computer Science & Engineering Undergraduate*
+*Computer Science & Engineering Undergrad*  
 
 *   **GitHub:** [@arijeetdas](https://github.com/arijeetdas)
 *   **LinkedIn:** [Arijeet Das](https://linkedin.com/in/arijeetdas)
+*   **DropNet on Vibe Store:** [DropNet](https://vibe-labs.netlify.app/app.html?id=dropnet)
+*   **Portfolio Website:** [Arijeet Das](https://arijeetdas-dev.vercel.app)
 *   **Email:** arijeetdas900@gmail.com
-*   **App Webpage:** (https://vibe-labs.netlify.app/app.html?id=dropnet)
-*   **Portfolio Website:** (https://arijeetdas-dev.vercel.app/)
-
----
-*DropNet represents a meticulous effort to bridge low-level networking, cryptography, and concurrent systems design with dynamic, highly polished consumer-ready Material Design frameworks.*
