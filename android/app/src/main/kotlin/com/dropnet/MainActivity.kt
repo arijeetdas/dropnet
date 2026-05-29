@@ -197,6 +197,10 @@ class MainActivity : FlutterFragmentActivity() {
 						val roots = runCatching { listStorageRoots() }.getOrDefault(emptyList())
 						result.success(roots)
 					}
+					"getInstalledApkType" -> {
+						val type = getInstalledApkType()
+						result.success(type)
+					}
 
 					else -> result.notImplemented()
 				}
@@ -773,5 +777,57 @@ class MainActivity : FlutterFragmentActivity() {
 		val stream = ByteArrayOutputStream()
 		bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
 		return stream.toByteArray()
+	}
+
+	private fun getInstalledApkType(): String {
+		try {
+			val apkPath = applicationInfo.sourceDir ?: return "unknown"
+			val zipFile = java.util.zip.ZipFile(apkPath)
+			val entries = zipFile.entries()
+			val abisSeen = mutableSetOf<String>()
+			while (entries.hasMoreElements()) {
+				val entry = entries.nextElement()
+				val name = entry.name
+				if (name.startsWith("lib/")) {
+					val parts = name.split("/")
+					if (parts.size > 2) {
+						val abi = parts[1]
+						abisSeen.add(abi)
+					}
+				}
+			}
+			zipFile.close()
+
+			val standardAbis = abisSeen.filter { it in setOf("arm64-v8a", "armeabi-v7a", "x86", "x86_64") }
+			if (standardAbis.size > 1) {
+				return "universal"
+			} else if (standardAbis.size == 1) {
+				return when (val abi = standardAbis.first()) {
+					"arm64-v8a" -> "arm-v8a"
+					"armeabi-v7a" -> "arm-v7a"
+					else -> abi
+				}
+			}
+		} catch (e: Exception) {
+			// fallback
+		}
+
+		try {
+			val nativeLibDir = applicationInfo.nativeLibraryDir
+			if (!nativeLibDir.isNullOrEmpty()) {
+				if (nativeLibDir.contains("arm64")) {
+					return "arm-v8a"
+				} else if (nativeLibDir.contains("arm") || nativeLibDir.contains("armeabi")) {
+					return "arm-v7a"
+				} else if (nativeLibDir.contains("x86_64")) {
+					return "x86_64"
+				} else if (nativeLibDir.contains("x86")) {
+					return "x86"
+				}
+			}
+		} catch (e: Exception) {
+			// fallback
+		}
+		return "universal"
 	}
 }

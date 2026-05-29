@@ -1,11 +1,15 @@
+import 'dart:async';
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:dynamic_color/dynamic_color.dart';
 
 import 'core/state/app_state.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'core/utils/file_utils.dart';
 import 'core/networking/web_server_service.dart';
 import 'models/transfer_model.dart';
@@ -22,6 +26,8 @@ import 'features/settings/settings_screen.dart';
 import 'features/transfers/active_transfers_screen.dart';
 import 'features/transfers/transfer_session_screen.dart';
 import 'features/web_mode/web_mode_screen.dart';
+import 'features/onboarding/welcome_screen.dart';
+import 'features/onboarding/permission_screen.dart';
 import 'core/utils/transfer_visuals.dart';
 import 'widgets/adaptive_nav_scaffold.dart';
 import 'widgets/pairing_code_dialog.dart';
@@ -31,9 +37,17 @@ final _rootNavigatorKey = GlobalKey<NavigatorState>();
 
 final _router = GoRouter(
   navigatorKey: _rootNavigatorKey,
-  initialLocation: '/receive',
+  initialLocation: '/welcome',
   routes: [
     GoRoute(path: '/', builder: (context, state) => const HomeScreen()),
+    GoRoute(
+      path: '/welcome',
+      builder: (context, state) => const WelcomeScreen(),
+    ),
+    GoRoute(
+      path: '/permission',
+      builder: (context, state) => const PermissionScreen(),
+    ),
     StatefulShellRoute.indexedStack(
       builder: (context, state, navigationShell) =>
           _TabShellScaffold(navigationShell: navigationShell),
@@ -159,13 +173,42 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
   bool _sharedTextOpening = false;
   bool _receivedFilePreviewOpening = false;
   bool _globalDragActive = false;
+  bool _startupRouteReady = false;
+  Timer? _permissionPollTimer;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(_lifecycleObserver);
     Future<void>(() async {
+      await _routeForStartup();
+      if (mounted) {
+        setState(() => _startupRouteReady = true);
+      }
+
       await ref.read(appControllerProvider.notifier).bootstrap();
+
+      if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+        _permissionPollTimer = Timer.periodic(const Duration(seconds: 2), (
+          _,
+        ) async {
+          final prefs = await SharedPreferences.getInstance();
+          final seen = prefs.getBool('onboarding.completed') ?? false;
+          if (!seen) {
+            return;
+          }
+          final currentPath = _router.routeInformationProvider.value.uri.path;
+          if (currentPath == '/welcome') {
+            return;
+          }
+          final granted = await _hasRequiredAndroidStorageAccess();
+          if (!granted) {
+            if (currentPath != '/permission') {
+              _router.go('/permission');
+            }
+          }
+        });
+      }
     });
   }
 
@@ -181,6 +224,7 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(_lifecycleObserver);
+    _permissionPollTimer?.cancel();
     super.dispose();
   }
 
@@ -308,6 +352,32 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
         }
       }
     });
+    if (!_startupRouteReady) {
+      return DynamicColorBuilder(
+        builder: (dynamicLight, dynamicDark) {
+          final dynamicSeed = dynamicLight?.primary ?? dynamicDark?.primary;
+          final effectiveSeed = themeSettings.useSystemAccent
+              ? (dynamicSeed ?? Colors.indigo)
+              : themeSettings.themeSeed;
+          return MaterialApp(
+            title: 'DropNet',
+            debugShowCheckedModeBanner: false,
+            themeMode: themeSettings.themeMode,
+            theme: ThemeData(
+              useMaterial3: true,
+              brightness: Brightness.light,
+              colorSchemeSeed: effectiveSeed,
+            ),
+            darkTheme: ThemeData(
+              useMaterial3: true,
+              brightness: Brightness.dark,
+              colorSchemeSeed: effectiveSeed,
+            ),
+            home: const Scaffold(body: SizedBox.shrink()),
+          );
+        },
+      );
+    }
     return DynamicColorBuilder(
       builder: (dynamicLight, dynamicDark) {
         final dynamicSeed = dynamicLight?.primary ?? dynamicDark?.primary;
@@ -393,6 +463,37 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
       TargetPlatform.macOS => true,
       _ => false,
     };
+  }
+
+  Future<bool> _hasRequiredAndroidStorageAccess() async {
+    final manage = await Permission.manageExternalStorage.status;
+    if (manage.isGranted) {
+      return true;
+    }
+
+    final storage = await Permission.storage.status;
+    return storage.isGranted;
+  }
+
+  Future<void> _routeForStartup() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final seen = prefs.getBool('onboarding.completed') ?? false;
+      if (!seen) {
+        _router.go('/welcome');
+        return;
+      }
+
+      if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+        final ok = await _hasRequiredAndroidStorageAccess();
+        _router.go(ok ? '/receive' : '/permission');
+        return;
+      }
+
+      _router.go('/receive');
+    } catch (_) {
+      _router.go('/welcome');
+    }
   }
 
   void _setGlobalDragActive(bool value) {

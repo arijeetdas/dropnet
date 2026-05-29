@@ -51,7 +51,16 @@ class _SharedTextScreenState extends State<SharedTextScreen> {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     return Scaffold(
-      appBar: AppBar(title: const Text('Shared Text')),
+      appBar: AppBar(
+        title: const Text('Shared Text'),
+        leading: Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: IconButton.filledTonal(
+            icon: const Icon(Icons.arrow_back_rounded),
+            onPressed: () => Navigator.of(context).maybePop(),
+          ),
+        ),
+      ),
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(16),

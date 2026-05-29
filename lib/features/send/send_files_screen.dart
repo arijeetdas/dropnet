@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:math';
 
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_picker/file_picker.dart';
@@ -15,11 +14,13 @@ import 'package:qr_flutter/qr_flutter.dart';
 import '../../core/platform/android_installed_apps_service.dart';
 import '../../core/networking/temporary_link_share_service.dart';
 import '../../core/state/app_state.dart';
+import '../../core/utils/dialog_utils.dart';
 import '../../core/utils/file_utils.dart';
 import '../../models/device_model.dart';
 import '../../widgets/adaptive_nav_scaffold.dart';
 import '../../widgets/pairing_code_dialog.dart';
 import '../../widgets/tab_shell_scope.dart';
+import '../../widgets/expressive_loader.dart';
 
 enum _MediaPickKind { photos, videos, audio }
 
@@ -183,304 +184,454 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 980),
           child: SingleChildScrollView(
+            padding: EdgeInsets.only(
+              bottom: MediaQuery.of(context).viewPadding.bottom + 120,
+            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Card(
-                  clipBehavior: Clip.antiAlias,
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 220),
-                    curve: Curves.easeOut,
-                    padding: const EdgeInsets.all(14),
-                    decoration: BoxDecoration(
-                      border: Border(
-                        left: BorderSide(
-                          width: 4,
-                          color: _files.isNotEmpty
-                              ? colorScheme.primary
-                              : colorScheme.outlineVariant,
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 220),
+                  curve: Curves.easeOut,
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: colorScheme.surfaceContainerLow,
+                    borderRadius: BorderRadius.circular(24),
+                    border: Border.all(
+                      color: _files.isNotEmpty
+                          ? colorScheme.primary.withValues(alpha: 0.45)
+                          : colorScheme.outlineVariant.withValues(alpha: 0.35),
+                      width: _files.isNotEmpty ? 1.5 : 1.0,
+                    ),
+                    boxShadow: [
+                      if (_files.isNotEmpty)
+                        BoxShadow(
+                          color: colorScheme.primary.withValues(alpha: 0.05),
+                          blurRadius: 12,
+                          offset: const Offset(0, 4),
+                        ),
+                    ],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.tune_rounded,
+                            size: 20,
+                            color: _files.isNotEmpty
+                                ? colorScheme.primary
+                                : colorScheme.onSurfaceVariant,
+                          ),
+                          const SizedBox(width: 10),
+                          Text(
+                            'Select Content',
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 14),
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          children: [
+                            _actionButton(
+                              icon: Icons.insert_drive_file_rounded,
+                              label: 'File',
+                              onTap: _pickFile,
+                              accentColor: Colors.blue.shade500,
+                            ),
+                            _actionButton(
+                              icon: Icons.photo_library_rounded,
+                              label: 'Media',
+                              onTap: _pickMedia,
+                              accentColor: Colors.purple.shade400,
+                            ),
+                            _actionButton(
+                              icon: Icons.notes_rounded,
+                              label: 'Text',
+                              onTap: _addText,
+                              accentColor: Colors.deepOrange.shade400,
+                            ),
+                            _actionButton(
+                              icon: Icons.folder_rounded,
+                              label: 'Folder',
+                              onTap: _pickFolder,
+                              accentColor: Colors.amber.shade600,
+                            ),
+                            if (isAndroid) ...[
+                              _actionButton(
+                                icon: Icons.android_rounded,
+                                label: 'App',
+                                onTap: _extractingApk ? () async {} : _pickApk,
+                                accentColor: Colors.teal.shade500,
+                              ),
+                            ],
+                          ],
                         ),
                       ),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Selection', style: theme.textTheme.titleMedium),
-                        const SizedBox(height: 10),
-                        SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          child: Row(
-                            children: [
-                              _actionButton(
-                                icon: Icons.insert_drive_file_rounded,
-                                label: 'File',
-                                onTap: _pickFile,
-                              ),
-                              const SizedBox(width: 8),
-                              _actionButton(
-                                icon: Icons.photo_library_rounded,
-                                label: 'Media',
-                                onTap: _pickMedia,
-                              ),
-                              const SizedBox(width: 8),
-                              _actionButton(
-                                icon: Icons.notes_rounded,
-                                label: 'Text',
-                                onTap: _addText,
-                              ),
-                              const SizedBox(width: 8),
-                              _actionButton(
-                                icon: Icons.folder_rounded,
-                                label: 'Folder',
-                                onTap: _pickFolder,
-                              ),
-                              if (isAndroid) ...[
-                                const SizedBox(width: 8),
-                                FilledButton.tonalIcon(
-                                  onPressed: _sending || _extractingApk
-                                      ? null
-                                      : _pickApk,
-                                  icon: const Icon(Icons.android_rounded),
-                                  label: const Text('App'),
-                                ),
-                              ],
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
+                    ],
                   ),
                 ),
                 const SizedBox(height: 10),
-                Card(
-                  clipBehavior: Clip.antiAlias,
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 220),
-                    curve: Curves.easeOut,
-                    padding: const EdgeInsets.all(14),
-                    decoration: BoxDecoration(
-                      border: Border(
-                        left: BorderSide(
-                          width: 4,
-                          color: _selectedTargets.isNotEmpty
-                              ? colorScheme.primary
-                              : colorScheme.outlineVariant,
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 220),
+                  curve: Curves.easeOut,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: colorScheme.surfaceContainerLow,
+                    borderRadius: BorderRadius.circular(24),
+                    border: Border.all(
+                      color: _selectedTargets.isNotEmpty
+                          ? colorScheme.primary.withValues(alpha: 0.45)
+                          : colorScheme.outlineVariant.withValues(alpha: 0.35),
+                      width: _selectedTargets.isNotEmpty ? 1.5 : 1.0,
+                    ),
+                    boxShadow: [
+                      if (_selectedTargets.isNotEmpty)
+                        BoxShadow(
+                          color: colorScheme.primary.withValues(alpha: 0.05),
+                          blurRadius: 12,
+                          offset: const Offset(0, 4),
                         ),
+                    ],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.wifi_tethering_rounded,
+                            size: 20,
+                            color: _refreshingNearby
+                                ? colorScheme.primary
+                                : colorScheme.onSurfaceVariant,
+                          ),
+                          const SizedBox(width: 10),
+                          Text(
+                            'Nearby Devices',
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const Spacer(),
+                          IconButton(
+                            iconSize: 20,
+                            tooltip: 'Select all',
+                            onPressed: _sending
+                                ? null
+                                : () => _selectAllTargets(state),
+                            icon: const Icon(Icons.select_all_rounded),
+                          ),
+                          IconButton(
+                            iconSize: 20,
+                            tooltip: 'Clear selection',
+                            onPressed: _sending || _selectedTargets.isEmpty
+                                ? null
+                                : _clearTargets,
+                            icon: const Icon(Icons.clear_all_rounded),
+                          ),
+                          IconButton(
+                            iconSize: 20,
+                            tooltip: 'Refresh',
+                            onPressed: _sending || _refreshingNearby
+                                ? null
+                                : _refreshNearbyDevices,
+                            icon: _refreshingNearby
+                                ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: ExpressiveLoader(),
+                                  )
+                                : const Icon(Icons.refresh_rounded),
+                          ),
+                        ],
                       ),
-                    ),
-                    child: Row(
-                      children: [
-                        Text(
-                          'Nearby Devices',
-                          style: theme.textTheme.titleMedium,
-                        ),
-                        const Spacer(),
-                        IconButton(
-                          tooltip: 'Select all',
-                          onPressed: _sending
-                              ? null
-                              : () => _selectAllTargets(state),
-                          icon: const Icon(Icons.select_all_rounded),
-                        ),
-                        IconButton(
-                          tooltip: 'Clear selection',
-                          onPressed: _sending || _selectedTargets.isEmpty
-                              ? null
-                              : _clearTargets,
-                          icon: const Icon(Icons.clear_all_rounded),
-                        ),
-                        IconButton(
-                          tooltip: 'Refresh',
-                          onPressed: _sending || _refreshingNearby
-                              ? null
-                              : _refreshNearbyDevices,
-                          icon: _refreshingNearby
-                              ? const SizedBox(
-                                  width: 18,
-                                  height: 18,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : const Icon(Icons.refresh_rounded),
-                        ),
-                      ],
-                    ),
+                    ],
                   ),
                 ),
                 const SizedBox(height: 8),
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(10),
-                    child: AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 220),
-                      switchInCurve: Curves.easeOutCubic,
-                      switchOutCurve: Curves.easeInCubic,
-                      child:
-                          (state.devices.isEmpty &&
-                              state.connectedWebPeers.isEmpty)
-                          ? Padding(
-                              key: const ValueKey('empty-peers'),
-                              padding: const EdgeInsets.symmetric(vertical: 36),
-                              child: Center(
-                                child: Text(
-                                  'No nearby devices or connected web peers.',
-                                  style: theme.textTheme.bodyMedium?.copyWith(
-                                    color: colorScheme.onSurfaceVariant,
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 220),
+                  switchInCurve: Curves.easeOutCubic,
+                  switchOutCurve: Curves.easeInCubic,
+                  child:
+                      (state.devices.isEmpty && state.connectedWebPeers.isEmpty)
+                      ? (_refreshingNearby
+                            ? const Column(
+                                key: ValueKey('skeleton-peers'),
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  _DeviceSkeletonTile(),
+                                  SizedBox(height: 6),
+                                  _DeviceSkeletonTile(),
+                                ],
+                              )
+                            : Container(
+                                key: const ValueKey('empty-peers'),
+                                width: double.infinity,
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 36,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: colorScheme.surfaceContainerLow,
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(
+                                    color: colorScheme.outlineVariant
+                                        .withValues(alpha: 0.3),
                                   ),
                                 ),
-                              ),
-                            )
-                          : ListView(
-                              key: const ValueKey('peer-list'),
-                              shrinkWrap: true,
-                              physics: const NeverScrollableScrollPhysics(),
-                              children: [
-                                ...state.devices.map(
-                                  (device) => _deviceTile(state, device),
-                                ),
-                                ...state.connectedWebPeers.map(
-                                  (peer) =>
-                                      _webPeerTile(peer.name, peer.ip, peer.id),
-                                ),
-                              ],
-                            ),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Card(
-                  clipBehavior: Clip.antiAlias,
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 220),
-                    curve: Curves.easeOut,
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      border: Border(
-                        left: BorderSide(
-                          width: 4,
-                          color: _canSend
-                              ? colorScheme.primary
-                              : colorScheme.outlineVariant,
-                        ),
-                      ),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        AnimatedSwitcher(
-                          duration: const Duration(milliseconds: 180),
-                          child: Text(
-                            'Selected: ${_files.length} file(s) • ${FileUtils.formatBytes(_totalBytes.toDouble())}',
-                            key: ValueKey('${_files.length}-$_totalBytes'),
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        AnimatedSwitcher(
-                          duration: const Duration(milliseconds: 200),
-                          child: _files.isEmpty
-                              ? Padding(
-                                  key: const ValueKey('empty-files'),
-                                  padding: const EdgeInsets.symmetric(
-                                    vertical: 28,
-                                  ),
-                                  child: Center(
-                                    child: Text(
-                                      'No files selected.',
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      Icons.devices_other_rounded,
+                                      size: 36,
+                                      color: colorScheme.onSurfaceVariant
+                                          .withValues(alpha: 0.6),
+                                    ),
+                                    const SizedBox(height: 10),
+                                    Text(
+                                      'No nearby devices or connected web peers.',
                                       style: theme.textTheme.bodyMedium
                                           ?.copyWith(
                                             color: colorScheme.onSurfaceVariant,
                                           ),
+                                      textAlign: TextAlign.center,
                                     ),
-                                  ),
-                                )
-                              : ListView.separated(
-                                  key: const ValueKey('files-list'),
-                                  shrinkWrap: true,
-                                  physics: const NeverScrollableScrollPhysics(),
-                                  itemCount: _files.length,
-                                  separatorBuilder: (context, index) =>
-                                      const SizedBox(height: 6),
-                                  itemBuilder: (context, index) {
-                                    final file = _files[index];
-                                    return AnimatedContainer(
-                                      duration: const Duration(
-                                        milliseconds: 180,
-                                      ),
-                                      curve: Curves.easeOut,
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 8,
-                                        vertical: 6,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        borderRadius: BorderRadius.circular(10),
-                                        color: colorScheme
-                                            .surfaceContainerHighest
-                                            .withValues(alpha: 0.32),
-                                      ),
-                                      child: Row(
-                                        children: [
-                                          _previewWidget(file),
-                                          const SizedBox(width: 8),
-                                          Expanded(
-                                            child: Column(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.start,
-                                              children: [
-                                                Text(
-                                                  file.name,
-                                                  maxLines: 1,
-                                                  overflow:
-                                                      TextOverflow.ellipsis,
-                                                ),
-                                                Text(
-                                                  FileUtils.formatBytes(
-                                                    file.size.toDouble(),
-                                                  ),
-                                                  style:
-                                                      theme.textTheme.bodySmall,
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                          IconButton(
-                                            tooltip: 'Deselect',
-                                            onPressed: () => setState(
-                                              () => _files.removeAt(index),
-                                            ),
-                                            icon: const Icon(
-                                              Icons.close_rounded,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    );
-                                  },
+                                  ],
                                 ),
+                              ))
+                      : Column(
+                          key: const ValueKey('peer-list'),
+                          children: [
+                            ...state.devices.map(
+                              (device) => _deviceTile(state, device),
+                            ),
+                            ...state.connectedWebPeers.map(
+                              (peer) =>
+                                  _webPeerTile(peer.name, peer.ip, peer.id),
+                            ),
+                          ],
                         ),
-                        const SizedBox(height: 12),
-                        Divider(color: colorScheme.outlineVariant),
-                        const SizedBox(height: 8),
-                        _buildTemporaryShareSection(tempShare, isDark),
-                        const SizedBox(height: 10),
-                        SizedBox(
-                          width: double.infinity,
+                ),
+                const SizedBox(height: 10),
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 220),
+                  curve: Curves.easeOut,
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: colorScheme.surfaceContainerLow,
+                    borderRadius: BorderRadius.circular(24),
+                    border: Border.all(
+                      color: _canSend
+                          ? colorScheme.primary.withValues(alpha: 0.45)
+                          : colorScheme.outlineVariant.withValues(alpha: 0.35),
+                      width: _canSend ? 1.5 : 1.0,
+                    ),
+                    boxShadow: [
+                      if (_canSend)
+                        BoxShadow(
+                          color: colorScheme.primary.withValues(alpha: 0.05),
+                          blurRadius: 12,
+                          offset: const Offset(0, 4),
+                        ),
+                    ],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 180),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.description_rounded,
+                              size: 20,
+                              color: _canSend
+                                  ? colorScheme.primary
+                                  : colorScheme.onSurfaceVariant,
+                            ),
+                            const SizedBox(width: 10),
+                            Text(
+                              'Selected: ${_files.length} file(s) • ${FileUtils.formatBytes(_totalBytes.toDouble())}',
+                              key: ValueKey('${_files.length}-$_totalBytes'),
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 200),
+                        child: _files.isEmpty
+                            ? Padding(
+                                key: const ValueKey('empty-files'),
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 28,
+                                ),
+                                child: Center(
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        Icons.file_copy_outlined,
+                                        size: 32,
+                                        color: colorScheme.onSurfaceVariant
+                                            .withValues(alpha: 0.5),
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Text(
+                                        'No files selected.',
+                                        style: theme.textTheme.bodyMedium
+                                            ?.copyWith(
+                                              color:
+                                                  colorScheme.onSurfaceVariant,
+                                            ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              )
+                            : ListView.separated(
+                                key: const ValueKey('files-list'),
+                                shrinkWrap: true,
+                                padding: EdgeInsets.zero,
+                                physics: const NeverScrollableScrollPhysics(),
+                                itemCount: _files.length,
+                                separatorBuilder: (context, index) =>
+                                    const SizedBox(height: 8),
+                                itemBuilder: (context, index) {
+                                  final file = _files[index];
+                                  return AnimatedContainer(
+                                    duration: const Duration(milliseconds: 180),
+                                    curve: Curves.easeOut,
+                                    padding: const EdgeInsets.all(10),
+                                    decoration: BoxDecoration(
+                                      borderRadius: BorderRadius.circular(16),
+                                      color: colorScheme.surfaceContainerHigh
+                                          .withValues(alpha: 0.45),
+                                      border: Border.all(
+                                        color: colorScheme.outlineVariant
+                                            .withValues(alpha: 0.25),
+                                      ),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        _previewWidget(file),
+                                        const SizedBox(width: 12),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                file.name,
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: theme
+                                                    .textTheme
+                                                    .bodyMedium
+                                                    ?.copyWith(
+                                                      fontWeight:
+                                                          FontWeight.bold,
+                                                    ),
+                                              ),
+                                              const SizedBox(height: 2),
+                                              Text(
+                                                FileUtils.formatBytes(
+                                                  file.size.toDouble(),
+                                                ),
+                                                style: theme.textTheme.bodySmall
+                                                    ?.copyWith(
+                                                      color: colorScheme
+                                                          .onSurfaceVariant,
+                                                    ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                        IconButton(
+                                          tooltip: 'Deselect',
+                                          iconSize: 20,
+                                          onPressed: () => setState(
+                                            () => _files.removeAt(index),
+                                          ),
+                                          icon: const Icon(Icons.close_rounded),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                },
+                              ),
+                      ),
+                      const SizedBox(height: 16),
+                      Divider(
+                        color: colorScheme.outlineVariant.withValues(
+                          alpha: 0.4,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      _buildTemporaryShareSection(tempShare, isDark),
+                      const SizedBox(height: 16),
+                      SizedBox(
+                        width: double.infinity,
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 200),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(20),
+                            boxShadow: _canSend
+                                ? [
+                                    BoxShadow(
+                                      color: colorScheme.primary.withValues(
+                                        alpha: 0.25,
+                                      ),
+                                      blurRadius: 16,
+                                      offset: const Offset(0, 4),
+                                    ),
+                                  ]
+                                : null,
+                          ),
                           child: FilledButton.icon(
                             onPressed: _canSend ? _send : null,
+                            style: FilledButton.styleFrom(
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              padding: const EdgeInsets.symmetric(vertical: 18),
+                              elevation: 0,
+                            ),
                             icon: _sending
                                 ? const SizedBox(
-                                    width: 14,
-                                    height: 14,
+                                    width: 18,
+                                    height: 18,
                                     child: CircularProgressIndicator(
                                       strokeWidth: 2,
+                                      color: Colors.white,
                                     ),
                                   )
-                                : const Icon(Icons.send_rounded),
-                            label: Text(_sending ? 'Sending...' : 'Send'),
+                                : const Icon(Icons.send_rounded, size: 20),
+                            label: Text(
+                              _sending ? 'Sending...' : 'Send Files',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16,
+                                letterSpacing: 0.2,
+                              ),
+                            ),
                           ),
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
                 ),
               ],
@@ -534,11 +685,67 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
     required IconData icon,
     required String label,
     required Future<void> Function() onTap,
+    required Color accentColor,
   }) {
-    return FilledButton.tonalIcon(
-      onPressed: _sending ? null : () => onTap(),
-      icon: Icon(icon),
-      label: Text(label),
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
+    return Container(
+      width: 76,
+      margin: const EdgeInsets.only(right: 10),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: _sending ? null : () => onTap(),
+          borderRadius: BorderRadius.circular(20),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            decoration: BoxDecoration(
+              color: colorScheme.surfaceContainerLow,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: colorScheme.outlineVariant.withValues(alpha: 0.35),
+                width: 1.0,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.04),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 42,
+                  height: 42,
+                  decoration: BoxDecoration(
+                    color: accentColor.withValues(alpha: 0.15),
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: accentColor.withValues(alpha: 0.25),
+                      width: 1.0,
+                    ),
+                  ),
+                  child: Icon(icon, size: 20, color: accentColor),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  label,
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    color: colorScheme.onSurface,
+                    letterSpacing: 0.3,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -588,42 +795,51 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
           const SizedBox(height: 12),
 
           // One row per adapter URL
-          for (final url in (tempShare.urls.isNotEmpty ? tempShare.urls : [tempShare.url]))
+          for (final url
+              in (tempShare.urls.isNotEmpty ? tempShare.urls : [tempShare.url]))
             Padding(
               padding: const EdgeInsets.only(bottom: 8),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Expanded(
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 10,
-                      ),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(18),
-                        color: colorScheme.surfaceContainerHighest.withValues(
-                          alpha: 0.35,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(18),
+                  color: colorScheme.surfaceContainerHighest.withValues(
+                    alpha: 0.28,
+                  ),
+                  border: Border.all(
+                    color: colorScheme.outlineVariant.withValues(alpha: 0.3),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: SelectableText(
+                          url,
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            fontFamily: 'monospace',
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                       ),
-                      child: SelectableText(
-                        url,
-                        style: theme.textTheme.bodySmall,
-                      ),
                     ),
-                  ),
-                  const SizedBox(width: 4),
-                  IconButton(
-                    tooltip: 'Copy link',
-                    icon: const Icon(Icons.copy_rounded),
-                    onPressed: () => _copyTemporaryShareLink(url),
-                  ),
-                  IconButton(
-                    tooltip: 'Show QR code',
-                    icon: const Icon(Icons.qr_code_rounded),
-                    onPressed: () => _showTempShareQrDialog(url),
-                  ),
-                ],
+                    const SizedBox(width: 8),
+                    _SmallLinkButton(
+                      icon: Icons.copy_rounded,
+                      tooltip: 'Copy link',
+                      onPressed: () => _copyTemporaryShareLink(url),
+                    ),
+                    _SmallLinkButton(
+                      icon: Icons.qr_code_rounded,
+                      tooltip: 'Show QR Code scanner',
+                      onPressed: () => _showTempShareQrDialog(url),
+                    ),
+                  ],
+                ),
               ),
             ),
 
@@ -706,76 +922,35 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
     final trusted = _isTrustedDevice(appState, device);
     final favorite = _isFavoriteDevice(appState, device);
     final pairingRequired = appState.requirePairingCodeForDirectTransfers;
-    final colorScheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
     return AnimatedContainer(
-      duration: const Duration(milliseconds: 180),
+      duration: const Duration(milliseconds: 220),
       curve: Curves.easeOut,
-      margin: const EdgeInsets.only(bottom: 4),
+      margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
+        color: selected
+            ? colorScheme.primaryContainer.withValues(alpha: 0.28)
+            : colorScheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(20),
         border: Border.all(
           color: selected
-              ? colorScheme.primary.withValues(alpha: 0.55)
-              : Colors.transparent,
+              ? colorScheme.primary.withValues(alpha: 0.45)
+              : colorScheme.outlineVariant.withValues(alpha: 0.35),
+          width: selected ? 1.5 : 1.0,
         ),
+        boxShadow: [
+          if (selected)
+            BoxShadow(
+              color: colorScheme.primary.withValues(alpha: 0.05),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            ),
+        ],
       ),
-      child: ListTile(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        selected: selected,
-        selectedTileColor: colorScheme.primaryContainer.withValues(alpha: 0.35),
-        leading: Icon(_iconForDeviceType(device.deviceType)),
-        title: Text(device.taggedName),
-        subtitle: Text(
-          '${device.platform.isEmpty ? 'Unknown' : device.platform} • ${device.ipAddress}${(pairingRequired && !trusted) ? ' • Not paired' : ''}',
-        ),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              device.isOnline ? Icons.circle : Icons.circle_outlined,
-              size: 11,
-              color: device.isOnline ? Colors.green : Colors.grey,
-            ),
-            const SizedBox(width: 6),
-            IconButton(
-              tooltip: favorite ? 'Remove from favorites' : 'Add to favorites',
-              onPressed: _sending
-                  ? null
-                  : () => _toggleFavoriteDevice(device, favorite: favorite),
-              icon: Icon(
-                favorite
-                    ? Icons.favorite_rounded
-                    : Icons.favorite_border_rounded,
-                color: favorite ? Colors.red : null,
-              ),
-            ),
-            if (pairingRequired)
-              IconButton(
-                tooltip: trusted ? 'Unpair device' : 'Pair and verify device',
-                onPressed: _sending
-                    ? null
-                    : () => _toggleDevicePairing(device, trusted: trusted),
-                icon: Icon(
-                  trusted
-                      ? Icons.verified_user_rounded
-                      : Icons.verified_user_outlined,
-                  color: trusted ? Colors.green : null,
-                ),
-              ),
-            Checkbox(
-              value: selected,
-              onChanged: _sending || (pairingRequired && !trusted)
-                  ? null
-                  : (_) => setState(() {
-                      if (selected) {
-                        _selectedTargets.remove(key);
-                      } else {
-                        _selectedTargets.add(key);
-                      }
-                    }),
-            ),
-          ],
-        ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
         onTap: _sending
             ? null
             : () => setState(() {
@@ -791,120 +966,234 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
                   _selectedTargets.add(key);
                 }
               }),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          child: Row(
+            children: [
+              // Avatar
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: LinearGradient(
+                    colors: selected
+                        ? [
+                            colorScheme.primaryContainer,
+                            colorScheme.primaryContainer.withValues(alpha: 0.6),
+                          ]
+                        : [
+                            colorScheme.surfaceContainerHigh,
+                            colorScheme.surfaceContainerLow,
+                          ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  border: Border.all(
+                    color: selected
+                        ? colorScheme.primary.withValues(alpha: 0.3)
+                        : colorScheme.outlineVariant.withValues(alpha: 0.4),
+                  ),
+                ),
+                child: Icon(
+                  _iconForDeviceType(device.deviceType),
+                  color: selected
+                      ? colorScheme.primary
+                      : colorScheme.onSurfaceVariant,
+                  size: 24,
+                ),
+              ),
+              const SizedBox(width: 14),
+              // Name & Details
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            device.taggedName,
+                            style: theme.textTheme.bodyLarge?.copyWith(
+                              fontWeight: FontWeight.bold,
+                              color: colorScheme.onSurface,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        if (favorite) ...[
+                          const SizedBox(width: 6),
+                          Icon(
+                            Icons.favorite_rounded,
+                            size: 14,
+                            color: Colors.red.shade400,
+                          ),
+                        ],
+                        if (pairingRequired && trusted) ...[
+                          const SizedBox(width: 6),
+                          Icon(
+                            Icons.verified_rounded,
+                            size: 14,
+                            color: Colors.green.shade400,
+                          ),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${device.platform.isEmpty ? 'Unknown' : device.platform} • ${device.ipAddress}${(pairingRequired && !trusted) ? ' • Not paired' : ''}',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              // Actions
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Tooltip(
+                    message: device.isOnline ? 'Online' : 'Offline',
+                    child: Container(
+                      width: 8,
+                      height: 8,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: device.isOnline
+                            ? Colors.green.shade400
+                            : Colors.grey.shade400,
+                        boxShadow: [
+                          if (device.isOnline)
+                            BoxShadow(
+                              color: Colors.green.withValues(alpha: 0.4),
+                              blurRadius: 6,
+                              spreadRadius: 1,
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  IconButton(
+                    iconSize: 18,
+                    visualDensity: VisualDensity.compact,
+                    tooltip: favorite
+                        ? 'Remove from favorites'
+                        : 'Add to favorites',
+                    onPressed: _sending
+                        ? null
+                        : () =>
+                              _toggleFavoriteDevice(device, favorite: favorite),
+                    icon: Icon(
+                      favorite
+                          ? Icons.favorite_rounded
+                          : Icons.favorite_border_rounded,
+                      color: favorite
+                          ? Colors.red.shade400
+                          : colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  if (pairingRequired)
+                    IconButton(
+                      iconSize: 18,
+                      visualDensity: VisualDensity.compact,
+                      tooltip: trusted
+                          ? 'Unpair device'
+                          : 'Pair and verify device',
+                      onPressed: _sending
+                          ? null
+                          : () =>
+                                _toggleDevicePairing(device, trusted: trusted),
+                      icon: Icon(
+                        trusted
+                            ? Icons.verified_user_rounded
+                            : Icons.verified_user_outlined,
+                        color: trusted
+                            ? Colors.green.shade400
+                            : colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  const SizedBox(width: 4),
+                  // Custom Checkmark Checkbox
+                  GestureDetector(
+                    onTap: _sending || (pairingRequired && !trusted)
+                        ? null
+                        : () => setState(() {
+                            if (selected) {
+                              _selectedTargets.remove(key);
+                            } else {
+                              _selectedTargets.add(key);
+                            }
+                          }),
+                    child: Container(
+                      width: 22,
+                      height: 22,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: selected
+                            ? colorScheme.primary
+                            : Colors.transparent,
+                        border: Border.all(
+                          color: selected
+                              ? colorScheme.primary
+                              : colorScheme.outlineVariant,
+                          width: 2,
+                        ),
+                      ),
+                      child: selected
+                          ? const Icon(
+                              Icons.check_rounded,
+                              size: 14,
+                              color: Colors.white,
+                            )
+                          : null,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
       ),
     );
-  }
-
-  bool _isTrustedDevice(AppState state, DeviceModel device) {
-    return isDeviceTrusted(trustedPeers: state.trustedPeers, device: device);
-  }
-
-  Future<void> _toggleDevicePairing(
-    DeviceModel device, {
-    required bool trusted,
-  }) async {
-    final controller = ref.read(appControllerProvider.notifier);
-    final appState = ref.read(appControllerProvider);
-    try {
-      if (trusted) {
-        await controller.unpairDevice(device);
-        if (mounted) {
-          setState(() {
-            _selectedTargets.remove('device:${device.deviceId}');
-          });
-        }
-        _showMessage('Device unpaired.');
-        return;
-      }
-
-      if (!appState.requirePairingCodeForDirectTransfers) {
-        return;
-      }
-
-      final pairingCode = Random.secure()
-          .nextInt(1000000)
-          .toString()
-          .padLeft(6, '0');
-
-      final pairingFuture = controller.pairDeviceWithVerification(
-        device,
-        pairingCode: pairingCode,
-      );
-
-      var dialogOpen = false;
-      var userDismissedEarly = false;
-      if (mounted) {
-        dialogOpen = true;
-        unawaited(
-          pairingFuture.whenComplete(() {
-            if (!mounted || !dialogOpen) {
-              return;
-            }
-            dialogOpen = false;
-            Navigator.of(context, rootNavigator: true).pop();
-          }),
-        );
-
-        await showDialog<void>(
-          context: context,
-          barrierDismissible: false,
-          builder: (context) => PairingCodeDialog(
-            deviceName: device.deviceName,
-            fileName: 'Pairing Request',
-            displayCode: pairingCode,
-          ),
-        );
-
-        // If the dialog closed but the future hasn't resolved yet the user
-        // pressed the dialog's own close button — suppress any follow-up message.
-        userDismissedEarly = dialogOpen;
-        dialogOpen = false;
-      }
-
-      await pairingFuture;
-      if (!userDismissedEarly) {
-        _showMessage('Device paired. You can now send files securely.');
-      }
-    } catch (error) {
-      _showMessage('$error');
-    }
   }
 
   Widget _webPeerTile(String name, String ip, String id) {
     final key = 'web:$id';
     final selected = _selectedTargets.contains(key);
-    final colorScheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
     return AnimatedContainer(
-      duration: const Duration(milliseconds: 180),
+      duration: const Duration(milliseconds: 220),
       curve: Curves.easeOut,
-      margin: const EdgeInsets.only(bottom: 4),
+      margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
+        color: selected
+            ? colorScheme.primaryContainer.withValues(alpha: 0.28)
+            : colorScheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(20),
         border: Border.all(
           color: selected
-              ? colorScheme.primary.withValues(alpha: 0.55)
-              : Colors.transparent,
+              ? colorScheme.primary.withValues(alpha: 0.45)
+              : colorScheme.outlineVariant.withValues(alpha: 0.35),
+          width: selected ? 1.5 : 1.0,
         ),
+        boxShadow: [
+          if (selected)
+            BoxShadow(
+              color: colorScheme.primary.withValues(alpha: 0.05),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            ),
+        ],
       ),
-      child: ListTile(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        selected: selected,
-        selectedTileColor: colorScheme.primaryContainer.withValues(alpha: 0.35),
-        leading: const Icon(Icons.language_rounded),
-        title: Text(name),
-        subtitle: Text('Web Peer • $ip'),
-        trailing: Checkbox(
-          value: selected,
-          onChanged: _sending
-              ? null
-              : (_) => setState(() {
-                  if (selected) {
-                    _selectedTargets.remove(key);
-                  } else {
-                    _selectedTargets.add(key);
-                  }
-                }),
-        ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
         onTap: _sending
             ? null
             : () => setState(() {
@@ -914,6 +1203,104 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
                   _selectedTargets.add(key);
                 }
               }),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          child: Row(
+            children: [
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: LinearGradient(
+                    colors: selected
+                        ? [
+                            colorScheme.primaryContainer,
+                            colorScheme.primaryContainer.withValues(alpha: 0.6),
+                          ]
+                        : [
+                            colorScheme.surfaceContainerHigh,
+                            colorScheme.surfaceContainerLow,
+                          ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  border: Border.all(
+                    color: selected
+                        ? colorScheme.primary.withValues(alpha: 0.3)
+                        : colorScheme.outlineVariant.withValues(alpha: 0.4),
+                  ),
+                ),
+                child: Icon(
+                  Icons.language_rounded,
+                  color: selected
+                      ? colorScheme.primary
+                      : colorScheme.onSurfaceVariant,
+                  size: 24,
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      name,
+                      style: theme.textTheme.bodyLarge?.copyWith(
+                        fontWeight: FontWeight.bold,
+                        color: colorScheme.onSurface,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Web Browser • $ip',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              GestureDetector(
+                onTap: _sending
+                    ? null
+                    : () => setState(() {
+                        if (selected) {
+                          _selectedTargets.remove(key);
+                        } else {
+                          _selectedTargets.add(key);
+                        }
+                      }),
+                child: Container(
+                  width: 22,
+                  height: 22,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: selected ? colorScheme.primary : Colors.transparent,
+                    border: Border.all(
+                      color: selected
+                          ? colorScheme.primary
+                          : colorScheme.outlineVariant,
+                      width: 2,
+                    ),
+                  ),
+                  child: selected
+                      ? const Icon(
+                          Icons.check_rounded,
+                          size: 14,
+                          color: Colors.white,
+                        )
+                      : null,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -926,6 +1313,49 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
     return state.favoritePeers.any(
       (peer) => peer.deviceId.trim().toLowerCase() == id,
     );
+  }
+
+  bool _isTrustedDevice(AppState state, DeviceModel device) {
+    return isDeviceTrusted(trustedPeers: state.trustedPeers, device: device);
+  }
+
+  Future<void> _toggleDevicePairing(
+    DeviceModel device, {
+    required bool trusted,
+  }) async {
+    if (trusted) {
+      try {
+        await ref.read(appControllerProvider.notifier).unpairDevice(device);
+        _showMessage('Device successfully unpaired.');
+      } catch (e) {
+        _showMessage('Failed to unpair device: $e');
+      }
+    } else {
+      final code = await showDialog<String>(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => PairingCodeDialog(
+          deviceName: device.taggedName,
+          fileName: 'Pairing Connection',
+          onCodeSubmitted: (val) => Navigator.of(context).pop(val),
+        ),
+      );
+
+      if (code == null || code.trim().isEmpty) {
+        return;
+      }
+
+      _showMessage('Sending pairing request to ${device.taggedName}...');
+
+      try {
+        await ref
+            .read(appControllerProvider.notifier)
+            .pairDeviceWithVerification(device, pairingCode: code.trim());
+        _showMessage('Successfully paired with ${device.taggedName}.');
+      } catch (e) {
+        _showMessage('Pairing failed: $e');
+      }
+    }
   }
 
   Future<void> _toggleFavoriteDevice(
@@ -1011,7 +1441,8 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
       await ref.read(appControllerProvider.notifier).refreshNearbyDevices();
     } finally {
       final elapsed = DateTime.now().difference(startedAt);
-      const minVisible = Duration(milliseconds: 450);
+      // Keep the spinner visible for the full 15-second scanning window
+      const minVisible = Duration(seconds: 15);
       if (elapsed < minVisible) {
         await Future<void>.delayed(minVisible - elapsed);
       }
@@ -1167,7 +1598,50 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
       return;
     }
 
+    if (!mounted) {
+      return;
+    }
+
     setState(() => _extractingApk = true);
+    BuildContext? extractionDialogContext;
+    unawaited(
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        useRootNavigator: true,
+        builder: (context) {
+          extractionDialogContext = context;
+          return AlertDialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(32),
+            ),
+            backgroundColor: Theme.of(context).colorScheme.surface,
+            elevation: 6,
+            content: const Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ExpressiveLoader(),
+                SizedBox(height: 16),
+                Text('Extracting APK...'),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    void closeExtractionDialog() {
+      final dialogContext = extractionDialogContext;
+      if (dialogContext == null || !dialogContext.mounted) {
+        return;
+      }
+      final navigator = Navigator.of(dialogContext, rootNavigator: true);
+      if (navigator.canPop()) {
+        navigator.pop();
+      }
+    }
+
     try {
       final apkPaths = <String>[];
       for (final app in selectedApps) {
@@ -1201,6 +1675,7 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
         ),
       );
     } finally {
+      closeExtractionDialog();
       if (mounted) {
         setState(() => _extractingApk = false);
       }
@@ -1241,9 +1716,8 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
 
   Future<void> _addText() async {
     try {
-      final text = await showDialog<String>(
+      final text = await showDropNetDialog<String>(
         context: context,
-        barrierDismissible: false,
         builder: (dialogContext) => const _AddTextDialog(),
       );
 
@@ -1490,23 +1964,114 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
     required String currentService,
     required String nextService,
   }) {
-    return showDialog<bool>(
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
+    return showDropNetDialog<bool>(
       context: context,
       builder: (context) {
         return AlertDialog(
-          icon: const Icon(Icons.warning_amber_rounded),
-          title: const Text('Only One Web Service Allowed'),
-          content: Text(
-            '$currentService is already running. For security reasons, $nextService cannot run at the same time.\n\nStop the current service and continue?',
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(32),
+          ),
+          backgroundColor: colorScheme.surface,
+          elevation: 6,
+          titlePadding: const EdgeInsets.fromLTRB(24, 28, 24, 16),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 24),
+          actionsPadding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+          icon: Container(
+            width: 68,
+            height: 68,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  colorScheme.errorContainer,
+                  colorScheme.errorContainer.withValues(alpha: 0.5),
+                ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: colorScheme.error.withValues(alpha: 0.15),
+                  blurRadius: 16,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Icon(
+              Icons.warning_amber_rounded,
+              color: colorScheme.onErrorContainer,
+              size: 32,
+            ),
+          ),
+          title: Text(
+            'Only One Web Service Allowed',
+            style: theme.textTheme.headlineSmall?.copyWith(
+              fontWeight: FontWeight.w800,
+              color: colorScheme.onSurface,
+              letterSpacing: -0.5,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          content: Card(
+            elevation: 0,
+            color: colorScheme.surfaceContainerLow,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(24),
+              side: BorderSide(
+                color: colorScheme.outlineVariant.withValues(alpha: 0.25),
+              ),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Text(
+                '$currentService is already running. For security reasons, $nextService cannot run at the same time.\n\nStop the current service and continue?',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                  height: 1.45,
+                ),
+              ),
+            ),
           ),
           actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(null),
-              child: const Text('Keep Current'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('Stop Current & Continue'),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.of(context).pop(null),
+                    style: OutlinedButton.styleFrom(
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                    ),
+                    child: const Text(
+                      'Keep Current',
+                      style: TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: FilledButton(
+                    onPressed: () => Navigator.of(context).pop(true),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: colorScheme.primary,
+                      foregroundColor: colorScheme.onPrimary,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                    ),
+                    child: const Text(
+                      'Stop & Continue',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ],
         );
@@ -1541,45 +2106,122 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
   void _showTempShareQrDialog(String url) {
     if (url.trim().isEmpty) return;
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    showDialog<void>(
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
+    showDropNetDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('QR Code'),
-        content: SizedBox(
-          width: 220,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(16),
-                child: Container(
-                  color: isDark ? Colors.black : Colors.white,
-                  padding: const EdgeInsets.all(8),
-                  child: QrImageView(
-                    data: url,
-                    size: 184,
-                    eyeStyle: QrEyeStyle(
-                      color: isDark ? Colors.white : Colors.black,
-                    ),
-                    dataModuleStyle: QrDataModuleStyle(
-                      color: isDark ? Colors.white : Colors.black,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 8),
-              SelectableText(
-                url,
-                textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 11),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(32),
+        ),
+        backgroundColor: colorScheme.surface,
+        elevation: 6,
+        titlePadding: const EdgeInsets.fromLTRB(24, 28, 24, 16),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 24),
+        actionsPadding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+        icon: Container(
+          width: 68,
+          height: 68,
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                colorScheme.primaryContainer,
+                colorScheme.primaryContainer.withValues(alpha: 0.5),
+              ],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            shape: BoxShape.circle,
+            boxShadow: [
+              BoxShadow(
+                color: colorScheme.primary.withValues(alpha: 0.15),
+                blurRadius: 16,
+                offset: const Offset(0, 4),
               ),
             ],
           ),
+          child: Icon(
+            Icons.qr_code_2_rounded,
+            color: colorScheme.onPrimaryContainer,
+            size: 32,
+          ),
+        ),
+        title: Text(
+          'QR Code',
+          style: theme.textTheme.headlineSmall?.copyWith(
+            fontWeight: FontWeight.w800,
+            color: colorScheme.onSurface,
+            letterSpacing: -0.5,
+          ),
+          textAlign: TextAlign.center,
+        ),
+        content: SizedBox(
+          width: 260,
+          child: Card(
+            elevation: 0,
+            color: colorScheme.surfaceContainerLow,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(24),
+              side: BorderSide(
+                color: colorScheme.outlineVariant.withValues(alpha: 0.25),
+              ),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: Container(
+                      color: isDark ? Colors.black : Colors.white,
+                      padding: const EdgeInsets.all(8),
+                      child: QrImageView(
+                        data: url,
+                        size: 184,
+                        eyeStyle: QrEyeStyle(
+                          color: isDark ? Colors.white : Colors.black,
+                        ),
+                        dataModuleStyle: QrDataModuleStyle(
+                          color: isDark ? Colors.white : Colors.black,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  SelectableText(
+                    url,
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Close'),
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton.tonal(
+                  onPressed: () => Navigator.of(context).pop(),
+                  style: FilledButton.styleFrom(
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                  ),
+                  child: const Text(
+                    'Close',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -1594,165 +2236,245 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
     );
     var useNoTimer = false;
     var usePinProtection = false;
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
 
-    final result = await showDialog<({bool cancelled, Duration? ttl, String pin})>(
+    final result = await showDropNetDialog<({bool cancelled, Duration? ttl, String pin})>(
       context: context,
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setLocalState) {
             return AlertDialog(
-              title: const Text('Share link options'),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Customize how your link behaves before starting.',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(12),
-                        color: Theme.of(context)
-                            .colorScheme
-                            .surfaceContainerHighest
-                            .withValues(alpha: 0.45),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              const Icon(Icons.timer_outlined, size: 18),
-                              const SizedBox(width: 8),
-                              Text(
-                                'Link timer',
-                                style: Theme.of(context).textTheme.labelLarge,
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          CheckboxListTile(
-                            value: useNoTimer,
-                            onChanged: (value) => setLocalState(
-                              () => useNoTimer = value ?? false,
-                            ),
-                            title: const Text(
-                              'Keep link active until stopped manually',
-                            ),
-                            controlAffinity: ListTileControlAffinity.leading,
-                            contentPadding: EdgeInsets.zero,
-                          ),
-                          TextField(
-                            controller: timerController,
-                            keyboardType: TextInputType.number,
-                            enabled: !useNoTimer,
-                            decoration: const InputDecoration(
-                              labelText: 'Auto-stop after (minutes)',
-                              hintText: 'e.g. 30',
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(12),
-                        color: Theme.of(context)
-                            .colorScheme
-                            .surfaceContainerHighest
-                            .withValues(alpha: 0.45),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              const Icon(Icons.lock_outline_rounded, size: 18),
-                              const SizedBox(width: 8),
-                              Text(
-                                'PIN protection',
-                                style: Theme.of(context).textTheme.labelLarge,
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          CheckboxListTile(
-                            value: usePinProtection,
-                            onChanged: (value) => setLocalState(
-                              () => usePinProtection = value ?? false,
-                            ),
-                            title: const Text(
-                              'Require PIN before opening the link',
-                            ),
-                            controlAffinity: ListTileControlAffinity.leading,
-                            contentPadding: EdgeInsets.zero,
-                          ),
-                          if (usePinProtection) ...[
-                            TextField(
-                              controller: pinController,
-                              decoration: InputDecoration(
-                                labelText: 'PIN',
-                                hintText: 'Auto-generated',
-                                suffixIcon: IconButton(
-                                  tooltip: 'Generate new PIN',
-                                  icon: const Icon(Icons.refresh_rounded),
-                                  onPressed: () => setLocalState(() {
-                                    pinController.text =
-                                        TemporaryLinkShareService.generatePin();
-                                  }),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              'Receivers must enter this PIN in the browser before accessing files.',
-                              style: Theme.of(context).textTheme.bodySmall
-                                  ?.copyWith(
-                                    color: Theme.of(
-                                      context,
-                                    ).colorScheme.onSurfaceVariant,
-                                  ),
-                            ),
-                          ],
-                        ],
-                      ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(32),
+              ),
+              backgroundColor: colorScheme.surface,
+              elevation: 6,
+              titlePadding: const EdgeInsets.fromLTRB(24, 28, 24, 16),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 24),
+              actionsPadding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+              icon: Container(
+                width: 68,
+                height: 68,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      colorScheme.primaryContainer,
+                      colorScheme.primaryContainer.withValues(alpha: 0.5),
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: colorScheme.primary.withValues(alpha: 0.15),
+                      blurRadius: 16,
+                      offset: const Offset(0, 4),
                     ),
                   ],
                 ),
+                child: Icon(
+                  Icons.link_rounded,
+                  color: colorScheme.onPrimaryContainer,
+                  size: 32,
+                ),
+              ),
+              title: Text(
+                'Share link options',
+                style: theme.textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w800,
+                  color: colorScheme.onSurface,
+                  letterSpacing: -0.5,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              content: SingleChildScrollView(
+                child: SizedBox(
+                  width: 520,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Card(
+                        elevation: 0,
+                        color: colorScheme.surfaceContainerLow,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(24),
+                          side: BorderSide(
+                            color: colorScheme.outlineVariant.withValues(alpha: 0.25),
+                          ),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(20),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Customize how your link behaves before starting.',
+                                style: theme.textTheme.bodyMedium?.copyWith(
+                                  color: colorScheme.onSurfaceVariant,
+                                  height: 1.45,
+                                ),
+                              ),
+                              const Divider(height: 28, thickness: 0.5),
+                              
+                              // Section: Timer
+                              Row(
+                                children: [
+                                  Icon(Icons.timer_outlined, size: 18, color: colorScheme.primary),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    'Link timer',
+                                    style: theme.textTheme.labelLarge?.copyWith(
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              Theme(
+                                data: theme.copyWith(
+                                  splashColor: Colors.transparent,
+                                  highlightColor: Colors.transparent,
+                                ),
+                                child: CheckboxListTile(
+                                  value: useNoTimer,
+                                  onChanged: (value) => setLocalState(
+                                    () => useNoTimer = value ?? false,
+                                  ),
+                                  title: const Text('Keep link active until stopped manually'),
+                                  controlAffinity: ListTileControlAffinity.leading,
+                                  contentPadding: EdgeInsets.zero,
+                                ),
+                              ),
+                              if (!useNoTimer) ...[
+                                const SizedBox(height: 8),
+                                TextField(
+                                  controller: timerController,
+                                  keyboardType: TextInputType.number,
+                                  decoration: InputDecoration(
+                                    labelText: 'Auto-stop after (minutes)',
+                                    hintText: 'e.g. 30',
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(16),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                              
+                              const Divider(height: 36, thickness: 0.5),
+                              
+                              // Section: PIN
+                              Row(
+                                children: [
+                                  Icon(Icons.lock_outline_rounded, size: 18, color: colorScheme.primary),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    'PIN protection',
+                                    style: theme.textTheme.labelLarge?.copyWith(
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              Theme(
+                                data: theme.copyWith(
+                                  splashColor: Colors.transparent,
+                                  highlightColor: Colors.transparent,
+                                ),
+                                child: CheckboxListTile(
+                                  value: usePinProtection,
+                                  onChanged: (value) => setLocalState(
+                                    () => usePinProtection = value ?? false,
+                                  ),
+                                  title: const Text('Require PIN before opening the link'),
+                                  controlAffinity: ListTileControlAffinity.leading,
+                                  contentPadding: EdgeInsets.zero,
+                                ),
+                              ),
+                              if (usePinProtection) ...[
+                                const SizedBox(height: 8),
+                                TextField(
+                                  controller: pinController,
+                                  decoration: InputDecoration(
+                                    labelText: 'PIN',
+                                    hintText: 'Auto-generated',
+                                    suffixIcon: IconButton(
+                                      tooltip: 'Generate new PIN',
+                                      icon: const Icon(Icons.refresh_rounded),
+                                      onPressed: () => setLocalState(() {
+                                        pinController.text =
+                                            TemporaryLinkShareService.generatePin();
+                                      }),
+                                    ),
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(16),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  'Receivers must enter this PIN in the browser before accessing files.',
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: colorScheme.onSurfaceVariant,
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
               actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(
-                    context,
-                  ).pop((cancelled: true, ttl: null, pin: '')),
-                  child: const Text('Cancel'),
-                ),
-                FilledButton(
-                  onPressed: () {
-                    Duration? ttl;
-                    if (!useNoTimer) {
-                      final minutes = int.tryParse(timerController.text.trim());
-                      if (minutes == null || minutes <= 0) {
-                        return;
-                      }
-                      ttl = Duration(minutes: minutes);
-                    }
-                    final pin = usePinProtection
-                        ? pinController.text.trim()
-                        : '';
-                    Navigator.of(
-                      context,
-                    ).pop((cancelled: false, ttl: ttl, pin: pin));
-                  },
-                  child: const Text('Start sharing'),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.of(context).pop((cancelled: true, ttl: null, pin: '')),
+                        style: OutlinedButton.styleFrom(
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                        ),
+                        child: const Text(
+                          'Cancel',
+                          style: TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: FilledButton(
+                        onPressed: () {
+                          Duration? ttl;
+                          if (!useNoTimer) {
+                            final minutes = int.tryParse(timerController.text.trim());
+                            if (minutes == null || minutes <= 0) {
+                              return;
+                            }
+                            ttl = Duration(minutes: minutes);
+                          }
+                          final pin = usePinProtection
+                              ? pinController.text.trim()
+                              : '';
+                          Navigator.of(context).pop((cancelled: false, ttl: ttl, pin: pin));
+                        },
+                        style: FilledButton.styleFrom(
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                        ),
+                        child: const Text(
+                          'Start sharing',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             );
@@ -1893,6 +2615,7 @@ class _AddTextDialogState extends State<_AddTextDialog> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
     final screenHeight = MediaQuery.of(context).size.height;
     final maxInputHeight = (screenHeight * 0.42).clamp(180.0, 320.0);
     final estimatedLines = _estimateInputLines(_controller.text);
@@ -1906,72 +2629,177 @@ class _AddTextDialogState extends State<_AddTextDialog> {
     return PopScope(
       canPop: false,
       child: AlertDialog(
-        title: const Text('Add text'),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(32)),
+        backgroundColor: colorScheme.surface,
+        elevation: 6,
+        titlePadding: const EdgeInsets.fromLTRB(24, 28, 24, 16),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 24),
+        actionsPadding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+        icon: Container(
+          width: 68,
+          height: 68,
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                colorScheme.primaryContainer,
+                colorScheme.primaryContainer.withValues(alpha: 0.5),
+              ],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            shape: BoxShape.circle,
+            boxShadow: [
+              BoxShadow(
+                color: colorScheme.primary.withValues(alpha: 0.15),
+                blurRadius: 16,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Icon(
+            Icons.notes_rounded,
+            color: colorScheme.onPrimaryContainer,
+            size: 32,
+          ),
+        ),
+        title: Text(
+          'Add text',
+          style: theme.textTheme.headlineSmall?.copyWith(
+            fontWeight: FontWeight.w800,
+            color: colorScheme.onSurface,
+            letterSpacing: -0.5,
+          ),
+          textAlign: TextAlign.center,
+        ),
         content: SizedBox(
           width: 520,
           child: Column(
             mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 180),
-                curve: Curves.easeOut,
-                constraints: BoxConstraints(
-                  minHeight: _minInputHeight,
-                  maxHeight: maxInputHeight,
-                ),
-                height: desiredHeight,
-                child: Scrollbar(
-                  controller: _scrollController,
-                  thumbVisibility: isCapped,
-                  child: TextField(
-                    controller: _controller,
-                    scrollController: _scrollController,
-                    autofocus: true,
-                    minLines: 3,
-                    maxLines: 999,
-                    textInputAction: TextInputAction.newline,
-                    keyboardType: TextInputType.multiline,
-                    decoration: InputDecoration(
-                      hintText: trimmedText.isEmpty
-                          ? 'Type text to share...'
-                          : null,
-                      prefix: trimmedText.isEmpty
-                          ? const Padding(
-                              padding: EdgeInsets.only(right: 6),
-                              child: Icon(Icons.notes_rounded, size: 20),
-                            )
-                          : null,
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 14,
-                      ),
-                      filled: true,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
+              Card(
+                elevation: 0,
+                color: colorScheme.surfaceContainerLow,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(24),
+                  side: BorderSide(
+                    color: colorScheme.outlineVariant.withValues(alpha: 0.25),
                   ),
                 ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                '${trimmedText.length} characters${isCapped ? ' - Scroll for more' : ''}',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      AnimatedContainer(
+                        duration: const Duration(milliseconds: 180),
+                        curve: Curves.easeOut,
+                        constraints: BoxConstraints(
+                          minHeight: _minInputHeight,
+                          maxHeight: maxInputHeight,
+                        ),
+                        height: desiredHeight,
+                        child: Scrollbar(
+                          controller: _scrollController,
+                          thumbVisibility: isCapped,
+                          child: TextField(
+                            controller: _controller,
+                            scrollController: _scrollController,
+                            autofocus: true,
+                            minLines: 3,
+                            maxLines: 999,
+                            textInputAction: TextInputAction.newline,
+                            keyboardType: TextInputType.multiline,
+                            decoration: InputDecoration(
+                              hintText: trimmedText.isEmpty
+                                  ? 'Type text to share...'
+                                  : null,
+                              prefix: trimmedText.isEmpty
+                                  ? const Padding(
+                                      padding: EdgeInsets.only(right: 6),
+                                      child: Icon(Icons.notes_rounded, size: 20),
+                                    )
+                                  : null,
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 14,
+                              ),
+                              filled: true,
+                              fillColor: colorScheme.surface,
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(16),
+                                borderSide: BorderSide(
+                                  color: colorScheme.outlineVariant,
+                                ),
+                              ),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(16),
+                                borderSide: BorderSide(
+                                  color: colorScheme.outlineVariant.withValues(alpha: 0.5),
+                                ),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(16),
+                                borderSide: BorderSide(
+                                  color: colorScheme.primary,
+                                  width: 2,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        '${trimmedText.length} characters${isCapped ? ' - Scroll for more' : ''}',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: colorScheme.onSurfaceVariant,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ],
           ),
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(_controller.text),
-            child: const Text('Add'),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  style: OutlinedButton.styleFrom(
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                  ),
+                  child: const Text(
+                    'Cancel',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: FilledButton(
+                  onPressed: () => Navigator.of(context).pop(_controller.text),
+                  style: FilledButton.styleFrom(
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                  ),
+                  child: const Text(
+                    'Add',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -2211,7 +3039,7 @@ class _InstalledAppsPickerDialogState
                 ),
               Expanded(
                 child: _loading
-                    ? const Center(child: CircularProgressIndicator())
+                    ? const Center(child: ExpressiveLoader())
                     : _filteredApps.isEmpty
                     ? const Center(child: Text('No installed apps available.'))
                     : ListView.separated(
@@ -2349,6 +3177,166 @@ class _InstalledAppsPickerDialogState
                 ],
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DeviceSkeletonTile extends StatefulWidget {
+  const _DeviceSkeletonTile();
+
+  @override
+  State<_DeviceSkeletonTile> createState() => _DeviceSkeletonTileState();
+}
+
+class _DeviceSkeletonTileState extends State<_DeviceSkeletonTile>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final Animation<double> _opacityAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1000),
+    )..repeat(reverse: true);
+    _opacityAnimation = Tween<double>(
+      begin: 0.35,
+      end: 0.85,
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut));
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final baseColor = colorScheme.onSurfaceVariant.withValues(alpha: 0.16);
+
+    return AnimatedBuilder(
+      animation: _opacityAnimation,
+      builder: (context, child) {
+        return Opacity(
+          opacity: _opacityAnimation.value,
+          child: Container(
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(20),
+              color: colorScheme.surfaceContainerLow,
+              border: Border.all(
+                color: colorScheme.outlineVariant.withValues(alpha: 0.25),
+              ),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: baseColor,
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        width: 140,
+                        height: 16,
+                        decoration: BoxDecoration(
+                          color: baseColor,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Container(
+                        width: 220,
+                        height: 12,
+                        decoration: BoxDecoration(
+                          color: baseColor,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 20,
+                      height: 20,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: baseColor,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Container(
+                      width: 22,
+                      height: 22,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: baseColor,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _SmallLinkButton extends StatelessWidget {
+  const _SmallLinkButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      margin: const EdgeInsets.only(left: 4),
+      child: Tooltip(
+        message: tooltip,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onPressed,
+            borderRadius: BorderRadius.circular(12),
+            child: Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(12),
+                color: colorScheme.surfaceContainerHigh,
+                border: Border.all(
+                  color: colorScheme.outlineVariant.withValues(alpha: 0.35),
+                ),
+              ),
+              child: Icon(icon, size: 16, color: colorScheme.onSurfaceVariant),
+            ),
           ),
         ),
       ),

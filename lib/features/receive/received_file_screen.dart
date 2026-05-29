@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../core/utils/dialog_utils.dart';
+
 import '../../core/platform/media_store_service.dart';
 import '../../core/utils/file_utils.dart';
 import '../../core/utils/transfer_visuals.dart';
@@ -80,23 +82,114 @@ class _ReceivedFileScreenState extends State<ReceivedFileScreen> {
       return;
     }
 
-    final confirmed = await showDialog<bool>(
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
+    final confirmed = await showDropNetDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Delete received file?'),
-        content: Text('Delete ${widget.transfer.fileName} from this device?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            style: FilledButton.styleFrom(
-              backgroundColor: Theme.of(context).colorScheme.error,
-              foregroundColor: Theme.of(context).colorScheme.onError,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(32),
+        ),
+        backgroundColor: colorScheme.surface,
+        elevation: 6,
+        titlePadding: const EdgeInsets.fromLTRB(24, 28, 24, 16),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 24),
+        actionsPadding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+        icon: Container(
+          width: 68,
+          height: 68,
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                colorScheme.errorContainer,
+                colorScheme.errorContainer.withValues(alpha: 0.5),
+              ],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
             ),
-            child: const Text('Delete'),
+            shape: BoxShape.circle,
+            boxShadow: [
+              BoxShadow(
+                color: colorScheme.error.withValues(alpha: 0.15),
+                blurRadius: 16,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Icon(
+            Icons.delete_sweep_rounded,
+            color: colorScheme.onErrorContainer,
+            size: 32,
+          ),
+        ),
+        title: Text(
+          'Delete received file?',
+          style: theme.textTheme.headlineSmall?.copyWith(
+            fontWeight: FontWeight.w800,
+            color: colorScheme.onSurface,
+            letterSpacing: -0.5,
+          ),
+          textAlign: TextAlign.center,
+        ),
+        content: Card(
+          elevation: 0,
+          color: colorScheme.surfaceContainerLow,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+            side: BorderSide(
+              color: colorScheme.outlineVariant.withValues(alpha: 0.25),
+            ),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Text(
+              'Are you sure you want to permanently delete ${widget.transfer.fileName} from this device?',
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+                height: 1.4,
+              ),
+            ),
+          ),
+        ),
+        actions: [
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  style: OutlinedButton.styleFrom(
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                  ),
+                  child: const Text(
+                    'Cancel',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: FilledButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: colorScheme.error,
+                    foregroundColor: colorScheme.onError,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                  ),
+                  child: const Text(
+                    'Delete',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -145,6 +238,13 @@ class _ReceivedFileScreenState extends State<ReceivedFileScreen> {
       backgroundColor: colorScheme.surface,
       appBar: AppBar(
         title: const Text('Received File'),
+        leading: Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: IconButton.filledTonal(
+            icon: const Icon(Icons.arrow_back_rounded),
+            onPressed: () => Navigator.of(context).maybePop(),
+          ),
+        ),
       ),
       body: SafeArea(
         child: Center(

@@ -49,4 +49,13 @@ class AndroidStorageService {
       return const <AndroidStorageRoot>[];
     }
   }
+
+  Future<String> getInstalledApkType() async {
+    try {
+      final result = await _channel.invokeMethod<String>('getInstalledApkType');
+      return result ?? 'universal';
+    } catch (_) {
+      return 'universal';
+    }
+  }
 }

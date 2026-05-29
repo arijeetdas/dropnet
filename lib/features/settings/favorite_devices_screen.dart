@@ -12,20 +12,39 @@ class FavoriteDevicesScreen extends ConsumerWidget {
     final state = ref.watch(appControllerProvider);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Favorite Devices')),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: state.favoritePeers.isEmpty
-            ? Center(
-                child: Text(
-                  'No favorite devices yet. Tap the Love button in Send to add devices.',
-                  style: Theme.of(context).textTheme.bodyMedium,
-                  textAlign: TextAlign.center,
+      body: CustomScrollView(
+        slivers: [
+          SliverAppBar.medium(
+            title: const Text('Favorite Devices'),
+            pinned: true,
+            leading: Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: IconButton.filledTonal(
+                icon: const Icon(Icons.arrow_back_rounded),
+                onPressed: () => Navigator.of(context).maybePop(),
+              ),
+            ),
+          ),
+          if (state.favoritePeers.isEmpty)
+            SliverFillRemaining(
+              hasScrollBody: false,
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Center(
+                  child: Text(
+                    'No favorite devices yet. Tap the Love button in Send to add devices.',
+                    style: Theme.of(context).textTheme.bodyMedium,
+                    textAlign: TextAlign.center,
+                  ),
                 ),
-              )
-            : ListView.separated(
+              ),
+            )
+          else
+            SliverPadding(
+              padding: const EdgeInsets.all(16),
+              sliver: SliverList.separated(
                 itemCount: state.favoritePeers.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 8),
+                separatorBuilder: (_, _) => const SizedBox(height: 8),
                 itemBuilder: (context, index) {
                   final peer = state.favoritePeers[index];
                   final onlineDevice = state.devices
@@ -55,6 +74,8 @@ class FavoriteDevicesScreen extends ConsumerWidget {
                   );
                 },
               ),
+            ),
+        ],
       ),
     );
   }

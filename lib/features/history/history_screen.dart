@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -6,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import 'package:path/path.dart' as p;
 
 import '../../core/state/app_state.dart';
+import '../../core/utils/dialog_utils.dart';
 import '../../core/utils/file_utils.dart';
 import '../../models/transfer_model.dart';
 
@@ -129,33 +131,68 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
     }
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('History'),
-        actions: [
-          Padding(
-            padding: const EdgeInsetsDirectional.only(end: 12),
-            child: _buildDeleteAllButton(
-              context,
-              direction: activeDirection,
-              enabled: activeEntries.isNotEmpty,
+      extendBody: true,
+      body: CustomScrollView(
+        slivers: [
+          SliverAppBar.medium(
+            title: const Text('History'),
+            pinned: true,
+            leading: Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: IconButton.filledTonal(
+                icon: const Icon(Icons.arrow_back_rounded),
+                onPressed: () => Navigator.of(context).maybePop(),
+              ),
             ),
           ),
+          if (activeEntries.isEmpty)
+            SliverFillRemaining(
+              hasScrollBody: false,
+              child: _buildEmptyState(context, isReceivedTab: isReceivedTab),
+            )
+          else
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
+              sliver: SliverList.separated(
+                itemCount: activeEntries.length + 1,
+                separatorBuilder: (context, index) =>
+                    SizedBox(height: index == 0 ? 12 : 8),
+                itemBuilder: (context, index) {
+                  if (index == 0) {
+                    return _buildSummaryCard(
+                      context,
+                      stats: activeStats,
+                      isReceivedTab: isReceivedTab,
+                    );
+                  }
+                  final entry = activeEntries[index - 1];
+                  return _buildHistoryCard(
+                    context,
+                    entry: entry,
+                    isReceivedTab: isReceivedTab,
+                  );
+                },
+              ),
+            ),
         ],
       ),
-      body: content,
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _selectedTabIndex,
-        onDestinationSelected: _setSelectedTab,
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.upload_rounded),
-            label: 'Sent',
+      bottomNavigationBar: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
+          child: Row(
+            children: [
+              Expanded(
+                child: _buildMobileTabsPill(context),
+              ),
+              const SizedBox(width: 12),
+              _buildMobileDeletePill(
+                context,
+                activeDirection,
+                activeEntries.isNotEmpty,
+              ),
+            ],
           ),
-          NavigationDestination(
-            icon: Icon(Icons.download_rounded),
-            label: 'Received',
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -262,23 +299,113 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
   }) async {
     final messenger = ScaffoldMessenger.maybeOf(context);
     final tabLabel = direction == TransferDirection.sent ? 'sent' : 'received';
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
 
-    final clear = await showDialog<bool>(
+    final clear = await showDropNetDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        icon: const Icon(Icons.delete_sweep_rounded),
-        title: Text('Delete all $tabLabel history?'),
-        content: Text(
-          'This will remove all $tabLabel transfer history entries.',
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(32),
+        ),
+        backgroundColor: colorScheme.surface,
+        elevation: 6,
+        titlePadding: const EdgeInsets.fromLTRB(24, 28, 24, 16),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 24),
+        actionsPadding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+        icon: Container(
+          width: 68,
+          height: 68,
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                colorScheme.errorContainer,
+                colorScheme.errorContainer.withValues(alpha: 0.5),
+              ],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            shape: BoxShape.circle,
+            boxShadow: [
+              BoxShadow(
+                color: colorScheme.error.withValues(alpha: 0.15),
+                blurRadius: 16,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Icon(
+            Icons.delete_sweep_rounded,
+            color: colorScheme.onErrorContainer,
+            size: 32,
+          ),
+        ),
+        title: Text(
+          'Delete all $tabLabel history?',
+          style: theme.textTheme.headlineSmall?.copyWith(
+            fontWeight: FontWeight.w800,
+            color: colorScheme.onSurface,
+            letterSpacing: -0.5,
+          ),
+          textAlign: TextAlign.center,
+        ),
+        content: Card(
+          elevation: 0,
+          color: colorScheme.surfaceContainerLow,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+            side: BorderSide(
+              color: colorScheme.outlineVariant.withValues(alpha: 0.25),
+            ),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Text(
+              'This will permanently remove all $tabLabel transfer history entries from this device.',
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Delete all'),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  style: OutlinedButton.styleFrom(
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                  ),
+                  child: const Text(
+                    'Cancel',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: FilledButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: colorScheme.error,
+                    foregroundColor: colorScheme.onError,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                  ),
+                  child: const Text(
+                    'Delete all',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -328,7 +455,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
     }
 
     return ListView.separated(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
       itemCount: entries.length + 1,
       separatorBuilder: (context, index) =>
           SizedBox(height: index == 0 ? 12 : 8),
@@ -639,64 +766,181 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
     TransferHistoryEntry entry,
   ) async {
     final visiblePath = await _resolveVisibleHistoryPath(entry);
+    if (!context.mounted) return;
+
     final deviceLabel = entry.direction == TransferDirection.sent
         ? 'Receiver'
         : 'Sender';
-    await showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        icon: const Icon(Icons.info_outline_rounded),
-        title: const Text('Transfer Information'),
-        content: SizedBox(
-          width: 440,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _infoLine(context, 'File name', entry.fileName),
-              if (visiblePath != null) ...[
-                const SizedBox(height: 10),
-                _infoLine(context, 'Path', visiblePath),
-              ],
-              const SizedBox(height: 10),
-              _infoLine(context, 'Size', FileUtils.formatBytes(entry.size)),
-              const SizedBox(height: 10),
-              _infoLine(context, deviceLabel, entry.deviceName),
-              const SizedBox(height: 10),
-              _infoLine(
-                context,
-                'Time',
-                _formatDateTime(entry.date, withSeconds: true),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Close'),
-          ),
-        ],
-      ),
-    );
-  }
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final fileIcon = _iconForFileType(entry.fileName);
 
-  Widget _infoLine(BuildContext context, String label, String value) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: Theme.of(context).textTheme.labelMedium?.copyWith(
-            color: colorScheme.onSurfaceVariant,
+    return showGeneralDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      barrierLabel: 'Transfer Information',
+      barrierColor: Colors.black.withValues(alpha: 0.54),
+      transitionDuration: const Duration(milliseconds: 320),
+      pageBuilder: (context, anim1, anim2) => const SizedBox.shrink(),
+      transitionBuilder: (context, anim1, anim2, child) {
+        final curve = CurvedAnimation(parent: anim1, curve: Curves.easeOutBack);
+        return BackdropFilter(
+          filter: ImageFilter.blur(
+            sigmaX: anim1.value * 6,
+            sigmaY: anim1.value * 6,
           ),
-        ),
-        const SizedBox(height: 2),
-        SelectableText(value),
-      ],
-    );
-  }
+          child: ScaleTransition(
+            scale: curve,
+            child: FadeTransition(
+              opacity: anim1,
+              child: PopScope(
+                canPop: false,
+                child: AlertDialog(
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(32),
+                  ),
+                  backgroundColor: colorScheme.surface,
+                  elevation: 6,
+                  titlePadding: const EdgeInsets.fromLTRB(24, 28, 24, 16),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 24),
+                  actionsPadding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+                  icon: Container(
+                    width: 68,
+                    height: 68,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [
+                          colorScheme.primaryContainer,
+                          colorScheme.primaryContainer.withValues(alpha: 0.5),
+                        ],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: colorScheme.primary.withValues(alpha: 0.15),
+                          blurRadius: 16,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: Icon(
+                      fileIcon,
+                      color: colorScheme.onPrimaryContainer,
+                      size: 32,
+                    ),
+                  ),
+                  title: Text(
+                    'Transfer Information',
+                    style: theme.textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                      color: colorScheme.onSurface,
+                      letterSpacing: -0.5,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  content: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Card(
+                          elevation: 0,
+                          color: colorScheme.surfaceContainerLow,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(24),
+                            side: BorderSide(
+                              color: colorScheme.outlineVariant.withValues(alpha: 0.25),
+                            ),
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.all(20),
+                            child: Column(
+                              children: [
+                                _infoLine(context, 'File Name', entry.fileName),
+                                if (visiblePath != null) ...[
+                                  const Divider(height: 24, thickness: 0.5),
+                                  _infoLine(context, 'Local Path', visiblePath),
+                                ],
+                                const Divider(height: 24, thickness: 0.5),
+                                _infoLine(context, 'File Size', FileUtils.formatBytes(entry.size)),
+                                const Divider(height: 24, thickness: 0.5),
+                                _infoLine(context, deviceLabel, entry.deviceName),
+                                const Divider(height: 24, thickness: 0.5),
+                                _infoLine(
+                                  context,
+                                  'Transfer Time',
+                                  _formatDateTime(entry.date, withSeconds: true),
+                                ),
+                              ],
+                               ),
+                             ),
+                           ),
+                         ],
+                       ),
+                     ),
+                     actions: [
+                       Row(
+                         children: [
+                           Expanded(
+                             child: FilledButton.tonal(
+                               onPressed: () => Navigator.of(context).pop(),
+                               style: FilledButton.styleFrom(
+                                 shape: RoundedRectangleBorder(
+                                   borderRadius: BorderRadius.circular(20),
+                                 ),
+                                 padding: const EdgeInsets.symmetric(vertical: 16),
+                                 elevation: 0,
+                               ),
+                               child: const Text(
+                                 'Close',
+                                 style: TextStyle(fontWeight: FontWeight.w700),
+                               ),
+                             ),
+                           ),
+                         ],
+                       ),
+                     ],
+                   ),
+                 ),
+               ),
+             ),
+           );
+         },
+       );
+     }
+
+     Widget _infoLine(BuildContext context, String label, String value) {
+       final theme = Theme.of(context);
+       final colorScheme = theme.colorScheme;
+       return Row(
+         crossAxisAlignment: CrossAxisAlignment.start,
+         children: [
+           Expanded(
+             child: Column(
+               crossAxisAlignment: CrossAxisAlignment.start,
+               children: [
+                 Text(
+                   label,
+                   style: theme.textTheme.labelMedium?.copyWith(
+                     color: colorScheme.onSurfaceVariant,
+                     fontWeight: FontWeight.w500,
+                   ),
+                 ),
+                 const SizedBox(height: 2),
+                 SelectableText(
+                   value,
+                   style: theme.textTheme.bodyMedium?.copyWith(
+                     color: colorScheme.onSurface,
+                     fontWeight: FontWeight.w600,
+                   ),
+                 ),
+               ],
+             ),
+           ),
+         ],
+       );
+     }
 
   Future<String?> _resolveVisibleHistoryPath(TransferHistoryEntry entry) async {
     final rawPath = (entry.localPath ?? '').trim();
@@ -835,5 +1079,167 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
     }
     final second = local.second.toString().padLeft(2, '0');
     return '$day/$month/${local.year} $hour:$minute:$second';
+  }
+
+  Widget _buildMobileDeletePill(
+    BuildContext context,
+    TransferDirection direction,
+    bool enabled,
+  ) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    return Container(
+      width: 72,
+      height: 72,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(36),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.08),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(36),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+          child: Container(
+            decoration: BoxDecoration(
+              color: colorScheme.surfaceContainerHigh.withValues(alpha: 0.65),
+              borderRadius: BorderRadius.circular(36),
+              border: Border.all(
+                color: colorScheme.outlineVariant.withValues(alpha: 0.3),
+              ),
+            ),
+            child: Center(
+              child: IconButton(
+                onPressed: enabled
+                    ? () => _confirmClearHistory(context, direction: direction)
+                    : null,
+                icon: Icon(
+                  Icons.delete_sweep_rounded,
+                  color: enabled
+                      ? colorScheme.error
+                      : colorScheme.onSurfaceVariant.withValues(alpha: 0.38),
+                  size: 26,
+                ),
+                tooltip: 'Delete All',
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMobileTabsPill(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    return Container(
+      height: 72,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(36),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.08),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(36),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+          child: Container(
+            decoration: BoxDecoration(
+              color: colorScheme.surfaceContainerHigh.withValues(alpha: 0.65),
+              borderRadius: BorderRadius.circular(36),
+              border: Border.all(
+                color: colorScheme.outlineVariant.withValues(alpha: 0.3),
+              ),
+            ),            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                for (var i = 0; i < _destinations.length; i++)
+                  (() {
+                    final item = _destinations[i];
+                    final isSelected = i == _selectedTabIndex;
+                    final inactiveColor = colorScheme.onSurfaceVariant;
+                    
+                    return Expanded(
+                      flex: isSelected ? 5 : 4,
+                      child: GestureDetector(
+                        onTap: () => _setSelectedTab(i),
+                        behavior: HitTestBehavior.opaque,
+                        child: SizedBox(
+                          height: double.infinity,
+                          child: Center(
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 300),
+                              curve: Curves.fastOutSlowIn,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 10,
+                              ),
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(24),
+                                color: isSelected
+                                    ? colorScheme.primaryContainer
+                                    : Colors.transparent,
+                              ),
+                              child: AnimatedSize(
+                                duration: const Duration(milliseconds: 300),
+                                curve: Curves.fastOutSlowIn,
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      item.icon,
+                                      color: isSelected
+                                          ? colorScheme.onPrimaryContainer
+                                          : inactiveColor,
+                                      size: 22,
+                                    ),
+                                    ClipRect(
+                                      child: AnimatedOpacity(
+                                        duration: const Duration(milliseconds: 200),
+                                        opacity: isSelected ? 1.0 : 0.0,
+                                        child: isSelected
+                                            ? Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  const SizedBox(width: 8),
+                                                  Text(
+                                                    item.label,
+                                                    style: theme.textTheme.labelLarge?.copyWith(
+                                                      color: colorScheme.onPrimaryContainer,
+                                                      fontWeight: FontWeight.w600,
+                                                    ),
+                                                    maxLines: 1,
+                                                  ),
+                                                ],
+                                              )
+                                            : const SizedBox.shrink(),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  })(),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }

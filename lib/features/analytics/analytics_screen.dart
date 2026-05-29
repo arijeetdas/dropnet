@@ -11,7 +11,16 @@ class AnalyticsScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final analytics = ref.read(appControllerProvider.notifier).analytics();
     return Scaffold(
-      appBar: AppBar(title: const Text('Analytics Dashboard')),
+      appBar: AppBar(
+        title: const Text('Analytics Dashboard'),
+        leading: Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: IconButton.filledTonal(
+            icon: const Icon(Icons.arrow_back_rounded),
+            onPressed: () => Navigator.of(context).maybePop(),
+          ),
+        ),
+      ),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: GridView.count(

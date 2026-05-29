@@ -11,7 +11,16 @@ class ActiveTransfersScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(appControllerProvider);
     return Scaffold(
-      appBar: AppBar(title: const Text('Active Transfers')),
+      appBar: AppBar(
+        title: const Text('Active Transfers'),
+        leading: Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: IconButton.filledTonal(
+            icon: const Icon(Icons.arrow_back_rounded),
+            onPressed: () => Navigator.of(context).maybePop(),
+          ),
+        ),
+      ),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: state.activeTransfers.isEmpty

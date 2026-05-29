@@ -17,6 +17,7 @@ import '../../models/transfer_model.dart';
 import '../platform/media_store_service.dart';
 import '../platform/share_intent_service.dart';
 import '../platform/android_saf_service.dart';
+import '../platform/android_storage_service.dart';
 import '../networking/discovery_service.dart';
 import '../networking/temporary_link_share_service.dart';
 import '../networking/tcp_transfer_service.dart';
@@ -81,6 +82,7 @@ class AppState {
     required this.localDeviceManufacturer,
     required this.localDevicePlatform,
     required this.localDeviceCpuArchitecture,
+    required this.installedApkType,
     required this.localDeviceBaseName,
     required this.localDeviceNumber,
     required this.localIp,
@@ -122,6 +124,7 @@ class AppState {
   final String localDeviceManufacturer;
   final String localDevicePlatform;
   final String localDeviceCpuArchitecture;
+  final String installedApkType;
   final String localDeviceBaseName;
   final int localDeviceNumber;
   final String localIp;
@@ -165,6 +168,7 @@ class AppState {
     localDeviceManufacturer: '',
     localDevicePlatform: '',
     localDeviceCpuArchitecture: '',
+    installedApkType: '',
     localDeviceBaseName: '',
     localDeviceNumber: 0,
     localIp: '',
@@ -207,6 +211,7 @@ class AppState {
     String? localDeviceManufacturer,
     String? localDevicePlatform,
     String? localDeviceCpuArchitecture,
+    String? installedApkType,
     String? localDeviceBaseName,
     int? localDeviceNumber,
     String? localIp,
@@ -252,6 +257,8 @@ class AppState {
       localDevicePlatform: localDevicePlatform ?? this.localDevicePlatform,
       localDeviceCpuArchitecture:
           localDeviceCpuArchitecture ?? this.localDeviceCpuArchitecture,
+      installedApkType:
+          installedApkType ?? this.installedApkType,
       localDeviceBaseName: localDeviceBaseName ?? this.localDeviceBaseName,
       localDeviceNumber: localDeviceNumber ?? this.localDeviceNumber,
       localIp: localIp ?? this.localIp,
@@ -420,7 +427,6 @@ class AppController extends StateNotifier<AppState> {
   final Set<String> _knownIncomingRequestIds = <String>{};
 
   Future<void> bootstrap() async {
-    await ensureStoragePermission();
     _prefs ??= await SharedPreferences.getInstance();
 
     // Batch all SharedPreferences reads
@@ -470,6 +476,10 @@ class AppController extends StateNotifier<AppState> {
     final downloadDir = await downloadDirFuture;
     final localIp = await localIpFuture;
     final localIps = await localIpsFuture;
+    final installedApkType = await Future<String>(() async {
+      if (kIsWeb || !Platform.isAndroid) return '';
+      return AndroidStorageService().getInstalledApkType();
+    });
     await shareIntentFuture;
     final initialShared = await _shareIntent.consumePendingSharedPayload();
 
@@ -499,6 +509,7 @@ class AppController extends StateNotifier<AppState> {
       localDeviceManufacturer: _discovery.manufacturerTag,
       localDevicePlatform: _discovery.platformTag,
       localDeviceCpuArchitecture: _discovery.cpuArchitectureTag,
+      installedApkType: installedApkType,
       localDeviceBaseName: _discovery.deviceBaseName,
       localDeviceNumber: _discovery.deviceNumber,
       localIp: localIp,

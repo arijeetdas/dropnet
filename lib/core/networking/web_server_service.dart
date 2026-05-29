@@ -952,7 +952,9 @@ class WebServerService {
       if (name.contains('wi-fi') ||
           name.contains('wifi') ||
           name.contains('wireless') ||
-          name.contains('wlan')) return 300;
+          name.contains('wlan')) {
+        return 300;
+      }
       if (name.contains('ethernet') || name.contains('eth')) return 200;
       return 0;
     }
