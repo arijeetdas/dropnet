@@ -254,7 +254,9 @@ This project is licensed under the terms of the **MIT License**. See [LICENSE](f
 
 *   **GitHub:** [@arijeetdas](https://github.com/arijeetdas)
 *   **LinkedIn:** [Arijeet Das](https://linkedin.com/in/arijeetdas)
-*   **Email:** arijeetdas04@gmail.com
+*   **Email:** arijeetdas900@gmail.com
+*   **App Webpage:** (https://vibe-labs.netlify.app/app.html?id=dropnet)
+*   **Portfolio Website:** (https://arijeetdas-dev.vercel.app/)
 
 ---
 *DropNet represents a meticulous effort to bridge low-level networking, cryptography, and concurrent systems design with dynamic, highly polished consumer-ready Material Design frameworks.*
