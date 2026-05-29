@@ -51,6 +51,7 @@ class _SharedTextScreenState extends State<SharedTextScreen> {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     return Scaffold(
+      backgroundColor: colorScheme.surface,
       appBar: AppBar(
         title: const Text('Shared Text'),
         leading: Padding(
@@ -61,85 +62,190 @@ class _SharedTextScreenState extends State<SharedTextScreen> {
           ),
         ),
       ),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 900),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Preview', style: theme.textTheme.titleMedium),
-                  const SizedBox(height: 10),
-                  LayoutBuilder(
-                    builder: (context, constraints) {
-                      final width = constraints.maxWidth;
-                      const minHeight = 120.0;
-                      const maxHeight = 420.0;
-                      const inset = 24.0;
-                      final textStyle =
-                          theme.textTheme.bodyLarge ??
-                          const TextStyle(fontSize: 16);
-                      final painter = TextPainter(
-                        text: TextSpan(text: widget.text, style: textStyle),
-                        textDirection: Directionality.of(context),
-                        maxLines: null,
-                      )..layout(maxWidth: (width - inset).clamp(120.0, width));
-                      final targetHeight = (painter.height + inset).clamp(
-                        minHeight,
-                        maxHeight,
-                      );
-                      final capped = targetHeight >= maxHeight;
-
-                      return Container(
-                        width: width,
-                        height: targetHeight,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: colorScheme.outlineVariant),
-                          color: colorScheme.surfaceContainerHighest.withValues(
-                            alpha: 0.35,
-                          ),
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              colorScheme.primary.withValues(alpha: 0.04),
+              colorScheme.surface,
+            ],
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+          ),
+        ),
+        child: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 800),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(24),
+                        gradient: LinearGradient(
+                          colors: [
+                            colorScheme.primaryContainer.withValues(alpha: 0.15),
+                            colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                          ],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
                         ),
-                        padding: const EdgeInsets.all(12),
-                        child: Scrollbar(
-                          thumbVisibility: capped,
-                          child: SingleChildScrollView(
-                            child: SelectableText(
-                              widget.text,
-                              style: textStyle,
+                        border: Border.all(
+                          color: colorScheme.outlineVariant.withValues(alpha: 0.35),
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(10),
+                                decoration: BoxDecoration(
+                                  color: colorScheme.primary.withValues(alpha: 0.12),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Icon(
+                                  _isLink ? Icons.link_rounded : Icons.description_rounded,
+                                  color: colorScheme.primary,
+                                  size: 20,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      _isLink ? 'Shared Link Received' : 'Shared Text Received',
+                                      style: theme.textTheme.titleMedium?.copyWith(
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      'Copy to clipboard or open in your browser.',
+                                      style: theme.textTheme.bodySmall?.copyWith(
+                                        color: colorScheme.onSurfaceVariant,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    Flexible(
+                      fit: FlexFit.loose,
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          final width = constraints.maxWidth;
+                          final textStyle = theme.textTheme.bodyLarge?.copyWith(
+                                height: 1.6,
+                                letterSpacing: 0.3,
+                                color: colorScheme.onSurface,
+                                fontFamily: 'monospace',
+                              ) ??
+                              const TextStyle(fontSize: 15, height: 1.5, fontFamily: 'monospace');
+
+                          return ConstrainedBox(
+                            constraints: const BoxConstraints(
+                              minHeight: 120.0,
+                              maxHeight: 460.0,
+                            ),
+                            child: Container(
+                              width: width,
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  colors: [
+                                    colorScheme.surfaceContainerLow,
+                                    colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+                                  ],
+                                  begin: Alignment.topCenter,
+                                  end: Alignment.bottomCenter,
+                                ),
+                                borderRadius: BorderRadius.circular(28),
+                                border: Border.all(
+                                  color: colorScheme.primary.withValues(alpha: 0.2),
+                                  width: 1.5,
+                                ),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: colorScheme.primary.withValues(alpha: 0.02),
+                                    blurRadius: 16,
+                                    offset: const Offset(0, 8),
+                                  ),
+                                ],
+                              ),
+                              padding: const EdgeInsets.all(22),
+                              child: Scrollbar(
+                                thumbVisibility: true,
+                                radius: const Radius.circular(8),
+                                child: SingleChildScrollView(
+                                  child: SelectableText(
+                                    widget.text,
+                                    style: textStyle,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: FilledButton.icon(
+                            onPressed: _copy,
+                            icon: Icon(
+                              _copied ? Icons.check_rounded : Icons.copy_rounded,
+                              size: 18,
+                            ),
+                            style: FilledButton.styleFrom(
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              padding: const EdgeInsets.symmetric(vertical: 16),
+                            ),
+                            label: Text(
+                              _copied ? 'Copied to Clipboard' : 'Copy Text',
+                              style: const TextStyle(fontWeight: FontWeight.bold),
                             ),
                           ),
                         ),
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 16),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: FilledButton.icon(
-                          onPressed: _copy,
-                          icon: Icon(
-                            _copied ? Icons.check_rounded : Icons.copy_rounded,
+                        if (_isLink) ...[
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: _openLink,
+                              icon: const Icon(Icons.open_in_new_rounded, size: 18),
+                              style: OutlinedButton.styleFrom(
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                padding: const EdgeInsets.symmetric(vertical: 16),
+                                side: BorderSide(color: colorScheme.primary, width: 1.5),
+                              ),
+                              label: const Text(
+                                'Open Link',
+                                style: TextStyle(fontWeight: FontWeight.bold),
+                              ),
+                            ),
                           ),
-                          label: Text(_copied ? 'Copied' : 'Copy'),
-                        ),
-                      ),
-                      if (_isLink) ...[
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            onPressed: _openLink,
-                            icon: const Icon(Icons.open_in_new_rounded),
-                            label: const Text('Open'),
-                          ),
-                        ),
+                        ],
                       ],
-                    ],
-                  ),
-                ],
+                    ),
+                  ],
+                ),
               ),
             ),
           ),

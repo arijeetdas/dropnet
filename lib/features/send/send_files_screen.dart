@@ -970,38 +970,65 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
           child: Row(
             children: [
-              // Avatar
-              Container(
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: LinearGradient(
-                    colors: selected
-                        ? [
-                            colorScheme.primaryContainer,
-                            colorScheme.primaryContainer.withValues(alpha: 0.6),
-                          ]
-                        : [
-                            colorScheme.surfaceContainerHigh,
-                            colorScheme.surfaceContainerLow,
-                          ],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
+              // Avatar with Online Badge Overlay placed properly
+              Stack(
+                children: [
+                  Container(
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: LinearGradient(
+                        colors: selected
+                            ? [
+                                colorScheme.primaryContainer,
+                                colorScheme.primaryContainer.withValues(alpha: 0.6),
+                              ]
+                            : [
+                                colorScheme.surfaceContainerHigh,
+                                colorScheme.surfaceContainerLow,
+                              ],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      border: Border.all(
+                        color: selected
+                            ? colorScheme.primary.withValues(alpha: 0.3)
+                            : colorScheme.outlineVariant.withValues(alpha: 0.4),
+                      ),
+                    ),
+                    child: Icon(
+                      _iconForDeviceType(device.deviceType),
+                      color: selected
+                          ? colorScheme.primary
+                          : colorScheme.onSurfaceVariant,
+                      size: 24,
+                    ),
                   ),
-                  border: Border.all(
-                    color: selected
-                        ? colorScheme.primary.withValues(alpha: 0.3)
-                        : colorScheme.outlineVariant.withValues(alpha: 0.4),
+                  Positioned(
+                    bottom: 1,
+                    right: 1,
+                    child: Container(
+                      width: 13,
+                      height: 13,
+                      decoration: BoxDecoration(
+                        color: selected
+                            ? colorScheme.primaryContainer
+                            : colorScheme.surface,
+                        shape: BoxShape.circle,
+                      ),
+                      padding: const EdgeInsets.all(2),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: device.isOnline
+                              ? Colors.green.shade400
+                              : Colors.grey.shade400,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                    ),
                   ),
-                ),
-                child: Icon(
-                  _iconForDeviceType(device.deviceType),
-                  color: selected
-                      ? colorScheme.primary
-                      : colorScheme.onSurfaceVariant,
-                  size: 24,
-                ),
+                ],
               ),
               const SizedBox(width: 14),
               // Name & Details
@@ -1022,14 +1049,6 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
-                        if (favorite) ...[
-                          const SizedBox(width: 6),
-                          Icon(
-                            Icons.favorite_rounded,
-                            size: 14,
-                            color: Colors.red.shade400,
-                          ),
-                        ],
                         if (pairingRequired && trusted) ...[
                           const SizedBox(width: 6),
                           Icon(
@@ -1056,28 +1075,6 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Tooltip(
-                    message: device.isOnline ? 'Online' : 'Offline',
-                    child: Container(
-                      width: 8,
-                      height: 8,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: device.isOnline
-                            ? Colors.green.shade400
-                            : Colors.grey.shade400,
-                        boxShadow: [
-                          if (device.isOnline)
-                            BoxShadow(
-                              color: Colors.green.withValues(alpha: 0.4),
-                              blurRadius: 6,
-                              spreadRadius: 1,
-                            ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 4),
                   IconButton(
                     iconSize: 18,
                     visualDensity: VisualDensity.compact,
@@ -1097,6 +1094,8 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
                           : colorScheme.onSurfaceVariant,
                     ),
                   ),
+                  const SizedBox(width: 4),
+
                   if (pairingRequired)
                     IconButton(
                       iconSize: 18,

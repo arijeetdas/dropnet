@@ -98,7 +98,8 @@ class _ReceiveScreenState extends ConsumerState<ReceiveScreen>
           final isNarrow = availableWidth < 380;
           final horizontalPadding = isNarrow ? 12.0 : 16.0;
           final topPadding = isCompactHeight ? 12.0 : 18.0;
-          final bottomPadding = widget.embedded ? 96.0 : 20.0;
+          final systemBottom = MediaQuery.paddingOf(context).bottom;
+          final bottomPadding = widget.embedded ? (106.0 + systemBottom) : (24.0 + systemBottom);
           final radarSize = (availableWidth * (isNarrow ? 0.58 : 0.52))
               .clamp(
                 isCompactHeight ? 164.0 : 184.0,

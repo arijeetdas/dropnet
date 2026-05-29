@@ -1021,47 +1021,73 @@ class _DecisionScreen extends StatelessWidget {
       child: Container(
         decoration: BoxDecoration(
           gradient: LinearGradient(
-            colors: [accent.withValues(alpha: 0.09), colorScheme.surface],
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
+            colors: [
+              accent.withValues(alpha: 0.08),
+              colorScheme.primary.withValues(alpha: 0.03),
+              colorScheme.surface,
+            ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
           ),
         ),
         child: SafeArea(
           child: Padding(
-            padding: const EdgeInsets.all(24),
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
             child: Column(
               children: [
                 Expanded(
                   child: SingleChildScrollView(
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 860),
-                      child: Center(
+                    child: Align(
+                      alignment: Alignment.topCenter,
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 800),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Container(
                               padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
+                                horizontal: 14,
                                 vertical: 8,
                               ),
                               decoration: BoxDecoration(
-                                color: colorScheme.surface.withValues(
-                                  alpha: 0.82,
+                                color: colorScheme.primaryContainer.withValues(
+                                  alpha: 0.5,
                                 ),
                                 borderRadius: BorderRadius.circular(999),
+                                border: Border.all(
+                                  color: colorScheme.primary.withValues(alpha: 0.1),
+                                ),
                               ),
-                              child: Text(eyebrow),
+                              child: Text(
+                                eyebrow.toUpperCase(),
+                                style: theme.textTheme.labelSmall?.copyWith(
+                                  color: colorScheme.primary,
+                                  fontWeight: FontWeight.bold,
+                                  letterSpacing: 0.8,
+                                ),
+                              ),
                             ),
-                            const SizedBox(height: 18),
+                            const SizedBox(height: 20),
                             Row(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Container(
-                                  width: 72,
-                                  height: 72,
+                                  width: 76,
+                                  height: 76,
                                   decoration: BoxDecoration(
-                                    color: accent.withValues(alpha: 0.14),
-                                    borderRadius: BorderRadius.circular(22),
+                                    gradient: LinearGradient(
+                                      colors: [accent.withValues(alpha: 0.2), accent.withValues(alpha: 0.05)],
+                                      begin: Alignment.topLeft,
+                                      end: Alignment.bottomRight,
+                                    ),
+                                    borderRadius: BorderRadius.circular(24),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: accent.withValues(alpha: 0.1),
+                                        blurRadius: 12,
+                                        offset: const Offset(0, 4),
+                                      ),
+                                    ],
                                   ),
                                   child: Icon(icon, size: 36, color: accent),
                                 ),
@@ -1073,34 +1099,50 @@ class _DecisionScreen extends StatelessWidget {
                                     children: [
                                       Text(
                                         title,
-                                        style: theme.textTheme.headlineMedium,
+                                        style: theme.textTheme.headlineMedium?.copyWith(
+                                          fontWeight: FontWeight.w800,
+                                          letterSpacing: -0.5,
+                                        ),
                                       ),
                                       const SizedBox(height: 8),
                                       Text(
                                         subtitle,
-                                        style: theme.textTheme.bodyLarge
-                                            ?.copyWith(
-                                              color:
-                                                  colorScheme.onSurfaceVariant,
-                                            ),
+                                        style: theme.textTheme.bodyLarge?.copyWith(
+                                          color: colorScheme.onSurfaceVariant,
+                                          fontWeight: FontWeight.w500,
+                                          height: 1.4,
+                                        ),
                                       ),
                                     ],
                                   ),
                                 ),
                               ],
                             ),
-                            const SizedBox(height: 24),
+                            const SizedBox(height: 28),
                             Container(
                               width: double.infinity,
-                              padding: const EdgeInsets.all(20),
+                              padding: const EdgeInsets.all(22),
                               decoration: BoxDecoration(
-                                color: colorScheme.surfaceContainerLow,
-                                borderRadius: BorderRadius.circular(28),
-                                border: Border.all(
-                                  color: colorScheme.outlineVariant.withValues(
-                                    alpha: 0.65,
-                                  ),
+                                gradient: LinearGradient(
+                                  colors: [
+                                    colorScheme.surfaceContainerLow,
+                                    colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
+                                  ],
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
                                 ),
+                                borderRadius: BorderRadius.circular(30),
+                                border: Border.all(
+                                  color: accent.withValues(alpha: 0.25),
+                                  width: 1.5,
+                                ),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: accent.withValues(alpha: 0.04),
+                                    blurRadius: 16,
+                                    offset: const Offset(0, 6),
+                                  ),
+                                ],
                               ),
                               child: Row(
                                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1112,9 +1154,9 @@ class _DecisionScreen extends StatelessWidget {
                                       color: accent.withValues(alpha: 0.14),
                                       borderRadius: BorderRadius.circular(18),
                                     ),
-                                    child: Icon(icon, color: accent),
+                                    child: Icon(icon, color: accent, size: 26),
                                   ),
-                                  const SizedBox(width: 14),
+                                  const SizedBox(width: 16),
                                   Expanded(
                                     child: Column(
                                       crossAxisAlignment:
@@ -1122,16 +1164,17 @@ class _DecisionScreen extends StatelessWidget {
                                       children: [
                                         Text(
                                           highlightTitle,
-                                          style: theme.textTheme.titleLarge,
+                                          style: theme.textTheme.titleLarge?.copyWith(
+                                            fontWeight: FontWeight.bold,
+                                          ),
                                         ),
-                                        const SizedBox(height: 4),
+                                        const SizedBox(height: 6),
                                         Text(
                                           highlightSubtitle,
-                                          style: theme.textTheme.bodyMedium
-                                              ?.copyWith(
-                                                color: colorScheme
-                                                    .onSurfaceVariant,
-                                              ),
+                                          style: theme.textTheme.bodyMedium?.copyWith(
+                                            color: colorScheme.onSurfaceVariant,
+                                            fontWeight: FontWeight.w600,
+                                          ),
                                         ),
                                       ],
                                     ),
@@ -1139,31 +1182,43 @@ class _DecisionScreen extends StatelessWidget {
                                 ],
                               ),
                             ),
-                            const SizedBox(height: 18),
+                            const SizedBox(height: 24),
                             Wrap(
-                              spacing: 14,
-                              runSpacing: 14,
+                              spacing: 16,
+                              runSpacing: 16,
                               children: details
                                   .map(
                                     (detail) => SizedBox(
-                                      width: 260,
+                                      width: 250,
                                       child: Container(
-                                        padding: const EdgeInsets.all(16),
+                                        padding: const EdgeInsets.all(18),
                                         decoration: BoxDecoration(
-                                          color: colorScheme.surface,
-                                          borderRadius: BorderRadius.circular(
-                                            22,
+                                          gradient: LinearGradient(
+                                            colors: [
+                                              colorScheme.surface,
+                                              colorScheme.surfaceContainerLow.withValues(alpha: 0.6),
+                                            ],
+                                            begin: Alignment.topLeft,
+                                            end: Alignment.bottomRight,
                                           ),
+                                          borderRadius: BorderRadius.circular(22),
                                           border: Border.all(
-                                            color: colorScheme.outlineVariant
-                                                .withValues(alpha: 0.65),
+                                            color: colorScheme.outlineVariant.withValues(alpha: 0.4),
+                                            width: 1.0,
                                           ),
+                                          boxShadow: [
+                                            BoxShadow(
+                                              color: Colors.black.withValues(alpha: 0.01),
+                                              blurRadius: 8,
+                                              offset: const Offset(0, 2),
+                                            ),
+                                          ],
                                         ),
                                         child: Row(
                                           crossAxisAlignment:
                                               CrossAxisAlignment.start,
                                           children: [
-                                            Icon(detail.icon, color: accent),
+                                            Icon(detail.icon, color: accent, size: 20),
                                             const SizedBox(width: 12),
                                             Expanded(
                                               child: Column(
@@ -1172,16 +1227,18 @@ class _DecisionScreen extends StatelessWidget {
                                                 children: [
                                                   Text(
                                                     detail.label,
-                                                    style: theme
-                                                        .textTheme
-                                                        .labelLarge
-                                                        ?.copyWith(
-                                                          color: colorScheme
-                                                              .onSurfaceVariant,
-                                                        ),
+                                                    style: theme.textTheme.labelLarge?.copyWith(
+                                                      color: colorScheme.onSurfaceVariant,
+                                                      fontWeight: FontWeight.bold,
+                                                    ),
                                                   ),
                                                   const SizedBox(height: 4),
-                                                  Text(detail.value),
+                                                  Text(
+                                                    detail.value,
+                                                    style: theme.textTheme.bodyMedium?.copyWith(
+                                                      fontWeight: FontWeight.w600,
+                                                    ),
+                                                  ),
                                                 ],
                                               ),
                                             ),
@@ -1198,22 +1255,49 @@ class _DecisionScreen extends StatelessWidget {
                     ),
                   ),
                 ),
-                const SizedBox(height: 18),
+                const SizedBox(height: 20),
                 ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 860),
+                  constraints: const BoxConstraints(maxWidth: 800),
                   child: Row(
                     children: [
                       Expanded(
-                        child: OutlinedButton(
+                        child: FilledButton.icon(
                           onPressed: onSecondary,
-                          child: Text(secondaryLabel),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: colorScheme.errorContainer.withValues(alpha: 0.9),
+                            foregroundColor: colorScheme.error,
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(24),
+                            ),
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                          ),
+                          icon: const Icon(Icons.close_rounded, size: 20),
+                          label: Text(
+                            secondaryLabel,
+                            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+                          ),
                         ),
                       ),
                       const SizedBox(width: 12),
                       Expanded(
-                        child: FilledButton(
+                        child: FilledButton.icon(
                           onPressed: onPrimary,
-                          child: Text(primaryLabel),
+                          icon: const Icon(Icons.check_rounded, size: 20),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: Colors.green.shade600,
+                            foregroundColor: Colors.white,
+                            elevation: 3,
+                            shadowColor: Colors.green.shade600.withValues(alpha: 0.4),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(24),
+                            ),
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                          ),
+                          label: Text(
+                            primaryLabel,
+                            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+                          ),
                         ),
                       ),
                     ],
