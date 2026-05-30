@@ -607,6 +607,9 @@ class _PairingCodeDialogState extends State<PairingCodeDialog> {
                             setState(() {
                               if (_errorText != null) _errorText = null;
                             });
+                            if (value.length == 6) {
+                              _focusNode.unfocus();
+                            }
                           },
                           decoration: const InputDecoration(
                             border: InputBorder.none,

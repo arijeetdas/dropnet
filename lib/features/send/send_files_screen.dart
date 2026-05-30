@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_picker/file_picker.dart';
@@ -1330,29 +1331,155 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
         _showMessage('Failed to unpair device: $e');
       }
     } else {
-      final code = await showDialog<String>(
+      // Generate a secure random 6-digit code
+      final randomCode = List.generate(6, (_) => math.Random().nextInt(10).toString()).join();
+
+      bool pairingCompleted = false;
+      BuildContext? localDialogContext;
+
+      // Show the pairing code dialog in display mode on Device A (the initiator)
+      final dialogFuture = showDialog<void>(
         context: context,
         barrierDismissible: false,
-        builder: (context) => PairingCodeDialog(
-          deviceName: device.taggedName,
-          fileName: 'Pairing Connection',
-          onCodeSubmitted: (val) => Navigator.of(context).pop(val),
-        ),
+        builder: (context) {
+          localDialogContext = context;
+          return PairingCodeDialog(
+            deviceName: device.taggedName,
+            fileName: 'Pairing Connection',
+            displayCode: randomCode,
+          );
+        },
       );
 
-      if (code == null || code.trim().isEmpty) {
-        return;
-      }
+      unawaited(dialogFuture.then((_) {
+        if (!pairingCompleted) {
+          ref.read(appControllerProvider.notifier).cancelPairing(device.deviceId);
+        }
+      }));
 
       _showMessage('Sending pairing request to ${device.taggedName}...');
 
       try {
         await ref
             .read(appControllerProvider.notifier)
-            .pairDeviceWithVerification(device, pairingCode: code.trim());
-        _showMessage('Successfully paired with ${device.taggedName}.');
+            .pairDeviceWithVerification(device, pairingCode: randomCode);
+        pairingCompleted = true;
+        if (mounted) {
+          if (localDialogContext != null && localDialogContext!.mounted) {
+            Navigator.of(localDialogContext!).pop(); // Automatically dismiss the display dialog
+          }
+          _showMessage('Successfully paired with ${device.taggedName}.');
+        }
       } catch (e) {
-        _showMessage('Pairing failed: $e');
+        pairingCompleted = true;
+        if (mounted) {
+          if (localDialogContext != null && localDialogContext!.mounted) {
+            Navigator.of(localDialogContext!).pop(); // Automatically dismiss the display dialog
+          }
+
+          final isCancel = e.toString().contains('rejected') ||
+              e.toString().contains('canceled') ||
+              e.toString().contains('timeout') ||
+              e.toString().contains('SocketException') ||
+              e.toString().contains('closed') ||
+              e.toString().contains('Connection closed') ||
+              e.toString().contains('refused');
+
+          final theme = Theme.of(context);
+          final colorScheme = theme.colorScheme;
+          showDropNetDialog<void>(
+            context: context,
+            builder: (context) => AlertDialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(32),
+              ),
+              backgroundColor: colorScheme.surface,
+              elevation: 6,
+              titlePadding: const EdgeInsets.fromLTRB(24, 28, 24, 16),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 24),
+              actionsPadding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+              icon: Container(
+                width: 68,
+                height: 68,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      colorScheme.errorContainer,
+                      colorScheme.errorContainer.withValues(alpha: 0.5),
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: colorScheme.error.withValues(alpha: 0.15),
+                      blurRadius: 16,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: Icon(
+                  Icons.warning_amber_rounded,
+                  color: colorScheme.onErrorContainer,
+                  size: 32,
+                ),
+              ),
+              title: Text(
+                'Pairing Cancelled',
+                style: theme.textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w800,
+                  color: colorScheme.onSurface,
+                  letterSpacing: -0.5,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              content: Card(
+                elevation: 0,
+                color: colorScheme.surfaceContainerLow,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(24),
+                  side: BorderSide(
+                    color: colorScheme.outlineVariant.withValues(alpha: 0.25),
+                  ),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Text(
+                    isCancel
+                        ? 'The pairing session was cancelled or disconnected by the other device.\n\nFor security, direct file transfers have been aborted. Please ensure both devices are open on the same local network and attempt to pair again.'
+                        : 'The pairing connection attempt failed due to a connection error:\n\n$e\n\nPlease ensure both devices are open on the same Wi-Fi network and try again.',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                      height: 1.45,
+                    ),
+                  ),
+                ),
+              ),
+              actions: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: FilledButton.tonal(
+                        onPressed: () => Navigator.of(context).pop(),
+                        style: FilledButton.styleFrom(
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                        ),
+                        child: const Text(
+                          'Close',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          );
+        }
       }
     }
   }

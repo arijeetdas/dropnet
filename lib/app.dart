@@ -11,6 +11,7 @@ import 'core/state/app_state.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'core/utils/file_utils.dart';
+import 'core/utils/dialog_utils.dart';
 import 'core/networking/web_server_service.dart';
 import 'models/transfer_model.dart';
 import 'features/analytics/analytics_screen.dart';
@@ -169,6 +170,7 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
   final Set<String> _pairingDialogShownFor = {};
   final Set<String> _peerDialogShownFor = {};
   final Set<String> _webUploadDialogShownFor = {};
+  final Map<String, _ActivePairingDialog> _activePairingDialogs = {};
   bool _transferSessionOpen = false;
   bool _sharedTextOpening = false;
   bool _receivedFilePreviewOpening = false;
@@ -219,7 +221,26 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
               .read(appControllerProvider.notifier)
               .shutdownNetworkServices();
         },
+        onResume: _checkAndroidPermissionAndRedirect,
       );
+
+  Future<void> _checkAndroidPermissionAndRedirect() async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    final seen = prefs.getBool('onboarding.completed') ?? false;
+    if (!seen) return;
+
+    final currentPath = _router.routeInformationProvider.value.uri.path;
+    if (currentPath == '/welcome') return;
+
+    final granted = await _hasRequiredAndroidStorageAccess();
+    if (!granted) {
+      if (currentPath != '/permission') {
+        _router.go('/permission');
+      }
+    }
+  }
 
   @override
   void dispose() {
@@ -320,10 +341,120 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
         messenger?.showSnackBar(SnackBar(content: Text(pendingMessage)));
       }
 
+      // Auto-cancel active pairing dialog on Device B if Device A cancelled/disconnected
+      final activeIds = _activePairingDialogs.keys.toList();
+      for (final id in activeIds) {
+        final stillExists = next.pendingPairingRequests.any((r) => r.id == id);
+        if (!stillExists) {
+          final dialogState = _activePairingDialogs[id];
+          if (dialogState != null && !dialogState.isPopped) {
+            dialogState.isPopped = true;
+            Navigator.of(dialogState.context).pop(false); // Dismiss the input dialog on Device B
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              final activeContext = _rootNavigatorKey.currentContext ?? context;
+              final theme = Theme.of(activeContext);
+              final colorScheme = theme.colorScheme;
+              showDropNetDialog<void>(
+                context: activeContext,
+                builder: (context) => AlertDialog(
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(32),
+                  ),
+                  backgroundColor: colorScheme.surface,
+                  elevation: 6,
+                  titlePadding: const EdgeInsets.fromLTRB(24, 28, 24, 16),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 24),
+                  actionsPadding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+                  icon: Container(
+                    width: 68,
+                    height: 68,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [
+                          colorScheme.errorContainer,
+                          colorScheme.errorContainer.withValues(alpha: 0.5),
+                        ],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: colorScheme.error.withValues(alpha: 0.15),
+                          blurRadius: 16,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: Icon(
+                      Icons.warning_amber_rounded,
+                      color: colorScheme.onErrorContainer,
+                      size: 32,
+                    ),
+                  ),
+                  title: Text(
+                    'Pairing Cancelled',
+                    style: theme.textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                      color: colorScheme.onSurface,
+                      letterSpacing: -0.5,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  content: Card(
+                    elevation: 0,
+                    color: colorScheme.surfaceContainerLow,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(24),
+                      side: BorderSide(
+                        color: colorScheme.outlineVariant.withValues(alpha: 0.25),
+                      ),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(20),
+                      child: Text(
+                        'The pairing session was cancelled or disconnected by the other device.\n\nFor security, direct file transfers have been aborted. Please ensure both devices are open on the same local network and attempt to pair again.',
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: colorScheme.onSurfaceVariant,
+                          height: 1.45,
+                        ),
+                      ),
+                    ),
+                  ),
+                  actions: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: FilledButton.tonal(
+                            onPressed: () => Navigator.of(context).pop(),
+                            style: FilledButton.styleFrom(
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              padding: const EdgeInsets.symmetric(vertical: 16),
+                            ),
+                            child: const Text(
+                              'Close',
+                              style: TextStyle(fontWeight: FontWeight.w700),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              );
+            });
+          }
+        }
+      }
+
       for (final request in next.pendingIncomingRequests) {
         if (!_dialogShownFor.contains(request.id)) {
           _dialogShownFor.add(request.id);
-          _showIncomingDialog(request);
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _showIncomingDialog(request);
+          });
           break;
         }
       }
@@ -331,7 +462,9 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
       for (final request in next.pendingPairingRequests) {
         if (!_pairingDialogShownFor.contains(request.id)) {
           _pairingDialogShownFor.add(request.id);
-          _showIncomingPairingDialog(request);
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _showIncomingPairingDialog(request);
+          });
           break;
         }
       }
@@ -339,7 +472,9 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
       for (final peerRequest in next.pendingWebPeerRequests) {
         if (!_peerDialogShownFor.contains(peerRequest.id)) {
           _peerDialogShownFor.add(peerRequest.id);
-          _showWebPeerDialog(peerRequest);
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _showWebPeerDialog(peerRequest);
+          });
           break;
         }
       }
@@ -347,7 +482,9 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
       for (final uploadRequest in next.pendingWebIncomingUploads) {
         if (!_webUploadDialogShownFor.contains(uploadRequest.id)) {
           _webUploadDialogShownFor.add(uploadRequest.id);
-          _showWebIncomingUploadDialog(uploadRequest);
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _showWebIncomingUploadDialog(uploadRequest);
+          });
           break;
         }
       }
@@ -526,18 +663,28 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
   ) async {
     final dialogContext = _rootNavigatorKey.currentContext;
     if (!mounted || dialogContext == null) {
+      _pairingDialogShownFor.remove(request.id);
       return;
     }
+
+    final dialogState = _ActivePairingDialog(context: dialogContext);
+    _activePairingDialogs[request.id] = dialogState;
 
     final approved = await showDialog<bool>(
       context: dialogContext,
       barrierDismissible: false,
-      builder: (context) => PairingCodeDialog(
-        deviceName: request.fromDeviceName,
-        fileName: 'Pairing Request',
-        expectedCode: request.pairingCode,
-      ),
+      builder: (context) {
+        dialogState.context = context;
+        return PairingCodeDialog(
+          deviceName: request.fromDeviceName,
+          fileName: 'Pairing Request',
+          expectedCode: request.pairingCode,
+        );
+      },
     );
+
+    dialogState.isPopped = true;
+    _activePairingDialogs.remove(request.id);
 
     if (!mounted) {
       return;
@@ -615,6 +762,7 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
   Future<void> _showIncomingDialog(IncomingTransferRequest request) async {
     final dialogContext = _rootNavigatorKey.currentContext;
     if (!mounted || dialogContext == null) {
+      _dialogShownFor.remove(request.id);
       return;
     }
 
@@ -960,14 +1108,17 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
 }
 
 class _DropNetLifecycleObserver extends WidgetsBindingObserver {
-  _DropNetLifecycleObserver({required this.onDetached});
+  _DropNetLifecycleObserver({required this.onDetached, required this.onResume});
 
   final Future<void> Function() onDetached;
+  final VoidCallback onResume;
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.detached) {
       onDetached();
+    } else if (state == AppLifecycleState.resumed) {
+      onResume();
     }
   }
 }
@@ -1311,3 +1462,10 @@ class _DecisionScreen extends StatelessWidget {
     );
   }
 }
+
+class _ActivePairingDialog {
+  _ActivePairingDialog({required this.context});
+  BuildContext context;
+  bool isPopped = false;
+}
+

@@ -837,6 +837,10 @@ class AppController extends StateNotifier<AppState> {
     _transfer.rejectIncomingPairingRequest(request.id);
   }
 
+  void cancelPairing(String targetDeviceId) {
+    _transfer.cancelPairing(targetDeviceId);
+  }
+
   Future<void> pairDeviceWithVerification(
     DeviceModel device, {
     required String pairingCode,

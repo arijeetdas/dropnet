@@ -48,6 +48,7 @@ class TcpTransferService {
     final Map<String, IncomingPairingRequest> _incomingPairingRequests = {};
     final Map<String, Completer<bool>> _incomingPairingDecisions = {};
     final List<RemoteUnpairNotice> _remoteUnpairNotices = [];
+    final Map<String, SecureSocket> _activePairingSockets = {};
   final Map<String, ({bool accepted, DateTime at})> _sessionDecisions = {};
   final Set<String> _canceled = {};
   SecureServerSocket? _server;
@@ -184,6 +185,7 @@ class TcpTransferService {
           );
         },
       );
+      _activePairingSockets[target.deviceId] = socket;
 
       final peerFingerprint = _fingerprintFromCertificate(
         socket.peerCertificate,
@@ -224,6 +226,7 @@ class TcpTransferService {
         peerFingerprint: peerFingerprint,
       );
     } finally {
+      _activePairingSockets.remove(target.deviceId);
       await lineIterator?.cancel();
       await socket?.close();
     }
@@ -1040,6 +1043,16 @@ class TcpTransferService {
     _incomingPairingDecisions[requestId] = decisionCompleter;
     _emitIncomingPairingRequests();
 
+    unawaited(socket.done.then((_) {
+      if (!decisionCompleter.isCompleted) {
+        decisionCompleter.complete(false);
+      }
+    }).catchError((_) {
+      if (!decisionCompleter.isCompleted) {
+        decisionCompleter.complete(false);
+      }
+    }));
+
     final accepted = await decisionCompleter.future.timeout(
       const Duration(minutes: 2),
       onTimeout: () => false,
@@ -1316,6 +1329,11 @@ class TcpTransferService {
     if (completer != null && !completer.isCompleted) {
       completer.complete(false);
     }
+  }
+
+  void cancelPairing(String targetDeviceId) {
+    final socket = _activePairingSockets.remove(targetDeviceId);
+    socket?.close();
   }
 
   void _emitIncomingRequests() {

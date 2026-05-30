@@ -9,6 +9,8 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/state/app_state.dart';
+import '../../widgets/onboarding_background.dart';
+import '../onboarding/welcome_screen.dart' show OnboardingActionButton;
 
 class PermissionScreen extends ConsumerStatefulWidget {
   const PermissionScreen({super.key});
@@ -80,8 +82,12 @@ class _PermissionScreenState extends ConsumerState<PermissionScreen> {
   }
 
   Future<void> _continueToApp() async {
-    if (!_granted) {
-      return;
+    // Re-check at the moment the 8-second animation ends, so we never navigate
+    // without confirmed permission (the poll may have updated _granted, but we
+    // verify one final time).
+    if (!kIsWeb && Platform.isAndroid) {
+      final stillGranted = await _hasRequiredAndroidStorageAccess();
+      if (!stillGranted || !mounted) return;
     }
     try {
       await ref
@@ -97,63 +103,93 @@ class _PermissionScreenState extends ConsumerState<PermissionScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Permissions required'),
-        automaticallyImplyLeading: false,
-      ),
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 760),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(18),
-                  child: SizedBox(
-                    height: 160,
-                    child: SvgPicture.asset(
-                      'assets/onboarding/permission.svg',
-                      fit: BoxFit.contain,
+      // No AppBar — heading lives above the SVG inside the body.
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          // ── Animated blob background ─────────────────────────────────────
+          const OnboardingBackground(),
+          // ── Foreground content ───────────────────────────────────────────
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 760),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // ── Screen heading (was AppBar title) ─────────────────
+                    Text(
+                      'Permissions required',
+                      style: theme.textTheme.headlineMedium?.copyWith(
+                        fontWeight: FontWeight.w900,
+                        color: theme.colorScheme.primary,
+                      ),
+                      textAlign: TextAlign.center,
                     ),
-                  ),
+                    const SizedBox(height: 24),
+                    // ── Illustration ──────────────────────────────────────
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(18),
+                      child: SizedBox(
+                        height: 160,
+                        child: SvgPicture.asset(
+                          'assets/onboarding/permission.svg',
+                          fit: BoxFit.contain,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    Text(
+                      'Storage Access Needed',
+                      style: theme.textTheme.headlineSmall?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'DropNet needs access to your device storage to save received files and to share files from your device. The app works completely offline and does not collect or upload your data.',
+                      style: theme.textTheme.bodyMedium,
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 20),
+                    // ── Grant permission button (disappears when granted) ──
+                    AnimatedSize(
+                      duration: const Duration(milliseconds: 300),
+                      curve: Curves.easeInOut,
+                      child: !_granted
+                          ? Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                FilledButton(
+                                  onPressed: _checking ? null : _requestPermission,
+                                  child: _checking
+                                      ? const SizedBox(
+                                          width: 18,
+                                          height: 18,
+                                          child: CircularProgressIndicator(strokeWidth: 2),
+                                        )
+                                      : const Text('Grant permission'),
+                                ),
+                                const SizedBox(height: 12),
+                              ],
+                            )
+                          : const SizedBox.shrink(),
+                    ),
+                    // ── Enter button — enabled only when permission granted ─
+                    OnboardingActionButton(
+                      label: 'Enter',
+                      enabled: _granted,
+                      onPressed: _continueToApp,
+                      loadingDuration: const Duration(seconds: 5),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 18),
-                Text(
-                  'Storage Access Needed',
-                  style: theme.textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  'DropNet needs access to your device storage to save received files and to share files from your device. The app works completely offline and does not collect or upload your data.',
-                  style: theme.textTheme.bodyMedium,
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 20),
-                FilledButton(
-                  onPressed: _checking ? null : _requestPermission,
-                  child: _checking
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Text('Grant permission'),
-                ),
-                const SizedBox(height: 8),
-                const SizedBox(height: 8),
-                FilledButton.tonal(
-                  onPressed: _granted ? _continueToApp : null,
-                  child: const Text('Continue'),
-                ),
-              ],
+              ),
             ),
           ),
-        ),
+        ],
       ),
     );
   }
