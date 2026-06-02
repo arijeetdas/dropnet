@@ -49,7 +49,9 @@ class MainActivity : FlutterFragmentActivity() {
 	private val pendingSharedFilePaths = mutableListOf<String>()
 	private val pendingSharedTexts = mutableListOf<String>()
 	private var pendingSafPickResult: MethodChannel.Result? = null
+	private var pendingFilePickResult: MethodChannel.Result? = null
 	private lateinit var openDocumentTreeLauncher: ActivityResultLauncher<Intent>
+	private lateinit var filePickerLauncher: ActivityResultLauncher<Intent>
 	private val mainThreadHandler = Handler(Looper.getMainLooper())
 	private val appsExecutor = Executors.newSingleThreadExecutor()
 
@@ -86,6 +88,34 @@ class MainActivity : FlutterFragmentActivity() {
 					"name" to displayName,
 				)
 			)
+		}
+		filePickerLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { activityResult ->
+			val result = pendingFilePickResult
+			pendingFilePickResult = null
+			if (result == null) {
+				return@registerForActivityResult
+			}
+
+			if (activityResult.resultCode != RESULT_OK) {
+				result.success(null)
+				return@registerForActivityResult
+			}
+
+			val clipData = activityResult.data?.clipData
+			val dataUri = activityResult.data?.data
+			val paths = mutableListOf<String>()
+
+			if (clipData != null) {
+				for (i in 0 until clipData.itemCount) {
+					clipData.getItemAt(i).uri?.let { uri ->
+						resolveShareUriToPath(uri)?.let(paths::add)
+					}
+				}
+			} else if (dataUri != null) {
+				resolveShareUriToPath(dataUri)?.let(paths::add)
+			}
+
+			result.success(paths)
 		}
 	}
 
@@ -182,6 +212,73 @@ class MainActivity : FlutterFragmentActivity() {
 						}
 						val opened = runCatching { openFileExternally(path) }.getOrDefault(false)
 						result.success(opened)
+					}
+
+					"pickGalleryMedia" -> {
+						android.util.Log.d("DropNetNative", "[DropNetNative] pickGalleryMedia invoked")
+						if (pendingFilePickResult != null) {
+							android.util.Log.w("DropNetNative", "[DropNetNative] pickGalleryMedia error: Another file picker is already open")
+							result.error("PICK_IN_PROGRESS", "Another file picker is already open.", null)
+							return@setMethodCallHandler
+						}
+						pendingFilePickResult = result
+						try {
+							var intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+								android.util.Log.d("DropNetNative", "[DropNetNative] Creating ACTION_PICK_IMAGES intent")
+								Intent(MediaStore.ACTION_PICK_IMAGES).apply {
+									putExtra(MediaStore.EXTRA_PICK_IMAGES_MAX, 100)
+								}
+							} else {
+								android.util.Log.d("DropNetNative", "[DropNetNative] Creating ACTION_PICK intent")
+								Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI).apply {
+									type = "image/*"
+									putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("image/*", "video/*"))
+									putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+								}
+							}
+							android.util.Log.d("DropNetNative", "[DropNetNative] Launching media picker activity")
+							filePickerLauncher.launch(intent)
+						} catch (e: Exception) {
+							android.util.Log.e("DropNetNative", "[DropNetNative] Error launching gallery picker: ${e.message}", e)
+							try {
+								android.util.Log.d("DropNetNative", "[DropNetNative] Falling back to ACTION_GET_CONTENT")
+								val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
+									type = "*/*"
+									putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("image/*", "video/*"))
+									putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+								}
+								filePickerLauncher.launch(intent)
+							} catch (e2: Exception) {
+								android.util.Log.e("DropNetNative", "[DropNetNative] Error launching fallback picker: ${e2.message}", e2)
+								pendingFilePickResult = null
+								result.error("LAUNCH_FAILED", "Failed to launch picker: ${e2.message}", null)
+							}
+						}
+					}
+
+					"pickAudio" -> {
+						android.util.Log.d("DropNetNative", "[DropNetNative] pickAudio invoked")
+						if (pendingFilePickResult != null) {
+							android.util.Log.w("DropNetNative", "[DropNetNative] pickAudio error: Another file picker is already open")
+							result.error("PICK_IN_PROGRESS", "Another file picker is already open.", null)
+							return@setMethodCallHandler
+						}
+						pendingFilePickResult = result
+						try {
+							android.util.Log.d("DropNetNative", "[DropNetNative] Creating pickAudio ACTION_GET_CONTENT intent")
+							val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
+								type = "audio/*"
+								putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("audio/*"))
+								putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+								addCategory(Intent.CATEGORY_OPENABLE)
+							}
+							android.util.Log.d("DropNetNative", "[DropNetNative] Launching audio picker activity")
+							filePickerLauncher.launch(intent)
+						} catch (e: Exception) {
+							android.util.Log.e("DropNetNative", "[DropNetNative] Error launching audio picker: ${e.message}", e)
+							pendingFilePickResult = null
+							result.error("LAUNCH_FAILED", "Failed to launch audio picker: ${e.message}", null)
+						}
 					}
 
 					else -> result.notImplemented()

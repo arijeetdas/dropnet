@@ -686,10 +686,10 @@ class _WebModeScreenState extends ConsumerState<WebModeScreen> {
       key: const ValueKey('web-running-state'),
       children: [
         const SizedBox(height: 12),
-        // Active server pulsing node card
+        // Active server pulsing node card (Centrally aligned password and stop button below)
         Container(
           width: double.infinity,
-          padding: const EdgeInsets.all(20),
+          padding: const EdgeInsets.all(24),
           decoration: BoxDecoration(
             color: colorScheme.surfaceContainerLow,
             borderRadius: BorderRadius.circular(28),
@@ -698,9 +698,10 @@ class _WebModeScreenState extends ConsumerState<WebModeScreen> {
             ),
           ),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               Row(
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   _PulsingServerNode(
                     isRunning: true,
@@ -714,66 +715,68 @@ class _WebModeScreenState extends ConsumerState<WebModeScreen> {
                     ),
                   ),
                   const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Web Server is Running',
-                          style: theme.textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.bold,
-                            color: colorScheme.onSurface,
-                          ),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Text(
+                        'Web Server is Running',
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                          color: colorScheme.onSurface,
                         ),
+                      ),
+                      Text(
+                        'Listening on local ports',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              if (web.pin.isNotEmpty) ...[
+                Tooltip(
+                  message: 'Secure PIN Required',
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: colorScheme.secondaryContainer,
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.lock_rounded, size: 14, color: colorScheme.onSecondaryContainer),
+                        const SizedBox(width: 8),
                         Text(
-                          'Listening on local ports',
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: colorScheme.onSurfaceVariant,
+                          'PIN: ${web.pin}',
+                          style: TextStyle(
+                            fontFamily: 'monospace',
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                            color: colorScheme.onSecondaryContainer,
                           ),
                         ),
                       ],
                     ),
                   ),
-                  // Secure PIN Chip
-                  if (web.pin.isNotEmpty) ...[
-                    Tooltip(
-                      message: 'Secure PIN Required',
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: colorScheme.secondaryContainer,
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.lock_rounded, size: 12, color: colorScheme.onSecondaryContainer),
-                            const SizedBox(width: 6),
-                            Text(
-                              web.pin,
-                              style: TextStyle(
-                                fontFamily: 'monospace',
-                                fontWeight: FontWeight.bold,
-                                fontSize: 13,
-                                color: colorScheme.onSecondaryContainer,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                  ],
-                  // Stop button
-                  IconButton.filledTonal(
-                    onPressed: () => ref.read(appControllerProvider.notifier).stopWebShare(),
-                    icon: const Icon(Icons.stop_rounded),
-                    style: IconButton.styleFrom(
-                      backgroundColor: colorScheme.errorContainer.withValues(alpha: 0.7),
-                      foregroundColor: colorScheme.onErrorContainer,
-                    ),
+                ),
+                const SizedBox(height: 16),
+              ],
+              FilledButton.icon(
+                onPressed: () => ref.read(appControllerProvider.notifier).stopWebShare(),
+                icon: const Icon(Icons.stop_rounded),
+                label: const Text('Stop Server', style: TextStyle(fontWeight: FontWeight.bold)),
+                style: FilledButton.styleFrom(
+                  backgroundColor: colorScheme.errorContainer,
+                  foregroundColor: colorScheme.onErrorContainer,
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20),
                   ),
-                ],
+                ),
               ),
             ],
           ),
@@ -806,57 +809,95 @@ class _WebModeScreenState extends ConsumerState<WebModeScreen> {
                   ),
                 ),
                 const SizedBox(height: 16),
-                // One row per adapter URL
+                // One column listing per adapter URL with action buttons below
                 for (final url in (web.urls.isNotEmpty ? web.urls : [web.url]))
                   Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
+                    padding: const EdgeInsets.only(bottom: 12),
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(18),
-                        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.28),
+                        borderRadius: BorderRadius.circular(24),
+                        color: colorScheme.surfaceContainerLow,
                         border: Border.all(
-                          color: colorScheme.outlineVariant.withValues(alpha: 0.3),
+                          color: colorScheme.outlineVariant.withValues(alpha: 0.25),
                         ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.02),
+                            blurRadius: 10,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
                       ),
-                      child: Row(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          Expanded(
-                            child: SingleChildScrollView(
-                              scrollDirection: Axis.horizontal,
-                              child: SelectableText(
-                                url,
-                                style: theme.textTheme.bodyMedium?.copyWith(
-                                  fontFamily: 'monospace',
-                                  fontWeight: FontWeight.w600,
-                                ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                            decoration: BoxDecoration(
+                              color: colorScheme.primary.withValues(alpha: 0.06),
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(
+                                color: colorScheme.primary.withValues(alpha: 0.15),
                               ),
                             ),
-                          ),
-                          const SizedBox(width: 8),
-                          _SmallLinkButton(
-                            icon: Icons.copy_rounded,
-                            tooltip: 'Copy portal link',
-                            onPressed: () async {
-                              await Clipboard.setData(ClipboardData(text: url));
-                              if (!context.mounted) return;
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text('Portal link copied.')),
-                              );
-                            },
-                          ),
-                          _SmallLinkButton(
-                            icon: Icons.qr_code_rounded,
-                            tooltip: 'Show QR Code scanner',
-                            onPressed: () => _showQrDialog(context, url, isDark),
-                          ),
-                          _SmallLinkButton(
-                            icon: Icons.open_in_new_rounded,
-                            tooltip: 'Open locally',
-                            onPressed: () => launchUrl(
-                              Uri.parse(url),
-                              mode: LaunchMode.externalApplication,
+                            child: Row(
+                              children: [
+                                Icon(Icons.language_rounded, size: 16, color: colorScheme.primary),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: SingleChildScrollView(
+                                    scrollDirection: Axis.horizontal,
+                                    child: SelectableText(
+                                      url,
+                                      style: theme.textTheme.bodyMedium?.copyWith(
+                                        fontFamily: 'monospace',
+                                        fontWeight: FontWeight.w700,
+                                        color: colorScheme.primary,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
+                          ),
+                          const SizedBox(height: 14),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            alignment: WrapAlignment.center,
+                            children: [
+                              _ActionLinkButton(
+                                type: ActionLinkButtonType.copy,
+                                icon: Icons.copy_rounded,
+                                label: 'Copy',
+                                tooltip: 'Copy portal link',
+                                onPressed: () async {
+                                  await Clipboard.setData(ClipboardData(text: url));
+                                  if (!context.mounted) return;
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(content: Text('Portal link copied.')),
+                                  );
+                                },
+                              ),
+                              _ActionLinkButton(
+                                type: ActionLinkButtonType.qr,
+                                icon: Icons.qr_code_rounded,
+                                label: 'QR Code',
+                                tooltip: 'Show QR Code scanner',
+                                onPressed: () => _showQrDialog(context, url, isDark),
+                              ),
+                              _ActionLinkButton(
+                                type: ActionLinkButtonType.open,
+                                icon: Icons.open_in_new_rounded,
+                                label: 'Open',
+                                tooltip: 'Open locally in browser',
+                                onPressed: () => launchUrl(
+                                  Uri.parse(url),
+                                  mode: LaunchMode.externalApplication,
+                                ),
+                              ),
+                            ],
                           ),
                         ],
                       ),
@@ -1030,40 +1071,75 @@ class _WebModeScreenState extends ConsumerState<WebModeScreen> {
   }
 }
 
-class _SmallLinkButton extends StatelessWidget {
-  const _SmallLinkButton({
+enum ActionLinkButtonType { copy, qr, open }
+
+class _ActionLinkButton extends StatelessWidget {
+  const _ActionLinkButton({
+    required this.type,
     required this.icon,
+    required this.label,
     required this.tooltip,
     required this.onPressed,
   });
 
+  final ActionLinkButtonType type;
   final IconData icon;
+  final String label;
   final String tooltip;
   final VoidCallback onPressed;
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
+    Color bg;
+    Color fg;
+    BorderSide? side;
+
+    switch (type) {
+      case ActionLinkButtonType.copy:
+        bg = colorScheme.surfaceContainerLow;
+        fg = colorScheme.secondary;
+        side = BorderSide(
+          color: colorScheme.secondary.withValues(alpha: 0.3),
+          width: 1,
+        );
+        break;
+      case ActionLinkButtonType.qr:
+        bg = colorScheme.tertiaryContainer.withValues(alpha: 0.25);
+        fg = colorScheme.tertiary;
+        side = BorderSide(
+          color: colorScheme.tertiary.withValues(alpha: 0.3),
+          width: 1,
+        );
+        break;
+      case ActionLinkButtonType.open:
+        bg = colorScheme.primaryContainer;
+        fg = colorScheme.onPrimaryContainer;
+        side = null;
+        break;
+    }
+
     return Tooltip(
       message: tooltip,
-      child: Container(
-        margin: const EdgeInsets.only(left: 4),
-        decoration: BoxDecoration(
-          color: colorScheme.surface,
-          shape: BoxShape.circle,
-          border: Border.all(
-            color: colorScheme.outlineVariant.withValues(alpha: 0.5),
+      child: OutlinedButton.icon(
+        icon: Icon(icon, size: 16, color: fg),
+        label: Text(
+          label,
+          style: theme.textTheme.labelMedium?.copyWith(
+            fontWeight: FontWeight.bold,
+            color: fg,
           ),
         ),
-        child: IconButton(
-          icon: Icon(icon, size: 16),
-          color: colorScheme.primary,
-          onPressed: onPressed,
-          constraints: const BoxConstraints(
-            minWidth: 32,
-            minHeight: 32,
+        onPressed: onPressed,
+        style: OutlinedButton.styleFrom(
+          side: side,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
           ),
-          padding: EdgeInsets.zero,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          backgroundColor: bg,
         ),
       ),
     );

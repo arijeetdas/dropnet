@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:ui';
 
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_picker/file_picker.dart';
@@ -13,6 +14,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../core/platform/android_installed_apps_service.dart';
+import '../../core/platform/media_store_service.dart';
 import '../../core/networking/temporary_link_share_service.dart';
 import '../../core/state/app_state.dart';
 import '../../core/utils/dialog_utils.dart';
@@ -23,7 +25,7 @@ import '../../widgets/pairing_code_dialog.dart';
 import '../../widgets/tab_shell_scope.dart';
 import '../../widgets/expressive_loader.dart';
 
-enum _MediaPickKind { photos, videos, audio }
+enum _MediaPickKind { media, audio }
 
 class SendFilesScreen extends ConsumerStatefulWidget {
   const SendFilesScreen({
@@ -40,65 +42,7 @@ class SendFilesScreen extends ConsumerStatefulWidget {
 }
 
 class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
-  static const Set<String> _imageExtensions = {
-    'jpg',
-    'jpeg',
-    'png',
-    'gif',
-    'webp',
-    'bmp',
-    'heic',
-    'heif',
-    'tiff',
-    'tif',
-    'svg',
-    'ico',
-    'avif',
-    'raw',
-    'cr2',
-    'nef',
-    'dng',
-  };
 
-  static const Set<String> _videoExtensions = {
-    'mp4',
-    'mov',
-    'avi',
-    'mkv',
-    'wmv',
-    'flv',
-    'webm',
-    'm4v',
-    '3gp',
-    '3g2',
-    'ts',
-    'mts',
-    'm2ts',
-    'vob',
-    'ogv',
-    'rm',
-    'rmvb',
-  };
-
-  static const Set<String> _audioExtensions = {
-    'mp3',
-    'aac',
-    'flac',
-    'wav',
-    'ogg',
-    'm4a',
-    'wma',
-    'opus',
-    'aiff',
-    'aif',
-    'alac',
-    'ape',
-    'mid',
-    'midi',
-    'amr',
-    'ac3',
-    'dts',
-  };
 
   final List<_SelectedFile> _files = [];
   final Set<String> _selectedTargets = <String>{};
@@ -1595,6 +1539,19 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
       return;
     }
 
+    if (!kIsWeb && Platform.isAndroid) {
+      final List<String>? paths;
+      if (mediaKind == _MediaPickKind.media) {
+        paths = await const MediaStoreService().pickMedia();
+      } else {
+        paths = await const MediaStoreService().pickAudio();
+      }
+      if (paths != null && paths.isNotEmpty) {
+        await _addPaths(paths);
+      }
+      return;
+    }
+
     final pickerConfig = _pickerConfigForMediaKind(mediaKind);
 
     final result = await FilePicker.platform.pickFiles(
@@ -1608,57 +1565,138 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
     }
 
     final picked = result.paths.whereType<String>().toList(growable: false);
-    final allowed = picked
-        .where((path) => _isAllowedMediaPath(path, mediaKind))
-        .toList(growable: false);
-    final filteredCount = picked.length - allowed.length;
-
-    if (allowed.isNotEmpty) {
-      await _addPaths(allowed);
+    if (picked.isNotEmpty) {
+      await _addPaths(picked);
     }
-
-    if (!mounted || filteredCount <= 0) {
-      return;
-    }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          '$filteredCount ${_mediaKindLabel(mediaKind).toLowerCase()} file(s) were skipped.',
-        ),
-      ),
-    );
   }
 
   Future<_MediaPickKind?> _askMediaType() async {
-    return showModalBottomSheet<_MediaPickKind>(
-      context: context,
-      showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.photo_library_rounded),
-              title: const Text('Photos'),
-              subtitle: const Text('Images only'),
-              onTap: () => Navigator.of(context).pop(_MediaPickKind.photos),
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
+    return showGeneralDialog<_MediaPickKind>(
+      context: Navigator.of(context, rootNavigator: true).context,
+      barrierDismissible: true,
+      barrierLabel: 'Select Media Type',
+      barrierColor: Colors.black.withValues(alpha: 0.45),
+      transitionDuration: const Duration(milliseconds: 350),
+      pageBuilder: (context, anim1, anim2) => const SizedBox.shrink(),
+      transitionBuilder: (context, anim1, anim2, child) {
+        final slideCurve = CurvedAnimation(parent: anim1, curve: Curves.easeOutCubic);
+        final blurCurve = CurvedAnimation(parent: anim1, curve: Curves.easeInOut);
+
+        return BackdropFilter(
+          filter: ImageFilter.blur(
+            sigmaX: blurCurve.value * 8,
+            sigmaY: blurCurve.value * 8,
+          ),
+          child: SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(0, 1),
+              end: Offset.zero,
+            ).animate(slideCurve),
+            child: FadeTransition(
+              opacity: anim1,
+              child: Align(
+                alignment: Alignment.bottomCenter,
+                child: Material(
+                  color: Colors.transparent,
+                  child: SafeArea(
+                    child: Container(
+                      width: double.infinity,
+                      constraints: const BoxConstraints(maxWidth: 600),
+                      margin: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.surfaceContainerHigh,
+                        borderRadius: BorderRadius.circular(28),
+                        border: Border.all(
+                          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.35),
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.15),
+                            blurRadius: 24,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.all(8),
+                                  decoration: BoxDecoration(
+                                    color: colorScheme.primaryContainer.withValues(alpha: 0.4),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Icon(
+                                    Icons.perm_media_rounded,
+                                    color: colorScheme.primary,
+                                  ),
+                                ),
+                                const SizedBox(width: 14),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Select Content Type',
+                                        style: theme.textTheme.titleLarge?.copyWith(
+                                          fontWeight: FontWeight.w800,
+                                          color: colorScheme.onSurface,
+                                          letterSpacing: -0.5,
+                                        ),
+                                      ),
+                                      Text(
+                                        'Choose the type of media to share',
+                                        style: theme.textTheme.bodySmall?.copyWith(
+                                          color: colorScheme.onSurfaceVariant,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 20),
+                            _MediaOptionCard(
+                              icon: Icons.photo_library_rounded,
+                              title: 'Photos & Videos',
+                              subtitle: 'Select images and videos from your gallery',
+                              gradient: LinearGradient(
+                                colors: [Colors.purple.shade400, Colors.deepPurple.shade600],
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                              ),
+                              onTap: () => Navigator.of(context).pop(_MediaPickKind.media),
+                            ),
+                            _MediaOptionCard(
+                              icon: Icons.audiotrack_rounded,
+                              title: 'Audio',
+                              subtitle: 'Select audio tracks or music files',
+                              gradient: LinearGradient(
+                                colors: [Colors.blue.shade400, Colors.indigo.shade600],
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                              ),
+                              onTap: () => Navigator.of(context).pop(_MediaPickKind.audio),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
             ),
-            ListTile(
-              leading: const Icon(Icons.videocam_rounded),
-              title: const Text('Videos'),
-              subtitle: const Text('Video files only'),
-              onTap: () => Navigator.of(context).pop(_MediaPickKind.videos),
-            ),
-            ListTile(
-              leading: const Icon(Icons.music_note_rounded),
-              title: const Text('Audio'),
-              subtitle: const Text('Music and sound files only'),
-              onTap: () => Navigator.of(context).pop(_MediaPickKind.audio),
-            ),
-            const SizedBox(height: 8),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 
@@ -1666,47 +1704,22 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
     _MediaPickKind kind,
   ) {
     switch (kind) {
-      case _MediaPickKind.photos:
-        return (type: FileType.image, allowedExtensions: null);
-      case _MediaPickKind.videos:
-        return (
-          type: FileType.custom,
-          allowedExtensions: _videoExtensions.toList(growable: false),
-        );
+      case _MediaPickKind.media:
+        if (!kIsWeb && Platform.isWindows) {
+          return (
+            type: FileType.custom,
+            allowedExtensions: const [
+              'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'heic', 'heif',
+              'tiff', 'tif', 'svg', 'ico', 'avif', 'mp4', 'mov', 'avi',
+              'mkv', 'wmv', 'flv', 'webm', 'm4v', '3gp', '3g2', 'ts',
+              'mts', 'm2ts', 'vob', 'ogv',
+            ],
+          );
+        }
+        return (type: FileType.media, allowedExtensions: null);
       case _MediaPickKind.audio:
-        return (
-          type: FileType.custom,
-          allowedExtensions: _audioExtensions.toList(growable: false),
-        );
+        return (type: FileType.audio, allowedExtensions: null);
     }
-  }
-
-  Set<String> _allowedMediaExtensionsFor(_MediaPickKind kind) {
-    switch (kind) {
-      case _MediaPickKind.photos:
-        return _imageExtensions;
-      case _MediaPickKind.videos:
-        return _videoExtensions;
-      case _MediaPickKind.audio:
-        return _audioExtensions;
-    }
-  }
-
-  String _mediaKindLabel(_MediaPickKind kind) {
-    switch (kind) {
-      case _MediaPickKind.photos:
-        return 'Photo';
-      case _MediaPickKind.videos:
-        return 'Video';
-      case _MediaPickKind.audio:
-        return 'Audio';
-    }
-  }
-
-  bool _isAllowedMediaPath(String path, _MediaPickKind kind) {
-    final ext = p.extension(path).toLowerCase().replaceFirst('.', '');
-    final allowed = _allowedMediaExtensionsFor(kind);
-    return ext.isNotEmpty && allowed.contains(ext);
   }
 
   Future<void> _pickApk() async {
@@ -3463,6 +3476,97 @@ class _SmallLinkButton extends StatelessWidget {
               ),
               child: Icon(icon, size: 16, color: colorScheme.onSurfaceVariant),
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MediaOptionCard extends StatelessWidget {
+  const _MediaOptionCard({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.gradient,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final Gradient gradient;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
+    return Card(
+      elevation: 0,
+      margin: const EdgeInsets.symmetric(vertical: 8),
+      color: colorScheme.surfaceContainerLow,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(24),
+        side: BorderSide(
+          color: colorScheme.outlineVariant.withValues(alpha: 0.25),
+        ),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              Container(
+                width: 52,
+                height: 52,
+                decoration: BoxDecoration(
+                  gradient: gradient,
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: gradient.colors.first.withValues(alpha: 0.25),
+                      blurRadius: 10,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: Icon(
+                  icon,
+                  color: Colors.white,
+                  size: 24,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        color: colorScheme.onSurface,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      subtitle,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(
+                Icons.chevron_right_rounded,
+                color: colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+              ),
+            ],
           ),
         ),
       ),
