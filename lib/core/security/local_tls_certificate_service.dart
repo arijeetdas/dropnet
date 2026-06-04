@@ -13,19 +13,52 @@ class LocalTlsCertificateService {
   static const _privateKeyFileName = 'dropnet_local_key.pem';
   static const _metaFileName = 'dropnet_local_cert_meta.json';
 
+  Future<void> _deleteExistingMaterial() async {
+    try {
+      final directory = await _certificateDirectory();
+      final certificate = File(p.join(directory.path, _certificateFileName));
+      final privateKey = File(p.join(directory.path, _privateKeyFileName));
+      final meta = File(p.join(directory.path, _metaFileName));
+      if (await certificate.exists()) {
+        await certificate.delete();
+      }
+      if (await privateKey.exists()) {
+        await privateKey.delete();
+      }
+      if (await meta.exists()) {
+        await meta.delete();
+      }
+    } catch (_) {}
+  }
+
   Future<SecurityContext> createServerContext({
     required String commonName,
     required List<String> subjectAlternativeNames,
   }) async {
-    final material = await _loadOrCreateMaterial(
-      commonName: commonName,
-      subjectAlternativeNames: subjectAlternativeNames,
-    );
+    try {
+      final material = await _loadOrCreateMaterial(
+        commonName: commonName,
+        subjectAlternativeNames: subjectAlternativeNames,
+      );
 
-    final context = SecurityContext();
-    context.useCertificateChain(material.certificate.path);
-    context.usePrivateKey(material.privateKey.path);
-    return context;
+      final context = SecurityContext();
+      context.useCertificateChain(material.certificate.path);
+      context.usePrivateKey(material.privateKey.path);
+      return context;
+    } catch (e) {
+      // Catch KEY_VALUES_MISMATCH or other TlsExceptions and heal by regenerating
+      await _deleteExistingMaterial();
+
+      final material = await _loadOrCreateMaterial(
+        commonName: commonName,
+        subjectAlternativeNames: subjectAlternativeNames,
+      );
+
+      final context = SecurityContext();
+      context.useCertificateChain(material.certificate.path);
+      context.usePrivateKey(material.privateKey.path);
+      return context;
+    }
   }
 
   Future<String> readCertificateSha256Fingerprint({

@@ -43,3 +43,9 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Linux packaging / WSL files
+/AppDir/
+/deb_pkg/
+/*.AppImage
+/*.deb

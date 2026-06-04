@@ -179,7 +179,7 @@ static gboolean my_application_local_command_line(GApplication* application,
       continue;
     }
 
-    if (g_file_test(raw, G_FILE_TEST_EXISTS | G_FILE_TEST_IS_REGULAR)) {
+    if (g_file_test(raw, static_cast<GFileTest>(G_FILE_TEST_EXISTS | G_FILE_TEST_IS_REGULAR))) {
       g_autofree gchar* canonical = g_canonicalize_filename(raw, nullptr);
       if (canonical == nullptr || *canonical == '\0') {
         continue;

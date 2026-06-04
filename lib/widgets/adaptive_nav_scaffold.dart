@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:flutter_dynamic_icon_plus/flutter_dynamic_icon_plus.dart';
 
 import '../core/networking/tcp_transfer_service.dart';
 import '../core/state/app_state.dart';
@@ -349,11 +350,37 @@ class AdaptiveNavScaffold extends ConsumerWidget {
     context.go(_items[index].route);
   }
 
-  Future<void> _showInfoDialog(BuildContext context, AppState state) {
+  Future<void> _showInfoDialog(BuildContext context, AppState state) async {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final name = state.localDeviceName.trim().isEmpty ? 'DropNet Device' : state.localDeviceName;
     final manufacturer = state.localDeviceManufacturer.trim();
+
+    String activeIconAsset = 'assets/icon/app_icon.png';
+    if (!kIsWeb && Platform.isAndroid) {
+      String? currentAlias;
+      try {
+        currentAlias = await FlutterDynamicIconPlus.alternateIconName.timeout(
+          const Duration(milliseconds: 500),
+          onTimeout: () => null,
+        );
+      } catch (_) {}
+      currentAlias ??= 'com.dropnet.MainActivityIcon1';
+
+      const iconsData = [
+        (asset: 'assets/icon/app_icon_1/foreground.png', alias: 'com.dropnet.MainActivityIcon1'),
+        (asset: 'assets/icon/app_icon_2/foreground.png', alias: 'com.dropnet.MainActivityIcon2'),
+        (asset: 'assets/icon/app_icon_3/foreground.png', alias: 'com.dropnet.MainActivityIcon3'),
+        (asset: 'assets/icon/app_icon_4/foreground.png', alias: 'com.dropnet.MainActivityIcon4'),
+        (asset: 'assets/icon/app_icon_5/foreground.png', alias: 'com.dropnet.MainActivityIcon5'),
+      ];
+
+      int activeIndex = iconsData.indexWhere((e) => e.alias == currentAlias);
+      if (activeIndex == -1) activeIndex = 0;
+      activeIconAsset = iconsData[activeIndex].asset;
+    }
+
+    if (!context.mounted) return;
 
     return showGeneralDialog<void>(
       context: context,
@@ -381,7 +408,7 @@ class AdaptiveNavScaffold extends ConsumerWidget {
                   ),
                   backgroundColor: colorScheme.surface,
                   elevation: 6,
-                  titlePadding: const EdgeInsets.fromLTRB(24, 28, 24, 16),
+                  titlePadding: const EdgeInsets.fromLTRB(24, 4, 24, 24),
                   contentPadding: const EdgeInsets.symmetric(horizontal: 24),
                   actionsPadding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
                   icon: Container(
@@ -390,8 +417,8 @@ class AdaptiveNavScaffold extends ConsumerWidget {
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
                         colors: [
-                          colorScheme.primaryContainer,
-                          colorScheme.primaryContainer.withValues(alpha: 0.5),
+                          colorScheme.primary,
+                          colorScheme.primary.withValues(alpha: 0.5),
                         ],
                         begin: Alignment.topLeft,
                         end: Alignment.bottomRight,
@@ -405,10 +432,15 @@ class AdaptiveNavScaffold extends ConsumerWidget {
                         ),
                       ],
                     ),
-                    child: Icon(
-                      Icons.devices_other_rounded,
-                      color: colorScheme.onPrimaryContainer,
-                      size: 32,
+                    child: Center(
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: Image.asset(
+                          activeIconAsset,
+                          width: 44,
+                          height: 44,
+                        ),
+                      ),
                     ),
                   ),
                   title: Text(

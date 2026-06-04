@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
@@ -6,9 +7,11 @@ import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:flutter_dynamic_icon_plus/flutter_dynamic_icon_plus.dart';
 
 import '../../models/trusted_peer_model.dart';
 import '../../core/state/app_state.dart';
+import '../../core/utils/dialog_utils.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -506,6 +509,34 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                           }).toList(),
                         ),
                       ],
+                      if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) ...[
+                        const SizedBox(height: 16),
+                        _SettingsDivider(),
+                        const SizedBox(height: 16),
+                        Text(
+                          'App Icon',
+                          style: theme.textTheme.labelLarge?.copyWith(
+                            fontWeight: FontWeight.bold,
+                            color: colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Customize the app launcher icon. Applying changes will restart the application automatically.',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          width: double.infinity,
+                          child: FilledButton.tonalIcon(
+                            onPressed: () => _showAppIconPickerDialog(context),
+                            icon: const Icon(Icons.category_rounded),
+                            label: const Text('Change App Icon'),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -576,60 +607,37 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   Center(
                     child: Column(
                       children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                          decoration: BoxDecoration(
-                            color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
-                            borderRadius: BorderRadius.circular(20),
-                            border: Border.all(color: colorScheme.outlineVariant.withValues(alpha: 0.3)),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.info_outline_rounded, size: 15, color: colorScheme.onSurfaceVariant),
-                              const SizedBox(width: 6),
-                              Text(
-                                'DropNet v$_appVersion',
-                                style: theme.textTheme.labelSmall?.copyWith(color: colorScheme.onSurfaceVariant),
-                              ),
-                            ],
-                          ),
-                        ),
-                        if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) ...[
-                          () {
-                            final abis = state.localDeviceCpuArchitecture
-                                .split(',')
-                                .map((e) => e.trim())
-                                .where((e) => e.isNotEmpty)
-                                .toList();
-                            if (abis.isNotEmpty) {
-                              final bestAbi = abis.first;
-                              final installedType = state.installedApkType.isNotEmpty ? state.installedApkType : 'universal';
-                              return Padding(
-                                padding: const EdgeInsets.only(top: 8, bottom: 4),
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Text(
-                                      'Best supported ABI: $bestAbi',
-                                      style: theme.textTheme.bodySmall?.copyWith(
-                                        color: colorScheme.onSurfaceVariant.withValues(alpha: 0.8),
-                                      ),
-                                    ),
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      'Installed type: $installedType',
-                                      style: theme.textTheme.bodySmall?.copyWith(
-                                        color: colorScheme.onSurfaceVariant.withValues(alpha: 0.8),
-                                      ),
-                                    ),
-                                  ],
+                        () {
+                          final isAndroid = !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+                          final versionWidget = Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(color: colorScheme.outlineVariant.withValues(alpha: 0.3)),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.info_outline_rounded, size: 15, color: colorScheme.onSurfaceVariant),
+                                const SizedBox(width: 6),
+                                Text(
+                                  'DropNet v$_appVersion',
+                                  style: theme.textTheme.labelSmall?.copyWith(color: colorScheme.onSurfaceVariant),
                                 ),
-                              );
-                            }
-                            return const SizedBox.shrink();
-                          }(),
-                        ],
+                              ],
+                            ),
+                          );
+
+                          if (isAndroid) {
+                            return InkWell(
+                              onTap: () => _showBuildTypeDetailsDialog(context),
+                              borderRadius: BorderRadius.circular(20),
+                              child: versionWidget,
+                            );
+                          }
+                          return versionWidget;
+                        }(),
                         const SizedBox(height: 6),
                         Text(
                           'Developed by Arijeet Das',
@@ -644,6 +652,563 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  Future<void> _showBuildTypeDetailsDialog(BuildContext context) async {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final state = ref.read(appControllerProvider);
+
+    // Fetch current app icon alias
+    String? currentAlias;
+    try {
+      currentAlias = await FlutterDynamicIconPlus.alternateIconName.timeout(
+        const Duration(milliseconds: 500),
+        onTimeout: () => null,
+      );
+    } catch (_) {}
+    currentAlias ??= 'com.dropnet.MainActivityIcon1';
+
+    const iconsData = [
+      (name: 'Default', asset: 'assets/icon/app_icon_1/foreground.png', alias: 'com.dropnet.MainActivityIcon1'),
+      (name: 'Yellow', asset: 'assets/icon/app_icon_2/foreground.png', alias: 'com.dropnet.MainActivityIcon2'),
+      (name: 'Blue', asset: 'assets/icon/app_icon_3/foreground.png', alias: 'com.dropnet.MainActivityIcon3'),
+      (name: 'Glass Y', asset: 'assets/icon/app_icon_4/foreground.png', alias: 'com.dropnet.MainActivityIcon4'),
+      (name: 'Glass G', asset: 'assets/icon/app_icon_5/foreground.png', alias: 'com.dropnet.MainActivityIcon5'),
+    ];
+
+    int activeIndex = iconsData.indexWhere((e) => e.alias == currentAlias);
+    if (activeIndex == -1) activeIndex = 0;
+    final activeIconAsset = iconsData[activeIndex].asset;
+
+    final abis = state.localDeviceCpuArchitecture
+        .split(',')
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+    final bestAbi = abis.isNotEmpty ? abis.first : 'unknown';
+    final rawInstalledType = state.installedApkType.isNotEmpty ? state.installedApkType : 'universal';
+
+    // Normalize installedType typography
+    String installedType = 'Universal';
+    if (rawInstalledType == 'arm-v8a' || rawInstalledType == 'arm64-v8a') {
+      installedType = 'arm64-v8a';
+    } else if (rawInstalledType == 'arm-v7a' || rawInstalledType == 'armeabi-v7a') {
+      installedType = 'armeabi-v7a';
+    } else if (rawInstalledType == 'x86_64') {
+      installedType = 'x86_64';
+    } else if (rawInstalledType == 'x86') {
+      installedType = 'x86';
+    } else if (rawInstalledType == 'universal') {
+      installedType = 'Universal';
+    } else {
+      installedType = rawInstalledType.isNotEmpty
+          ? rawInstalledType[0].toUpperCase() + rawInstalledType.substring(1)
+          : 'Universal';
+    }
+
+    // Map bestAbi to recommended type string
+    String recommendedType = 'Universal';
+    if (bestAbi == 'arm64-v8a') {
+      recommendedType = 'arm64-v8a';
+    } else if (bestAbi == 'armeabi-v7a') {
+      recommendedType = 'armeabi-v7a';
+    } else if (bestAbi == 'x86_64') {
+      recommendedType = 'x86_64';
+    } else if (bestAbi == 'x86') {
+      recommendedType = 'x86';
+    }
+
+    final isUsingRecommended = installedType == recommendedType && installedType != 'Universal';
+
+    if (!context.mounted) return;
+
+    await showDropNetDialog<void>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(32),
+          ),
+          backgroundColor: colorScheme.surface,
+          elevation: 6,
+          titlePadding: const EdgeInsets.fromLTRB(24, 4, 24, 24),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 24),
+          actionsPadding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+          icon: Container(
+            width: 68,
+            height: 68,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  colorScheme.primary,
+                  colorScheme.primary.withValues(alpha: 0.5),
+                ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: colorScheme.primary.withValues(alpha: 0.15),
+                  blurRadius: 16,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Center(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Image.asset(
+                  activeIconAsset,
+                  width: 44,
+                  height: 44,
+                ),
+              ),
+            ),
+          ),
+          title: Text(
+            'DropNet v$_appVersion',
+            style: theme.textTheme.headlineSmall?.copyWith(
+              fontWeight: FontWeight.w800,
+              color: colorScheme.onSurface,
+              letterSpacing: -0.5,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: colorScheme.surfaceContainerLow,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: colorScheme.outlineVariant.withValues(alpha: 0.3),
+                          ),
+                        ),
+                        child: Column(
+                          children: [
+                            Text(
+                              'Installed Type',
+                              style: theme.textTheme.labelMedium?.copyWith(
+                                color: colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              installedType,
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.bold,
+                                color: colorScheme.onSurface,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: isUsingRecommended
+                              ? colorScheme.primaryContainer.withValues(alpha: 0.3)
+                              : colorScheme.surfaceContainerLow,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: isUsingRecommended
+                                ? colorScheme.primary.withValues(alpha: 0.5)
+                                : colorScheme.outlineVariant.withValues(alpha: 0.3),
+                            width: isUsingRecommended ? 1.5 : 1,
+                          ),
+                        ),
+                        child: Column(
+                          children: [
+                            Text(
+                              'Recommended',
+                              style: theme.textTheme.labelMedium?.copyWith(
+                                color: isUsingRecommended
+                                    ? colorScheme.primary
+                                    : colorScheme.onSurfaceVariant,
+                                fontWeight: isUsingRecommended ? FontWeight.bold : FontWeight.normal,
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              recommendedType,
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.bold,
+                                color: isUsingRecommended
+                                    ? colorScheme.primary
+                                    : colorScheme.onSurface,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: isUsingRecommended
+                        ? const Color(0xFF10B981).withValues(alpha: 0.08)
+                        : colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+                    borderRadius: BorderRadius.circular(24),
+                    border: Border.all(
+                      color: isUsingRecommended
+                          ? const Color(0xFF10B981).withValues(alpha: 0.2)
+                          : colorScheme.outlineVariant.withValues(alpha: 0.2),
+                    ),
+                  ),
+                  child: Column(
+                    children: [
+                      if (isUsingRecommended) ...[
+                        const Icon(Icons.stars_rounded, color: Color(0xFF10B981), size: 28),
+                        const SizedBox(height: 10),
+                        Text(
+                          'Congratulations! You are using the build optimized specifically for your device\'s architecture ($bestAbi). This ensures the smallest download size, minimal storage usage, and maximum performance.',
+                          textAlign: TextAlign.center,
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: colorScheme.onSurface,
+                            height: 1.4,
+                          ),
+                        ),
+                      ] else ...[
+                        Icon(Icons.info_outline_rounded, color: colorScheme.primary, size: 28),
+                        const SizedBox(height: 10),
+                        Text(
+                          'We recommend switching to the $recommendedType build because it is optimized for your device\'s $bestAbi architecture. The Universal build contains library support for multiple processor types, making it much larger in download and install size.',
+                          textAlign: TextAlign.center,
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: colorScheme.onSurface,
+                            height: 1.4,
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 16),
+                      Divider(color: colorScheme.outlineVariant.withValues(alpha: 0.3)),
+                      const SizedBox(height: 12),
+                      Text(
+                        'Thank you for using DropNet!',
+                        textAlign: TextAlign.center,
+                        style: theme.textTheme.labelMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: () => Navigator.of(context).pop(),
+                style: FilledButton.styleFrom(
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                ),
+                child: const Text(
+                  'Close',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _showAppIconPickerDialog(BuildContext context) async {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
+    String? currentAlias;
+    try {
+      currentAlias = await FlutterDynamicIconPlus.alternateIconName.timeout(
+        const Duration(milliseconds: 500),
+        onTimeout: () => null,
+      );
+    } catch (_) {}
+
+    // Map null or any unknown alias to the default Icon 1
+    currentAlias ??= 'com.dropnet.MainActivityIcon1';
+
+    const iconsData = [
+      (name: 'Default', asset: 'assets/icon/app_icon_1/foreground.png', alias: 'com.dropnet.MainActivityIcon1'),
+      (name: 'Yellow', asset: 'assets/icon/app_icon_2/foreground.png', alias: 'com.dropnet.MainActivityIcon2'),
+      (name: 'Blue', asset: 'assets/icon/app_icon_3/foreground.png', alias: 'com.dropnet.MainActivityIcon3'),
+      (name: 'Glass Y', asset: 'assets/icon/app_icon_4/foreground.png', alias: 'com.dropnet.MainActivityIcon4'),
+      (name: 'Glass G', asset: 'assets/icon/app_icon_5/foreground.png', alias: 'com.dropnet.MainActivityIcon5'),
+    ];
+
+    int initialIndex = iconsData.indexWhere((e) => e.alias == currentAlias);
+    if (initialIndex == -1) initialIndex = 0;
+
+    int selectedIndex = initialIndex;
+
+    if (!context.mounted) return;
+
+    await showDropNetDialog<void>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            final isChanged = selectedIndex != initialIndex;
+            final activeIcon = iconsData[initialIndex];
+
+            return AlertDialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(32),
+              ),
+              backgroundColor: colorScheme.surface,
+              elevation: 6,
+              titlePadding: const EdgeInsets.fromLTRB(24, 28, 24, 12),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 24),
+              actionsPadding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+              icon: Container(
+                width: 68,
+                height: 68,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      colorScheme.primary,
+                      colorScheme.primary.withValues(alpha: 0.5),
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: colorScheme.primary.withValues(alpha: 0.15),
+                      blurRadius: 16,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: Icon(
+                  Icons.category_rounded,
+                  color: colorScheme.onPrimary,
+                  size: 32,
+                ),
+              ),
+              title: Text(
+                'Change App Icon',
+                style: theme.textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w800,
+                  color: colorScheme.onSurface,
+                  letterSpacing: -0.5,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Select a launcher icon below. Applying changes will restart the application automatically.',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 16),
+                    // Current Icon badge
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: colorScheme.primaryContainer.withValues(alpha: 0.5),
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.check_circle_rounded, size: 16, color: colorScheme.primary),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Current: ${activeIcon.name}',
+                            style: theme.textTheme.labelMedium?.copyWith(
+                              color: colorScheme.onPrimaryContainer,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: List.generate((iconsData.length / 3).ceil(), (rowIndex) {
+                        return Padding(
+                          padding: EdgeInsets.only(bottom: rowIndex < (iconsData.length / 3).ceil() - 1 ? 12 : 0),
+                          child: Row(
+                            children: List.generate(3, (colIndex) {
+                              final index = rowIndex * 3 + colIndex;
+                              if (index >= iconsData.length) {
+                                return const Expanded(child: SizedBox.shrink());
+                              }
+                              final item = iconsData[index];
+                              final isSelected = selectedIndex == index;
+                              final isCurrentlyActive = initialIndex == index;
+
+                              return Expanded(
+                                child: Padding(
+                                  padding: EdgeInsets.only(
+                                    left: colIndex == 0 ? 0 : 6,
+                                    right: colIndex == 2 ? 0 : 6,
+                                  ),
+                                  child: GestureDetector(
+                                    onTap: () {
+                                      setState(() {
+                                        selectedIndex = index;
+                                      });
+                                    },
+                                    child: AspectRatio(
+                                      aspectRatio: 0.8,
+                                      child: AnimatedContainer(
+                                        duration: const Duration(milliseconds: 200),
+                                        decoration: BoxDecoration(
+                                          color: isSelected
+                                              ? colorScheme.primaryContainer.withValues(alpha: 0.3)
+                                              : colorScheme.surfaceContainerLow,
+                                          borderRadius: BorderRadius.circular(20),
+                                          border: Border.all(
+                                            color: isSelected
+                                                ? colorScheme.primary
+                                                : colorScheme.outlineVariant.withValues(alpha: 0.4),
+                                            width: isSelected ? 2.5 : 1,
+                                          ),
+                                          boxShadow: isSelected
+                                              ? [
+                                                  BoxShadow(
+                                                    color: colorScheme.primary.withValues(alpha: 0.1),
+                                                    blurRadius: 8,
+                                                    offset: const Offset(0, 4),
+                                                  ),
+                                                ]
+                                              : null,
+                                        ),
+                                        child: Column(
+                                          mainAxisAlignment: MainAxisAlignment.center,
+                                          children: [
+                                            ClipRRect(
+                                              borderRadius: BorderRadius.circular(12),
+                                              child: Image.asset(
+                                                item.asset,
+                                                width: 48,
+                                                height: 48,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 8),
+                                            Padding(
+                                              padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                                              child: Text(
+                                                item.name,
+                                                style: theme.textTheme.labelSmall?.copyWith(
+                                                  fontWeight: isSelected || isCurrentlyActive
+                                                      ? FontWeight.bold
+                                                      : FontWeight.normal,
+                                                  color: isSelected
+                                                      ? colorScheme.primary
+                                                      : colorScheme.onSurface,
+                                                ),
+                                                textAlign: TextAlign.center,
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              );
+                            }),
+                          ),
+                        );
+                      }),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton(
+                        onPressed: isChanged
+                            ? () async {
+                                final state = ref.read(appControllerProvider);
+                                final manufacturer = state.localDeviceManufacturer.trim().isNotEmpty
+                                    ? state.localDeviceManufacturer
+                                    : 'unknown';
+                                
+                                try {
+                                  await FlutterDynamicIconPlus.setAlternateIconName(
+                                    iconName: iconsData[selectedIndex].alias,
+                                    blacklistManufactures: [manufacturer],
+                                    blacklistBrands: [manufacturer],
+                                  );
+                                } catch (_) {}
+                                exit(0);
+                              }
+                            : null,
+                        style: FilledButton.styleFrom(
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                        ),
+                        child: const Text(
+                          'Apply',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        style: OutlinedButton.styleFrom(
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                        ),
+                        child: const Text(
+                          'Close',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 
