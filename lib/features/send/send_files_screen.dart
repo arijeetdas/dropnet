@@ -898,19 +898,19 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
         borderRadius: BorderRadius.circular(20),
         onTap: _sending
             ? null
-            : () => setState(() {
+            : () {
                 if (pairingRequired && !trusted) {
-                  _showMessage(
-                    'Pair this device first to enable secure direct transfers.',
-                  );
+                  _toggleDevicePairing(device, trusted: false);
                   return;
                 }
-                if (selected) {
-                  _selectedTargets.remove(key);
-                } else {
-                  _selectedTargets.add(key);
-                }
-              }),
+                setState(() {
+                  if (selected) {
+                    _selectedTargets.remove(key);
+                  } else {
+                    _selectedTargets.add(key);
+                  }
+                });
+              },
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
           child: Row(
@@ -1280,11 +1280,11 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
 
       bool pairingCompleted = false;
       BuildContext? localDialogContext;
+      bool initiatorCancelledSelf = false;
 
       // Show the pairing code dialog in display mode on Device A (the initiator)
-      final dialogFuture = showDialog<void>(
+      final dialogFuture = showInstantDialog<void>(
         context: context,
-        barrierDismissible: false,
         builder: (context) {
           localDialogContext = context;
           return PairingCodeDialog(
@@ -1297,6 +1297,7 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
 
       unawaited(dialogFuture.then((_) {
         if (!pairingCompleted) {
+          initiatorCancelledSelf = true;
           ref.read(appControllerProvider.notifier).cancelPairing(device.deviceId);
         }
       }));
@@ -1319,6 +1320,10 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
         if (mounted) {
           if (localDialogContext != null && localDialogContext!.mounted) {
             Navigator.of(localDialogContext!).pop(); // Automatically dismiss the display dialog
+          }
+
+          if (initiatorCancelledSelf) {
+            return;
           }
 
           final isCancel = e.toString().contains('rejected') ||
@@ -1511,8 +1516,8 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
       await ref.read(appControllerProvider.notifier).refreshNearbyDevices();
     } finally {
       final elapsed = DateTime.now().difference(startedAt);
-      // Keep the spinner visible for the full 15-second scanning window
-      const minVisible = Duration(seconds: 15);
+      // Keep the spinner visible for a brief moment for responsive UX feedback
+      const minVisible = Duration(seconds: 1);
       if (elapsed < minVisible) {
         await Future<void>.delayed(minVisible - elapsed);
       }

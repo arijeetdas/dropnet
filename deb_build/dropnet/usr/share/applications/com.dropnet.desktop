@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=DropNet
+Comment=Cross-platform file sharing
+Exec=dropnet
+Icon=com.dropnet
+Terminal=false
+Categories=Network;Utility;
+StartupWMClass=com.dropnet

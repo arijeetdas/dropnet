@@ -55,6 +55,8 @@ class DiscoveryService {
   Timer? _pruneTimer;
   final Map<String, DeviceModel> _devices = {};
   bool _identityLoaded = false;
+  String? _cachedLocalIp;
+  DateTime? _lastIpCacheTime;
 
   Stream<List<DeviceModel>> get devicesStream => _devicesController.stream;
   String get deviceName => '$_deviceBaseName #$_deviceNumber';
@@ -207,6 +209,8 @@ class DiscoveryService {
   }
 
   Future<void> refreshNow() async {
+    _cachedLocalIp = null;
+    _lastIpCacheTime = null;
     if (_socket == null) {
       await start();
       return;
@@ -543,9 +547,16 @@ class DiscoveryService {
 
   Future<String> getLocalIp({String? preferredPeerIp}) async {
     final normalizedPeerIp = (preferredPeerIp ?? '').trim();
+    if (normalizedPeerIp.isEmpty && _cachedLocalIp != null && _lastIpCacheTime != null) {
+      if (DateTime.now().difference(_lastIpCacheTime!) < const Duration(seconds: 8)) {
+        return _cachedLocalIp!;
+      }
+    }
+
     final wifiIp = (await _networkInfo.getWifiIP())?.trim() ?? '';
     final interfaces = await _listEligibleIpv4Addresses();
 
+    String result = '';
     if (_isUsableIpv4(normalizedPeerIp)) {
       final sameSubnet = interfaces
           .where((endpoint) {
@@ -554,25 +565,38 @@ class DiscoveryService {
           .toList(growable: false);
       if (sameSubnet.isNotEmpty) {
         sameSubnet.sort(_compareIpv4Endpoints);
-        return sameSubnet.first.address.address;
+        result = sameSubnet.first.address.address;
       }
     }
 
-    if (_isUsableIpv4(wifiIp)) {
+    if (result.isEmpty && _isUsableIpv4(wifiIp)) {
+      bool found = false;
       for (final endpoint in interfaces) {
         if (endpoint.address.address == wifiIp) {
-          return endpoint.address.address;
+          result = endpoint.address.address;
+          found = true;
+          break;
         }
       }
-      return wifiIp;
+      if (!found) {
+        result = wifiIp;
+      }
     }
 
-    if (interfaces.isEmpty) {
-      return '';
+    if (result.isEmpty) {
+      if (interfaces.isEmpty) {
+        result = '';
+      } else {
+        interfaces.sort(_compareIpv4Endpoints);
+        result = interfaces.first.address.address;
+      }
     }
 
-    interfaces.sort(_compareIpv4Endpoints);
-    return interfaces.first.address.address;
+    if (normalizedPeerIp.isEmpty) {
+      _cachedLocalIp = result;
+      _lastIpCacheTime = DateTime.now();
+    }
+    return result;
   }
 
   /// Returns all eligible local IPv4 addresses, sorted by preference
@@ -868,6 +892,9 @@ class DiscoveryService {
   }
 
   Future<void> _refreshTlsFingerprintAndCertificate() async {
+    if (_tlsCertificateFingerprint.isNotEmpty && _tlsCertificatePem.isNotEmpty) {
+      return;
+    }
     try {
       _tlsCertificatePem = await _tlsCertificates.readCertificatePem(
         commonName: _tlsCertCommonName,

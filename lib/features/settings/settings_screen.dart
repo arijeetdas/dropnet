@@ -671,11 +671,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     currentAlias ??= 'com.dropnet.MainActivityIcon1';
 
     const iconsData = [
-      (name: 'Default', asset: 'assets/icon/app_icon_1/foreground.png', alias: 'com.dropnet.MainActivityIcon1'),
-      (name: 'Yellow', asset: 'assets/icon/app_icon_2/foreground.png', alias: 'com.dropnet.MainActivityIcon2'),
-      (name: 'Blue', asset: 'assets/icon/app_icon_3/foreground.png', alias: 'com.dropnet.MainActivityIcon3'),
-      (name: 'Glass Y', asset: 'assets/icon/app_icon_4/foreground.png', alias: 'com.dropnet.MainActivityIcon4'),
-      (name: 'Glass G', asset: 'assets/icon/app_icon_5/foreground.png', alias: 'com.dropnet.MainActivityIcon5'),
+      (name: 'Default', asset: 'assets/icon/app_icons/foreground_1.png', alias: 'com.dropnet.MainActivityIcon1'),
+      (name: 'Yellow', asset: 'assets/icon/app_icons/foreground_2.png', alias: 'com.dropnet.MainActivityIcon2'),
+      (name: 'Glass G', asset: 'assets/icon/app_icons/foreground_3.png', alias: 'com.dropnet.MainActivityIcon3'),
+      (name: 'Glass Y', asset: 'assets/icon/app_icons/foreground_4.png', alias: 'com.dropnet.MainActivityIcon4'),
     ];
 
     int activeIndex = iconsData.indexWhere((e) => e.alias == currentAlias);
@@ -951,11 +950,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     currentAlias ??= 'com.dropnet.MainActivityIcon1';
 
     const iconsData = [
-      (name: 'Default', asset: 'assets/icon/app_icon_1/foreground.png', alias: 'com.dropnet.MainActivityIcon1'),
-      (name: 'Yellow', asset: 'assets/icon/app_icon_2/foreground.png', alias: 'com.dropnet.MainActivityIcon2'),
-      (name: 'Blue', asset: 'assets/icon/app_icon_3/foreground.png', alias: 'com.dropnet.MainActivityIcon3'),
-      (name: 'Glass Y', asset: 'assets/icon/app_icon_4/foreground.png', alias: 'com.dropnet.MainActivityIcon4'),
-      (name: 'Glass G', asset: 'assets/icon/app_icon_5/foreground.png', alias: 'com.dropnet.MainActivityIcon5'),
+      (name: 'Default', asset: 'assets/icon/app_icons/foreground_1.png', alias: 'com.dropnet.MainActivityIcon1'),
+      (name: 'Yellow', asset: 'assets/icon/app_icons/foreground_2.png', alias: 'com.dropnet.MainActivityIcon2'),
+      (name: 'Glass G', asset: 'assets/icon/app_icons/foreground_3.png', alias: 'com.dropnet.MainActivityIcon3'),
+      (name: 'Glass Y', asset: 'assets/icon/app_icons/foreground_4.png', alias: 'com.dropnet.MainActivityIcon4'),
     ];
 
     int initialIndex = iconsData.indexWhere((e) => e.alias == currentAlias);

@@ -368,11 +368,10 @@ class AdaptiveNavScaffold extends ConsumerWidget {
       currentAlias ??= 'com.dropnet.MainActivityIcon1';
 
       const iconsData = [
-        (asset: 'assets/icon/app_icon_1/foreground.png', alias: 'com.dropnet.MainActivityIcon1'),
-        (asset: 'assets/icon/app_icon_2/foreground.png', alias: 'com.dropnet.MainActivityIcon2'),
-        (asset: 'assets/icon/app_icon_3/foreground.png', alias: 'com.dropnet.MainActivityIcon3'),
-        (asset: 'assets/icon/app_icon_4/foreground.png', alias: 'com.dropnet.MainActivityIcon4'),
-        (asset: 'assets/icon/app_icon_5/foreground.png', alias: 'com.dropnet.MainActivityIcon5'),
+        (asset: 'assets/icon/app_icons/foreground_1.png', alias: 'com.dropnet.MainActivityIcon1'),
+        (asset: 'assets/icon/app_icons/foreground_2.png', alias: 'com.dropnet.MainActivityIcon2'),
+        (asset: 'assets/icon/app_icons/foreground_3.png', alias: 'com.dropnet.MainActivityIcon3'),
+        (asset: 'assets/icon/app_icons/foreground_4.png', alias: 'com.dropnet.MainActivityIcon4'),
       ];
 
       int activeIndex = iconsData.indexWhere((e) => e.alias == currentAlias);

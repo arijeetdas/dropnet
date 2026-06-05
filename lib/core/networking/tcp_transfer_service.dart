@@ -51,7 +51,7 @@ class TcpTransferService {
     final Map<String, SecureSocket> _activePairingSockets = {};
   final Map<String, ({bool accepted, DateTime at})> _sessionDecisions = {};
   final Set<String> _canceled = {};
-  SecureServerSocket? _server;
+  ServerSocket? _server;
   String? _saveDirectory;
   int _chunkSize = defaultChunkSize;
   int _speedLimitBytesPerSec = 0;
@@ -92,17 +92,27 @@ class TcpTransferService {
         commonName: _tlsCertCommonName,
         subjectAlternativeNames: _tlsCertSans,
       );
-      _server = await SecureServerSocket.bind(
+      _server = await ServerSocket.bind(
         InternetAddress.anyIPv4,
         port,
-        tlsContext,
         shared: true,
       );
+      _server!.listen((rawSocket) async {
+        rawSocket.setOption(SocketOption.tcpNoDelay, true);
+        try {
+          final secureSocket = await SecureSocket.secureServer(
+            rawSocket,
+            tlsContext,
+          );
+          _handleIncomingSocket(secureSocket);
+        } catch (e) {
+          await rawSocket.close();
+        }
+      });
     } on SocketException {
       _server = null;
       return;
     }
-    _server!.listen(_handleIncomingSocket);
   }
 
   Future<void> stopReceiver() async {
@@ -171,10 +181,15 @@ class TcpTransferService {
     SecureSocket? socket;
     StreamIterator<String>? lineIterator;
     try {
-      socket = await SecureSocket.connect(
+      final rawSocket = await Socket.connect(
         target.ipAddress,
         port,
         timeout: const Duration(seconds: 12),
+      );
+      rawSocket.setOption(SocketOption.tcpNoDelay, true);
+      socket = await SecureSocket.secure(
+        rawSocket,
+        host: target.ipAddress,
         onBadCertificate: (certificate) {
           if (expectedPeerFingerprint.isEmpty) {
             return true;
@@ -251,10 +266,15 @@ class TcpTransferService {
     SecureSocket? socket;
     StreamIterator<String>? lineIterator;
     try {
-      socket = await SecureSocket.connect(
+      final rawSocket = await Socket.connect(
         target.ipAddress,
         port,
         timeout: const Duration(seconds: 12),
+      );
+      rawSocket.setOption(SocketOption.tcpNoDelay, true);
+      socket = await SecureSocket.secure(
+        rawSocket,
+        host: target.ipAddress,
         onBadCertificate: (certificate) {
           return _matchesExpectedCertificateFingerprint(
             certificate,
@@ -389,10 +409,15 @@ class TcpTransferService {
         );
       }
 
-      socket = await SecureSocket.connect(
+      final rawSocket = await Socket.connect(
         target.ipAddress,
         port,
         timeout: const Duration(seconds: 12),
+      );
+      rawSocket.setOption(SocketOption.tcpNoDelay, true);
+      socket = await SecureSocket.secure(
+        rawSocket,
+        host: target.ipAddress,
         onBadCertificate: (certificate) {
           return _matchesExpectedCertificateFingerprint(
             certificate,
@@ -644,7 +669,11 @@ class TcpTransferService {
               final kind = (header['kind']?.toString() ?? '').trim();
               if (kind == 'dropnet_pairing_request') {
                 transferFinalized = true;
-                await _handleIncomingPairingRequest(socket: socket, header: header);
+                await _handleIncomingPairingRequest(
+                  socket: socket,
+                  header: header,
+                  subscription: subscription,
+                );
                 return;
               }
               if (kind == 'dropnet_unpair_request') {
@@ -986,6 +1015,7 @@ class TcpTransferService {
   Future<void> _handleIncomingPairingRequest({
     required Socket socket,
     required Map<String, dynamic> header,
+    required StreamSubscription<List<int>> subscription,
   }) async {
     final requestId = (header['requestId']?.toString() ?? '').trim().isEmpty
         ? _uuid.v4()
@@ -1010,9 +1040,11 @@ class TcpTransferService {
           advertisedSenderFingerprint,
           peerCertificateFingerprint,
         )) {
-      socket.add(utf8.encode('${jsonEncode({'accepted': false})}\n'));
-      await socket.flush();
-      await socket.close();
+      try {
+        socket.add(utf8.encode('${jsonEncode({'accepted': false})}\n'));
+        await socket.flush();
+        await socket.close();
+      } catch (_) {}
       return;
     }
 
@@ -1023,9 +1055,11 @@ class TcpTransferService {
     if (fromDeviceId.isEmpty ||
         effectiveSenderFingerprint.isEmpty ||
         pairingCode.length != 6) {
-      socket.add(utf8.encode('${jsonEncode({'accepted': false})}\n'));
-      await socket.flush();
-      await socket.close();
+      try {
+        socket.add(utf8.encode('${jsonEncode({'accepted': false})}\n'));
+        await socket.flush();
+        await socket.close();
+      } catch (_) {}
       return;
     }
 
@@ -1042,6 +1076,20 @@ class TcpTransferService {
     final decisionCompleter = Completer<bool>();
     _incomingPairingDecisions[requestId] = decisionCompleter;
     _emitIncomingPairingRequests();
+
+    // Listen for socket closure (cancellation) or error
+    subscription.onData((_) {});
+    subscription.onDone(() {
+      if (!decisionCompleter.isCompleted) {
+        decisionCompleter.complete(false);
+      }
+    });
+    subscription.onError((_) {
+      if (!decisionCompleter.isCompleted) {
+        decisionCompleter.complete(false);
+      }
+    });
+    subscription.resume();
 
     unawaited(socket.done.then((_) {
       if (!decisionCompleter.isCompleted) {
@@ -1061,9 +1109,15 @@ class TcpTransferService {
     _incomingPairingRequests.remove(requestId);
     _emitIncomingPairingRequests();
 
-    socket.add(utf8.encode('${jsonEncode({'accepted': accepted})}\n'));
-    await socket.flush();
-    await socket.close();
+    try {
+      await subscription.cancel();
+    } catch (_) {}
+
+    try {
+      socket.add(utf8.encode('${jsonEncode({'accepted': accepted})}\n'));
+      await socket.flush();
+      await socket.close();
+    } catch (_) {}
   }
 
   Future<void> _handleIncomingUnpairRequest({

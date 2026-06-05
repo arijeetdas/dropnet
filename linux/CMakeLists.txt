@@ -7,6 +7,8 @@ project(runner LANGUAGES CXX)
 set(BINARY_NAME "dropnet")
 # The unique GTK application identifier for this application. See:
 # https://wiki.gnome.org/HowDoI/ChooseApplicationID
+# Note: For proper desktop integration (especially under Wayland), the .desktop
+# file must be named exactly matching this ID: com.dropnet.desktop
 set(APPLICATION_ID "com.dropnet")
 
 # Explicitly opt in to modern CMake behaviors to avoid warnings with recent

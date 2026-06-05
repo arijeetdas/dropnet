@@ -670,9 +670,8 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
     final dialogState = _ActivePairingDialog(context: dialogContext);
     _activePairingDialogs[request.id] = dialogState;
 
-    final approved = await showDialog<bool>(
+    final approved = await showInstantDialog<bool>(
       context: dialogContext,
-      barrierDismissible: false,
       builder: (context) {
         dialogState.context = context;
         return PairingCodeDialog(
@@ -855,9 +854,8 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
     }
 
     // Show initial transfer request
-    final initialApproved = await showDialog<bool>(
+    final initialApproved = await showInstantDialog<bool>(
       context: dialogContext,
-      barrierDismissible: false,
       builder: (context) => PopScope(
         canPop: false,
         child: _DecisionScreen(
@@ -896,9 +894,8 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
           !verificationContext.mounted) {
         return;
       }
-      final codeApproved = await showDialog<bool>(
+      final codeApproved = await showInstantDialog<bool>(
         context: verificationContext,
-        barrierDismissible: false,
         builder: (context) => PairingCodeDialog(
           deviceName: request.fromDeviceName,
           fileName: request.fileName,
@@ -935,9 +932,8 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
       _scheduleWebPeerDialogRetry(request.id);
       return;
     }
-    final approved = await showDialog<bool>(
+    final approved = await showInstantDialog<bool>(
       context: dialogContext,
-      barrierDismissible: false,
       builder: (context) => PopScope(
         canPop: false,
         child: _DecisionScreen(
@@ -1023,9 +1019,8 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
       _scheduleWebIncomingUploadDialogRetry(request.id);
       return;
     }
-    final approved = await showDialog<bool>(
+    final approved = await showInstantDialog<bool>(
       context: dialogContext,
-      barrierDismissible: false,
       builder: (context) => PopScope(
         canPop: false,
         child: _DecisionScreen(

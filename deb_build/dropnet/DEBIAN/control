@@ -1,0 +1,7 @@
+Package: dropnet
+Version: 2.4.25
+Section: net
+Priority: optional
+Architecture: amd64
+Maintainer: Arijeet Das
+Description: Cross-platform file sharing application

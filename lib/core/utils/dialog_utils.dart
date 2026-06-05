@@ -39,3 +39,21 @@ Future<T?> showDropNetDialog<T>({
     },
   );
 }
+
+/// Shows a dialog instantly without transition animation.
+Future<T?> showInstantDialog<T>({
+  required BuildContext context,
+  required WidgetBuilder builder,
+  bool useSafeArea = true,
+}) {
+  return showGeneralDialog<T>(
+    context: context,
+    pageBuilder: (BuildContext buildContext, Animation<double> animation, Animation<double> secondaryAnimation) {
+      final Widget pageChild = Builder(builder: builder);
+      return useSafeArea ? SafeArea(child: pageChild) : pageChild;
+    },
+    barrierDismissible: false,
+    barrierColor: Colors.black.withValues(alpha: 0.54),
+    transitionDuration: Duration.zero,
+  );
+}

@@ -18,13 +18,18 @@ class TransferSessionScreen extends ConsumerWidget {
     final colorScheme = theme.colorScheme;
 
     final totalBytes = items.fold<int>(0, (sum, item) => sum + item.size);
+    final sessionTotalBytes = items.isNotEmpty
+        ? (items.map((item) => item.sessionTotalBytes).firstWhere((b) => b != null, orElse: () => 0) ?? 0)
+        : 0;
+    final effectiveTotalBytes = sessionTotalBytes > 0 ? sessionTotalBytes : totalBytes;
+
     final doneBytes = items.fold<double>(0, (sum, item) {
       if (item.status == TransferStatus.completed) {
         return sum + item.size;
       }
       return sum + (item.size * item.progress.clamp(0, 1));
     });
-    final overallProgress = totalBytes == 0 ? 0.0 : (doneBytes / totalBytes).clamp(0.0, 1.0);
+    final overallProgress = effectiveTotalBytes == 0 ? 0.0 : (doneBytes / effectiveTotalBytes).clamp(0.0, 1.0);
 
     final expectedCount = items.isEmpty
         ? 0
@@ -331,7 +336,7 @@ class TransferSessionScreen extends ConsumerWidget {
                                 ),
                                 _SummaryChip(
                                   icon: Icons.folder_copy_outlined,
-                                  label: FileUtils.formatBytes(totalBytes.toDouble()),
+                                  label: FileUtils.formatBytes(effectiveTotalBytes.toDouble()),
                                 ),
                                 if (currentSpeed > 0)
                                   _SummaryChip(
@@ -357,7 +362,7 @@ class TransferSessionScreen extends ConsumerWidget {
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
                                 Text(
-                                  '${FileUtils.formatBytes(doneBytes)} of ${FileUtils.formatBytes(totalBytes.toDouble())}',
+                                  '${FileUtils.formatBytes(doneBytes)} of ${FileUtils.formatBytes(effectiveTotalBytes.toDouble())}',
                                   style: theme.textTheme.labelMedium?.copyWith(
                                     color: subTextThemeColor,
                                     fontWeight: FontWeight.w600,

@@ -109,6 +109,7 @@ static void my_application_activate(GApplication* application) {
       gtk_window_set_icon_from_file(window, icon_path, nullptr);
     }
   }
+  gtk_window_set_icon_name(window, APPLICATION_ID);
 
   // Use a header bar when running in GNOME as this is the common style used
   // by applications and is the setup most users will be using (e.g. Ubuntu
@@ -281,13 +282,16 @@ static void my_application_init(MyApplication* self) {
 }
 
 MyApplication* my_application_new() {
-  // Set the program name to the application ID, which helps various systems
-  // like GTK and desktop environments map this running application to its
-  // corresponding .desktop file. This ensures better integration by allowing
-  // the application to be recognized beyond its binary name.
+  // Set the program name and class to the application ID, which helps various
+  // systems like GTK, Wayland and desktop environments map this running
+  // application to its corresponding .desktop file. This ensures better
+  // integration by allowing the application to be recognized beyond its
+  // binary name.
   g_set_prgname(APPLICATION_ID);
+  g_set_application_name("DropNet");
+  gdk_set_program_class(APPLICATION_ID);
 
   return MY_APPLICATION(g_object_new(my_application_get_type(),
-                                     "application-id", APPLICATION_ID, "flags",
-                                     G_APPLICATION_NON_UNIQUE, nullptr));
+                                      "application-id", APPLICATION_ID, "flags",
+                                      G_APPLICATION_NON_UNIQUE, nullptr));
 }
