@@ -99,7 +99,9 @@ class _ReceiveScreenState extends ConsumerState<ReceiveScreen>
           final horizontalPadding = isNarrow ? 12.0 : 16.0;
           final topPadding = isCompactHeight ? 12.0 : 18.0;
           final systemBottom = MediaQuery.paddingOf(context).bottom;
-          final bottomPadding = widget.embedded ? (106.0 + systemBottom) : (24.0 + systemBottom);
+          final bottomPadding = widget.embedded
+              ? (106.0 + systemBottom)
+              : (24.0 + systemBottom);
           final radarSize = (availableWidth * (isNarrow ? 0.58 : 0.52))
               .clamp(
                 isCompactHeight ? 164.0 : 184.0,
@@ -132,31 +134,42 @@ class _ReceiveScreenState extends ConsumerState<ReceiveScreen>
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       // Floating pending requests banner or chip
-                      if (state.showIncomingRequestList && state.pendingRequestsCount > 0) ...[
+                      if (state.showIncomingRequestList &&
+                          state.pendingRequestsCount > 0) ...[
                         GestureDetector(
-                          onTap: () => context.push('/receive/incoming-requests'),
+                          onTap: () =>
+                              context.push('/receive/incoming-requests'),
                           child: AnimatedContainer(
                             duration: const Duration(milliseconds: 320),
                             width: double.infinity,
                             margin: const EdgeInsets.only(bottom: 20),
-                            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 20,
+                              vertical: 16,
+                            ),
                             decoration: BoxDecoration(
                               gradient: LinearGradient(
                                 colors: [
                                   colorScheme.errorContainer,
-                                  colorScheme.errorContainer.withValues(alpha: 0.7),
+                                  colorScheme.errorContainer.withValues(
+                                    alpha: 0.7,
+                                  ),
                                 ],
                                 begin: Alignment.topLeft,
                                 end: Alignment.bottomRight,
                               ),
                               borderRadius: BorderRadius.circular(24),
                               border: Border.all(
-                                color: colorScheme.error.withValues(alpha: 0.28),
+                                color: colorScheme.error.withValues(
+                                  alpha: 0.28,
+                                ),
                                 width: 1.5,
                               ),
                               boxShadow: [
                                 BoxShadow(
-                                  color: colorScheme.error.withValues(alpha: 0.12),
+                                  color: colorScheme.error.withValues(
+                                    alpha: 0.12,
+                                  ),
                                   blurRadius: 16,
                                   offset: const Offset(0, 6),
                                 ),
@@ -167,7 +180,9 @@ class _ReceiveScreenState extends ConsumerState<ReceiveScreen>
                                 Container(
                                   padding: const EdgeInsets.all(10),
                                   decoration: BoxDecoration(
-                                    color: colorScheme.error.withValues(alpha: 0.15),
+                                    color: colorScheme.error.withValues(
+                                      alpha: 0.15,
+                                    ),
                                     shape: BoxShape.circle,
                                   ),
                                   child: Icon(
@@ -179,22 +194,28 @@ class _ReceiveScreenState extends ConsumerState<ReceiveScreen>
                                 const SizedBox(width: 14),
                                 Expanded(
                                   child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
                                       Text(
                                         'Pending Transfer Requests',
-                                        style: theme.textTheme.titleSmall?.copyWith(
-                                          color: colorScheme.onErrorContainer,
-                                          fontWeight: FontWeight.bold,
-                                        ),
+                                        style: theme.textTheme.titleSmall
+                                            ?.copyWith(
+                                              color:
+                                                  colorScheme.onErrorContainer,
+                                              fontWeight: FontWeight.bold,
+                                            ),
                                       ),
                                       const SizedBox(height: 2),
                                       Text(
                                         'You have ${state.pendingRequestsCount} incoming file request(s) waiting for approval.',
-                                        style: theme.textTheme.bodySmall?.copyWith(
-                                          color: colorScheme.onErrorContainer.withValues(alpha: 0.85),
-                                          height: 1.25,
-                                        ),
+                                        style: theme.textTheme.bodySmall
+                                            ?.copyWith(
+                                              color: colorScheme
+                                                  .onErrorContainer
+                                                  .withValues(alpha: 0.85),
+                                              height: 1.25,
+                                            ),
                                       ),
                                     ],
                                   ),
@@ -206,7 +227,9 @@ class _ReceiveScreenState extends ConsumerState<ReceiveScreen>
                                     color: colorScheme.errorContainer,
                                     borderRadius: BorderRadius.circular(12),
                                     border: Border.all(
-                                      color: colorScheme.error.withValues(alpha: 0.25),
+                                      color: colorScheme.error.withValues(
+                                        alpha: 0.25,
+                                      ),
                                     ),
                                   ),
                                   child: Icon(
@@ -226,7 +249,8 @@ class _ReceiveScreenState extends ConsumerState<ReceiveScreen>
                             padding: const EdgeInsets.only(bottom: 20),
                             child: _IncomingRequestsChip(
                               count: 0,
-                              onTap: () => context.push('/receive/incoming-requests'),
+                              onTap: () =>
+                                  context.push('/receive/incoming-requests'),
                             ),
                           ),
                         ),
@@ -260,7 +284,8 @@ class _ReceiveScreenState extends ConsumerState<ReceiveScreen>
                                         decoration: BoxDecoration(
                                           shape: BoxShape.circle,
                                           color: colorScheme.primary.withValues(
-                                            alpha: _opacityAnimation.value * 0.4,
+                                            alpha:
+                                                _opacityAnimation.value * 0.4,
                                           ),
                                         ),
                                       ),
@@ -334,18 +359,25 @@ class _ReceiveScreenState extends ConsumerState<ReceiveScreen>
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(28),
                           side: BorderSide(
-                            color: colorScheme.outlineVariant.withValues(alpha: 0.35),
+                            color: colorScheme.outlineVariant.withValues(
+                              alpha: 0.35,
+                            ),
                           ),
                         ),
                         child: Container(
                           width: double.infinity,
-                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 22),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 20,
+                            vertical: 22,
+                          ),
                           decoration: BoxDecoration(
                             borderRadius: BorderRadius.circular(28),
                             gradient: LinearGradient(
                               colors: [
                                 colorScheme.surfaceContainerLow,
-                                colorScheme.surfaceContainer.withValues(alpha: 0.5),
+                                colorScheme.surfaceContainer.withValues(
+                                  alpha: 0.5,
+                                ),
                               ],
                               begin: Alignment.topLeft,
                               end: Alignment.bottomRight,
@@ -357,51 +389,70 @@ class _ReceiveScreenState extends ConsumerState<ReceiveScreen>
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
                                   Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 14,
+                                      vertical: 6,
+                                    ),
                                     decoration: BoxDecoration(
-                                      color: colorScheme.primary.withValues(alpha: 0.12),
+                                      color: colorScheme.primary.withValues(
+                                        alpha: 0.12,
+                                      ),
                                       borderRadius: BorderRadius.circular(20),
                                       border: Border.all(
-                                        color: colorScheme.primary.withValues(alpha: 0.25),
+                                        color: colorScheme.primary.withValues(
+                                          alpha: 0.25,
+                                        ),
                                       ),
                                     ),
                                     child: Row(
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
                                         Icon(
-                                          _getPlatformIcon(state.localDevicePlatform),
+                                          _getPlatformIcon(
+                                            state.localDevicePlatform,
+                                          ),
                                           size: 14,
                                           color: colorScheme.primary,
                                         ),
                                         const SizedBox(width: 6),
                                         Text(
-                                          state.localDevicePlatform.toUpperCase(),
-                                          style: theme.textTheme.labelSmall?.copyWith(
-                                            color: colorScheme.primary,
-                                            fontWeight: FontWeight.w800,
-                                            letterSpacing: 0.6,
-                                          ),
+                                          state.localDevicePlatform
+                                              .toUpperCase(),
+                                          style: theme.textTheme.labelSmall
+                                              ?.copyWith(
+                                                color: colorScheme.primary,
+                                                fontWeight: FontWeight.w800,
+                                                letterSpacing: 0.6,
+                                              ),
                                         ),
                                       ],
                                     ),
                                   ),
                                   const SizedBox(width: 8),
                                   Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 14,
+                                      vertical: 6,
+                                    ),
                                     decoration: BoxDecoration(
-                                      color: colorScheme.secondary.withValues(alpha: 0.12),
+                                      color: colorScheme.secondary.withValues(
+                                        alpha: 0.12,
+                                      ),
                                       borderRadius: BorderRadius.circular(20),
                                       border: Border.all(
-                                        color: colorScheme.secondary.withValues(alpha: 0.25),
+                                        color: colorScheme.secondary.withValues(
+                                          alpha: 0.25,
+                                        ),
                                       ),
                                     ),
                                     child: Text(
                                       '#${state.localDeviceNumber}',
-                                      style: theme.textTheme.labelSmall?.copyWith(
-                                        color: colorScheme.secondary,
-                                        fontWeight: FontWeight.w800,
-                                        letterSpacing: 0.5,
-                                      ),
+                                      style: theme.textTheme.labelSmall
+                                          ?.copyWith(
+                                            color: colorScheme.secondary,
+                                            fontWeight: FontWeight.w800,
+                                            letterSpacing: 0.5,
+                                          ),
                                     ),
                                   ),
                                 ],
@@ -424,7 +475,8 @@ class _ReceiveScreenState extends ConsumerState<ReceiveScreen>
                                   state.localDeviceManufacturer,
                                   textAlign: TextAlign.center,
                                   style: theme.textTheme.bodyMedium?.copyWith(
-                                    color: colorScheme.onSurfaceVariant.withValues(alpha: 0.8),
+                                    color: colorScheme.onSurfaceVariant
+                                        .withValues(alpha: 0.8),
                                     fontWeight: FontWeight.w500,
                                   ),
                                 ),
@@ -433,10 +485,16 @@ class _ReceiveScreenState extends ConsumerState<ReceiveScreen>
                               Row(
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
-                                  Icon(Icons.wifi_rounded, size: 16, color: colorScheme.onSurfaceVariant),
+                                  Icon(
+                                    Icons.wifi_rounded,
+                                    size: 16,
+                                    color: colorScheme.onSurfaceVariant,
+                                  ),
                                   const SizedBox(width: 8),
                                   Text(
-                                    state.localIp.isNotEmpty ? 'IP: ${state.localIp}' : 'Offline / Checking IP...',
+                                    state.localIp.isNotEmpty
+                                        ? 'IP: ${state.localIp}'
+                                        : 'Offline / Checking IP...',
                                     style: theme.textTheme.bodyMedium?.copyWith(
                                       color: colorScheme.onSurfaceVariant,
                                       fontFamily: 'monospace',
@@ -495,7 +553,9 @@ class _ReceiveScreenState extends ConsumerState<ReceiveScreen>
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(24),
                               side: BorderSide(
-                                color: colorScheme.outlineVariant.withValues(alpha: 0.25),
+                                color: colorScheme.outlineVariant.withValues(
+                                  alpha: 0.25,
+                                ),
                               ),
                             ),
                             child: Padding(
@@ -505,54 +565,69 @@ class _ReceiveScreenState extends ConsumerState<ReceiveScreen>
                                   Container(
                                     padding: const EdgeInsets.all(8),
                                     decoration: BoxDecoration(
-                                      color: (state.quickSaveMode == QuickSaveMode.off
-                                              ? colorScheme.primary
-                                              : state.quickSaveMode == QuickSaveMode.favorites
+                                      color:
+                                          (state.quickSaveMode ==
+                                                      QuickSaveMode.off
+                                                  ? colorScheme.primary
+                                                  : state.quickSaveMode ==
+                                                        QuickSaveMode.favorites
                                                   ? Colors.amber
                                                   : Colors.orange)
-                                          .withValues(alpha: 0.12),
+                                              .withValues(alpha: 0.12),
                                       shape: BoxShape.circle,
                                     ),
                                     child: Icon(
                                       state.quickSaveMode == QuickSaveMode.off
                                           ? Icons.verified_user_rounded
-                                          : state.quickSaveMode == QuickSaveMode.favorites
-                                              ? Icons.star_rounded
-                                              : Icons.gpp_maybe_rounded,
+                                          : state.quickSaveMode ==
+                                                QuickSaveMode.favorites
+                                          ? Icons.star_rounded
+                                          : Icons.gpp_maybe_rounded,
                                       size: 18,
-                                      color: state.quickSaveMode == QuickSaveMode.off
+                                      color:
+                                          state.quickSaveMode ==
+                                              QuickSaveMode.off
                                           ? colorScheme.primary
-                                          : state.quickSaveMode == QuickSaveMode.favorites
-                                              ? Colors.amber
-                                              : Colors.orange,
+                                          : state.quickSaveMode ==
+                                                QuickSaveMode.favorites
+                                          ? Colors.amber
+                                          : Colors.orange,
                                     ),
                                   ),
                                   const SizedBox(width: 14),
                                   Expanded(
                                     child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
                                       children: [
                                         Text(
-                                          state.quickSaveMode == QuickSaveMode.off
+                                          state.quickSaveMode ==
+                                                  QuickSaveMode.off
                                               ? 'High Security Active'
-                                              : state.quickSaveMode == QuickSaveMode.favorites
-                                                  ? 'Trusted Auto-Save'
-                                                  : 'Open Auto-Save',
-                                          style: theme.textTheme.titleSmall?.copyWith(
-                                            fontWeight: FontWeight.bold,
-                                          ),
+                                              : state.quickSaveMode ==
+                                                    QuickSaveMode.favorites
+                                              ? 'Trusted Auto-Save'
+                                              : 'Open Auto-Save',
+                                          style: theme.textTheme.titleSmall
+                                              ?.copyWith(
+                                                fontWeight: FontWeight.bold,
+                                              ),
                                         ),
                                         const SizedBox(height: 2),
                                         Text(
-                                          state.quickSaveMode == QuickSaveMode.off
+                                          state.quickSaveMode ==
+                                                  QuickSaveMode.off
                                               ? 'Manual approval required for all file transfers.'
-                                              : state.quickSaveMode == QuickSaveMode.favorites
-                                                  ? 'Only favorited devices are auto-saved. Others require approval.'
-                                                  : 'All incoming files are auto-saved without confirmation.',
-                                          style: theme.textTheme.bodySmall?.copyWith(
-                                            color: colorScheme.onSurfaceVariant,
-                                            height: 1.3,
-                                          ),
+                                              : state.quickSaveMode ==
+                                                    QuickSaveMode.favorites
+                                              ? 'Only favorited devices are auto-saved. Others require approval.'
+                                              : 'All incoming files are auto-saved without confirmation.',
+                                          style: theme.textTheme.bodySmall
+                                              ?.copyWith(
+                                                color: colorScheme
+                                                    .onSurfaceVariant,
+                                                height: 1.3,
+                                              ),
                                         ),
                                       ],
                                     ),
@@ -776,7 +851,7 @@ class _ReceiveScreenState extends ConsumerState<ReceiveScreen>
 
 class _RadarPulsePainter extends CustomPainter {
   _RadarPulsePainter(this.animation, {required this.color})
-      : super(repaint: animation);
+    : super(repaint: animation);
 
   final Animation<double> animation;
   final Color color;
@@ -799,7 +874,7 @@ class _RadarPulsePainter extends CustomPainter {
       ..color = color.withValues(alpha: 0.1)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.0;
-    
+
     for (int r = 1; r <= 3; r++) {
       canvas.drawCircle(center, maxRadius * (r / 3.0), dottedPaint);
     }

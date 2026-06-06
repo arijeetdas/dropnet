@@ -1,0 +1,72 @@
+name: Build macOS Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Flutter Version
+        run: flutter --version
+
+      - name: Get Dependencies
+        run: flutter pub get
+
+      - name: Extract Version
+        run: |
+          VERSION=$(grep '^version:' pubspec.yaml | sed 's/version: //' | cut -d '+' -f 1)
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "Detected version: $VERSION"
+
+      - name: Build macOS Release
+        run: flutter build macos --release
+
+      - name: Create ZIP Package
+        run: |
+          cd build/macos/Build/Products/Release
+
+          ditto -c -k --sequesterRsrc --keepParent \
+            DropNet.app \
+            DropNet-v${VERSION}-macOS.zip
+
+      - name: Install create-dmg
+        run: brew install create-dmg
+
+      - name: Create DMG Package
+        run: |
+          cd build/macos/Build/Products/Release
+
+          create-dmg \
+            --overwrite \
+            --volname "DropNet" \
+            --window-size 800 500 \
+            --icon-size 128 \
+            --app-drop-link 600 200 \
+            DropNet-v${VERSION}-macOS.dmg \
+            DropNet.app
+
+      - name: Upload ZIP Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DropNet-v${{ env.VERSION }}-macOS-zip
+          path: build/macos/Build/Products/Release/DropNet-v${{ env.VERSION }}-macOS.zip
+
+      - name: Upload DMG Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DropNet-v${{ env.VERSION }}-macOS-dmg
+          path: build/macos/Build/Products/Release/DropNet-v${{ env.VERSION }}-macOS.dmg

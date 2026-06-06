@@ -414,6 +414,7 @@ class AppController extends StateNotifier<AppState> {
   StreamSubscription<List<WebPeer>>? _webPeerSub;
   StreamSubscription<List<WebIncomingUploadRequest>>? _webIncomingUploadSub;
   StreamSubscription<List<TransferHistoryEntry>>? _webHistorySub;
+  StreamSubscription<TransferModel>? _webCompletedTransferSub;
   StreamSubscription<TemporaryLinkShareState>? _tempShareSub;
   StreamSubscription<SharedIntentPayload>? _sharedPayloadSub;
 
@@ -760,6 +761,28 @@ class AppController extends StateNotifier<AppState> {
         ),
       );
       _emitCombinedHistory();
+    });
+
+    _webCompletedTransferSub ??= _web.completedWebTransferStream.listen((
+      completedTransfer,
+    ) {
+      if (!state.transferSessionActive && state.activeTransfers.isEmpty) {
+        _transferSessionMap.clear();
+        state = state.copyWith(transferSessionActive: true);
+      }
+      _transferSessionMap[completedTransfer.id] = completedTransfer;
+      state = state.copyWith(
+        transferSessionItems: _sortedTransferSessionItems(),
+      );
+      if (completedTransfer.direction == TransferDirection.received &&
+          completedTransfer.status == TransferStatus.completed &&
+          state.saveMediaToGallery) {
+        final localPath = completedTransfer.localPath;
+        if (localPath != null && localPath.trim().isNotEmpty) {
+          unawaited(_saveMediaToGalleryIfEligible(localPath));
+        }
+      }
+      unawaited(_enqueueTransferPreviewIfEligible(completedTransfer));
     });
 
     _tempShareSub ??= _tempShare.stateStream.listen((tempShareState) {
@@ -2180,6 +2203,7 @@ class AppController extends StateNotifier<AppState> {
     _webPeerSub?.cancel();
     _webIncomingUploadSub?.cancel();
     _webHistorySub?.cancel();
+    _webCompletedTransferSub?.cancel();
     _tempShareSub?.cancel();
     _sharedPayloadSub?.cancel();
     super.dispose();

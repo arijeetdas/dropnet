@@ -896,10 +896,23 @@
 
       async function uploadSelected() {
         if (!peerId || !selectedItems.length) return;
+        const batchId = 'batch_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+        const batchFileCount = selectedItems.length;
+        let batchTotalBytes = 0;
+        for (const item of selectedItems) {
+          batchTotalBytes += (item.file.size || 0);
+        }
+
         for (let i = 0; i < selectedItems.length; i++) {
           const item = selectedItems[i];
           const bytes = await item.file.arrayBuffer();
-          const response = await fetch(api('/api/upload', { name: item.relativePath }), {
+          const response = await fetch(api('/api/upload', {
+            name: item.relativePath,
+            batchId: batchId,
+            batchFileCount: batchFileCount,
+            batchFileIndex: i + 1,
+            batchTotalBytes: batchTotalBytes
+          }), {
             method: 'POST',
             headers: authHeaders(),
             body: bytes,

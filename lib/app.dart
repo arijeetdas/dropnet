@@ -349,7 +349,9 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
           final dialogState = _activePairingDialogs[id];
           if (dialogState != null && !dialogState.isPopped) {
             dialogState.isPopped = true;
-            Navigator.of(dialogState.context).pop(false); // Dismiss the input dialog on Device B
+            Navigator.of(
+              dialogState.context,
+            ).pop(false); // Dismiss the input dialog on Device B
             WidgetsBinding.instance.addPostFrameCallback((_) {
               final activeContext = _rootNavigatorKey.currentContext ?? context;
               final theme = Theme.of(activeContext);
@@ -407,7 +409,9 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(24),
                       side: BorderSide(
-                        color: colorScheme.outlineVariant.withValues(alpha: 0.25),
+                        color: colorScheme.outlineVariant.withValues(
+                          alpha: 0.25,
+                        ),
                       ),
                     ),
                     child: Padding(
@@ -1019,19 +1023,83 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
       _scheduleWebIncomingUploadDialogRetry(request.id);
       return;
     }
+    final isBatch =
+        request.batchFileCount != null && request.batchFileCount! > 1;
+    final displayTitle = isBatch
+        ? 'Accept ${request.batchFileCount} files from the web?'
+        : 'Accept this file from the web?';
+    final displayHighlightTitle = isBatch
+        ? 'Batch of ${request.batchFileCount} files'
+        : request.fileName;
+    final displayHighlightSubtitle = isBatch
+        ? 'Web Share Portal Transfer'
+        : TransferVisuals.kindLabel(request.fileName);
+    final displayIcon = isBatch
+        ? Icons.inventory_2_rounded
+        : TransferVisuals.iconForName(request.fileName);
+    final displayAccent = isBatch
+        ? Theme.of(dialogContext).colorScheme.primary
+        : TransferVisuals.accentColor(dialogContext, request.fileName);
+
+    final fileSizeLabel = isBatch ? 'Total size' : 'File size';
+    final fileSizeValue = isBatch
+        ? FileUtils.formatBytes(
+            (request.batchTotalBytes ?? request.size).toDouble(),
+          )
+        : FileUtils.formatBytes(request.size.toDouble());
+
+    Widget? batchCard;
+    if (isBatch) {
+      final theme = Theme.of(dialogContext);
+      final colorScheme = theme.colorScheme;
+      batchCard = Card(
+        elevation: 0,
+        color: colorScheme.secondaryContainer.withValues(alpha: 0.25),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+          side: BorderSide(
+            color: colorScheme.secondary.withValues(alpha: 0.15),
+            width: 1.5,
+          ),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+          child: Row(
+            children: [
+              Icon(
+                Icons.info_outline_rounded,
+                color: colorScheme.secondary,
+                size: 22,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'This transfer contains a batch of ${request.batchFileCount} files. Approving will automatically accept the entire batch.',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: colorScheme.onSecondaryContainer,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     final approved = await showInstantDialog<bool>(
       context: dialogContext,
       builder: (context) => PopScope(
         canPop: false,
         child: _DecisionScreen(
           eyebrow: 'Web upload request',
-          title: 'Accept this file from the web?',
+          title: displayTitle,
           subtitle:
-              'The file will be saved into your current DropNet download location.',
-          highlightTitle: request.fileName,
-          highlightSubtitle: TransferVisuals.kindLabel(request.fileName),
-          icon: TransferVisuals.iconForName(request.fileName),
-          accent: TransferVisuals.accentColor(context, request.fileName),
+              'The files will be saved into your current DropNet download location.',
+          highlightTitle: displayHighlightTitle,
+          highlightSubtitle: displayHighlightSubtitle,
+          icon: displayIcon,
+          accent: displayAccent,
           details: [
             _DecisionDetail(
               icon: Icons.person_outline_rounded,
@@ -1045,14 +1113,15 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
             ),
             _DecisionDetail(
               icon: Icons.data_object_rounded,
-              label: 'File size',
-              value: FileUtils.formatBytes(request.size.toDouble()),
+              label: fileSizeLabel,
+              value: fileSizeValue,
             ),
           ],
           secondaryLabel: 'Reject',
           primaryLabel: 'Accept',
           onSecondary: () => Navigator.of(context).pop(false),
           onPrimary: () => Navigator.of(context).pop(true),
+          batchInfoCard: batchCard,
         ),
       ),
     );
@@ -1144,6 +1213,7 @@ class _DecisionScreen extends StatelessWidget {
     required this.primaryLabel,
     required this.onSecondary,
     required this.onPrimary,
+    this.batchInfoCard,
   });
 
   final String eyebrow;
@@ -1158,6 +1228,7 @@ class _DecisionScreen extends StatelessWidget {
   final String primaryLabel;
   final VoidCallback onSecondary;
   final VoidCallback onPrimary;
+  final Widget? batchInfoCard;
 
   @override
   Widget build(BuildContext context) {
@@ -1201,7 +1272,9 @@ class _DecisionScreen extends StatelessWidget {
                                 ),
                                 borderRadius: BorderRadius.circular(999),
                                 border: Border.all(
-                                  color: colorScheme.primary.withValues(alpha: 0.1),
+                                  color: colorScheme.primary.withValues(
+                                    alpha: 0.1,
+                                  ),
                                 ),
                               ),
                               child: Text(
@@ -1222,7 +1295,10 @@ class _DecisionScreen extends StatelessWidget {
                                   height: 76,
                                   decoration: BoxDecoration(
                                     gradient: LinearGradient(
-                                      colors: [accent.withValues(alpha: 0.2), accent.withValues(alpha: 0.05)],
+                                      colors: [
+                                        accent.withValues(alpha: 0.2),
+                                        accent.withValues(alpha: 0.05),
+                                      ],
                                       begin: Alignment.topLeft,
                                       end: Alignment.bottomRight,
                                     ),
@@ -1245,19 +1321,22 @@ class _DecisionScreen extends StatelessWidget {
                                     children: [
                                       Text(
                                         title,
-                                        style: theme.textTheme.headlineMedium?.copyWith(
-                                          fontWeight: FontWeight.w800,
-                                          letterSpacing: -0.5,
-                                        ),
+                                        style: theme.textTheme.headlineMedium
+                                            ?.copyWith(
+                                              fontWeight: FontWeight.w800,
+                                              letterSpacing: -0.5,
+                                            ),
                                       ),
                                       const SizedBox(height: 8),
                                       Text(
                                         subtitle,
-                                        style: theme.textTheme.bodyLarge?.copyWith(
-                                          color: colorScheme.onSurfaceVariant,
-                                          fontWeight: FontWeight.w500,
-                                          height: 1.4,
-                                        ),
+                                        style: theme.textTheme.bodyLarge
+                                            ?.copyWith(
+                                              color:
+                                                  colorScheme.onSurfaceVariant,
+                                              fontWeight: FontWeight.w500,
+                                              height: 1.4,
+                                            ),
                                       ),
                                     ],
                                   ),
@@ -1272,7 +1351,8 @@ class _DecisionScreen extends StatelessWidget {
                                 gradient: LinearGradient(
                                   colors: [
                                     colorScheme.surfaceContainerLow,
-                                    colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
+                                    colorScheme.surfaceContainerHighest
+                                        .withValues(alpha: 0.4),
                                   ],
                                   begin: Alignment.topLeft,
                                   end: Alignment.bottomRight,
@@ -1310,17 +1390,20 @@ class _DecisionScreen extends StatelessWidget {
                                       children: [
                                         Text(
                                           highlightTitle,
-                                          style: theme.textTheme.titleLarge?.copyWith(
-                                            fontWeight: FontWeight.bold,
-                                          ),
+                                          style: theme.textTheme.titleLarge
+                                              ?.copyWith(
+                                                fontWeight: FontWeight.bold,
+                                              ),
                                         ),
                                         const SizedBox(height: 6),
                                         Text(
                                           highlightSubtitle,
-                                          style: theme.textTheme.bodyMedium?.copyWith(
-                                            color: colorScheme.onSurfaceVariant,
-                                            fontWeight: FontWeight.w600,
-                                          ),
+                                          style: theme.textTheme.bodyMedium
+                                              ?.copyWith(
+                                                color: colorScheme
+                                                    .onSurfaceVariant,
+                                                fontWeight: FontWeight.w600,
+                                              ),
                                         ),
                                       ],
                                     ),
@@ -1328,6 +1411,10 @@ class _DecisionScreen extends StatelessWidget {
                                 ],
                               ),
                             ),
+                            if (batchInfoCard != null) ...[
+                              const SizedBox(height: 16),
+                              batchInfoCard!,
+                            ],
                             const SizedBox(height: 24),
                             Wrap(
                               spacing: 16,
@@ -1342,19 +1429,25 @@ class _DecisionScreen extends StatelessWidget {
                                           gradient: LinearGradient(
                                             colors: [
                                               colorScheme.surface,
-                                              colorScheme.surfaceContainerLow.withValues(alpha: 0.6),
+                                              colorScheme.surfaceContainerLow
+                                                  .withValues(alpha: 0.6),
                                             ],
                                             begin: Alignment.topLeft,
                                             end: Alignment.bottomRight,
                                           ),
-                                          borderRadius: BorderRadius.circular(22),
+                                          borderRadius: BorderRadius.circular(
+                                            22,
+                                          ),
                                           border: Border.all(
-                                            color: colorScheme.outlineVariant.withValues(alpha: 0.4),
+                                            color: colorScheme.outlineVariant
+                                                .withValues(alpha: 0.4),
                                             width: 1.0,
                                           ),
                                           boxShadow: [
                                             BoxShadow(
-                                              color: Colors.black.withValues(alpha: 0.01),
+                                              color: Colors.black.withValues(
+                                                alpha: 0.01,
+                                              ),
                                               blurRadius: 8,
                                               offset: const Offset(0, 2),
                                             ),
@@ -1364,7 +1457,11 @@ class _DecisionScreen extends StatelessWidget {
                                           crossAxisAlignment:
                                               CrossAxisAlignment.start,
                                           children: [
-                                            Icon(detail.icon, color: accent, size: 20),
+                                            Icon(
+                                              detail.icon,
+                                              color: accent,
+                                              size: 20,
+                                            ),
                                             const SizedBox(width: 12),
                                             Expanded(
                                               child: Column(
@@ -1373,17 +1470,26 @@ class _DecisionScreen extends StatelessWidget {
                                                 children: [
                                                   Text(
                                                     detail.label,
-                                                    style: theme.textTheme.labelLarge?.copyWith(
-                                                      color: colorScheme.onSurfaceVariant,
-                                                      fontWeight: FontWeight.bold,
-                                                    ),
+                                                    style: theme
+                                                        .textTheme
+                                                        .labelLarge
+                                                        ?.copyWith(
+                                                          color: colorScheme
+                                                              .onSurfaceVariant,
+                                                          fontWeight:
+                                                              FontWeight.bold,
+                                                        ),
                                                   ),
                                                   const SizedBox(height: 4),
                                                   Text(
                                                     detail.value,
-                                                    style: theme.textTheme.bodyMedium?.copyWith(
-                                                      fontWeight: FontWeight.w600,
-                                                    ),
+                                                    style: theme
+                                                        .textTheme
+                                                        .bodyMedium
+                                                        ?.copyWith(
+                                                          fontWeight:
+                                                              FontWeight.w600,
+                                                        ),
                                                   ),
                                                 ],
                                               ),
@@ -1410,7 +1516,8 @@ class _DecisionScreen extends StatelessWidget {
                         child: FilledButton.icon(
                           onPressed: onSecondary,
                           style: FilledButton.styleFrom(
-                            backgroundColor: colorScheme.errorContainer.withValues(alpha: 0.9),
+                            backgroundColor: colorScheme.errorContainer
+                                .withValues(alpha: 0.9),
                             foregroundColor: colorScheme.error,
                             elevation: 0,
                             shape: RoundedRectangleBorder(
@@ -1421,7 +1528,10 @@ class _DecisionScreen extends StatelessWidget {
                           icon: const Icon(Icons.close_rounded, size: 20),
                           label: Text(
                             secondaryLabel,
-                            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 15,
+                            ),
                           ),
                         ),
                       ),
@@ -1434,7 +1544,9 @@ class _DecisionScreen extends StatelessWidget {
                             backgroundColor: Colors.green.shade600,
                             foregroundColor: Colors.white,
                             elevation: 3,
-                            shadowColor: Colors.green.shade600.withValues(alpha: 0.4),
+                            shadowColor: Colors.green.shade600.withValues(
+                              alpha: 0.4,
+                            ),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(24),
                             ),
@@ -1442,7 +1554,10 @@ class _DecisionScreen extends StatelessWidget {
                           ),
                           label: Text(
                             primaryLabel,
-                            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 15,
+                            ),
                           ),
                         ),
                       ),
@@ -1463,4 +1578,3 @@ class _ActivePairingDialog {
   BuildContext context;
   bool isPopped = false;
 }
-

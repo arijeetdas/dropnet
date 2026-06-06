@@ -42,11 +42,11 @@
                 <data android:mimeType="*/*"/>
             </intent-filter>
             <!-- Intent filter to satisfy Flutter CLI launcher activity check.
-                 tools:node="remove" ensures the category is stripped out during Gradle manifest merging
-                 to avoid duplicate launcher icons. -->
-            <intent-filter>
+                 tools:node="remove" ensures the entire intent filter is stripped out during Gradle manifest merging
+                 to avoid conflicts and duplicate launcher issues. -->
+            <intent-filter tools:node="remove">
                 <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" tools:node="remove" />
+                <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
 

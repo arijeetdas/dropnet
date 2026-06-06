@@ -110,6 +110,7 @@ static void my_application_activate(GApplication* application) {
     }
   }
   gtk_window_set_icon_name(window, APPLICATION_ID);
+  gtk_window_set_title(window, "DropNet");
 
   // Use a header bar when running in GNOME as this is the common style used
   // by applications and is the setup most users will be using (e.g. Ubuntu

@@ -60,6 +60,10 @@ class WebIncomingUploadRequest {
     required this.fileName,
     required this.size,
     required this.requestedAt,
+    this.batchId,
+    this.batchFileCount,
+    this.batchFileIndex,
+    this.batchTotalBytes,
   });
 
   final String id;
@@ -69,6 +73,10 @@ class WebIncomingUploadRequest {
   final String fileName;
   final int size;
   final DateTime requestedAt;
+  final String? batchId;
+  final int? batchFileCount;
+  final int? batchFileIndex;
+  final int? batchTotalBytes;
 }
 
 class WebShareState {
@@ -177,6 +185,7 @@ class WebServerService {
   final _connectedPeersController = StreamController<List<WebPeer>>.broadcast();
   final _incomingUploadRequestsController = StreamController<List<WebIncomingUploadRequest>>.broadcast();
   final _historyController = StreamController<List<TransferHistoryEntry>>.broadcast();
+  final _completedWebTransferController = StreamController<TransferModel>.broadcast();
 
   WebShareState _state = WebShareState.initial();
   HttpServer? _server;
@@ -190,6 +199,7 @@ class WebServerService {
   final Map<String, WebPeer> _connectedPeers = {};
   final Map<String, _WebOutgoingSession> _outgoingSessionsByPeer = {};
   final Map<String, _PendingUploadPayload> _pendingIncomingUploads = {};
+  final Map<String, bool> _batchDecisions = {};
   final List<Map<String, dynamic>> _requestLogs = [];
   final List<TransferHistoryEntry> _history = [];
 
@@ -198,6 +208,7 @@ class WebServerService {
   Stream<List<WebPeer>> get connectedPeersStream => _connectedPeersController.stream;
   Stream<List<WebIncomingUploadRequest>> get incomingUploadRequestsStream => _incomingUploadRequestsController.stream;
   Stream<List<TransferHistoryEntry>> get historyStream => _historyController.stream;
+  Stream<TransferModel> get completedWebTransferStream => _completedWebTransferController.stream;
 
   WebShareState get currentState => _state;
 
@@ -405,6 +416,11 @@ class WebServerService {
           return Response.badRequest(body: 'Missing name query parameter');
         }
 
+        final batchId = request.url.queryParameters['batchId'];
+        final batchFileCount = int.tryParse(request.url.queryParameters['batchFileCount'] ?? '');
+        final batchFileIndex = int.tryParse(request.url.queryParameters['batchFileIndex'] ?? '');
+        final batchTotalBytes = int.tryParse(request.url.queryParameters['batchTotalBytes'] ?? '');
+
         final bytes = await request.read().expand((chunk) => chunk).toList();
         bool accepted;
         try {
@@ -414,6 +430,10 @@ class WebServerService {
             bytes: bytes,
             kind: 'upload',
             fromIp: _remoteIp(request),
+            batchId: batchId,
+            batchFileCount: batchFileCount,
+            batchFileIndex: batchFileIndex,
+            batchTotalBytes: batchTotalBytes,
           );
         } catch (_) {
           return Response.internalServerError(
@@ -828,6 +848,10 @@ class WebServerService {
     required List<int> bytes,
     required String kind,
     required String fromIp,
+    String? batchId,
+    int? batchFileCount,
+    int? batchFileIndex,
+    int? batchTotalBytes,
   }) async {
     final id = const Uuid().v4();
     final tempDir = Directory('${Directory.systemTemp.path}${Platform.pathSeparator}dropnet_web_pending');
@@ -845,16 +869,35 @@ class WebServerService {
       fileName: safeBase,
       size: bytes.length,
       requestedAt: DateTime.now(),
+      batchId: batchId,
+      batchFileCount: batchFileCount,
+      batchFileIndex: batchFileIndex,
+      batchTotalBytes: batchTotalBytes,
     );
 
-    final decision = Completer<bool>();
-    _pendingIncomingUploads[id] = _PendingUploadPayload(request: request, tempPath: tempPath, decision: decision);
-    _emitIncomingUploadRequests();
+    bool accepted;
+    if (batchId != null && batchId.isNotEmpty && _batchDecisions.containsKey(batchId)) {
+      accepted = _batchDecisions[batchId]!;
+    } else {
+      final decision = Completer<bool>();
+      _pendingIncomingUploads[id] = _PendingUploadPayload(request: request, tempPath: tempPath, decision: decision);
+      _emitIncomingUploadRequests();
 
-    final accepted = await decision.future.timeout(const Duration(minutes: 2), onTimeout: () => false);
+      accepted = await decision.future.timeout(const Duration(minutes: 2), onTimeout: () => false);
 
-    _pendingIncomingUploads.remove(id);
-    _emitIncomingUploadRequests();
+      _pendingIncomingUploads.remove(id);
+      _emitIncomingUploadRequests();
+
+      if (batchId != null && batchId.isNotEmpty) {
+        _batchDecisions[batchId] = accepted;
+      }
+    }
+
+    if (batchId != null && batchId.isNotEmpty && batchFileIndex != null && batchFileCount != null) {
+      if (batchFileIndex >= batchFileCount) {
+        _batchDecisions.remove(batchId);
+      }
+    }
 
     final tempFile = File(tempPath);
     if (!accepted) {
@@ -888,6 +931,23 @@ class WebServerService {
       duration: DateTime.now().difference(request.requestedAt),
       localPath: targetPath,
     );
+    final completedTransfer = TransferModel(
+      id: id,
+      fileName: safeBase,
+      size: bytes.length,
+      progress: 1.0,
+      speed: 0.0,
+      status: TransferStatus.completed,
+      deviceName: peer.name,
+      startedAt: request.requestedAt,
+      direction: TransferDirection.received,
+      localPath: targetPath,
+      sessionId: batchId,
+      sessionFileCount: batchFileCount,
+      sessionFileIndex: batchFileIndex,
+      sessionTotalBytes: batchTotalBytes,
+    );
+    _completedWebTransferController.add(completedTransfer);
     return true;
   }
 
@@ -1123,6 +1183,7 @@ class WebServerService {
     await _incomingUploadRequestsController.close();
     await _pendingPeerRequestsController.close();
     await _connectedPeersController.close();
+    await _completedWebTransferController.close();
     await _controller.close();
   }
 }

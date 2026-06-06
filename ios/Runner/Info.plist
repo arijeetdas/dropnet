@@ -22,6 +22,14 @@
 	<string>????</string>
 	<key>CFBundleVersion</key>
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>DropNet uses your local network to discover nearby devices and transfer files directly.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_dropnet._tcp</string>
+	</array>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>DropNet needs photo library access when you choose photos or videos to share.</string>
 	<key>CFBundleIcons</key>
 	<dict>
 		<key>CFBundleAlternateIcons</key>
