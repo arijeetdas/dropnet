@@ -49,9 +49,9 @@ jobs:
       - name: Create DMG Package
         run: |
           cd build/macos/Build/Products/Release
+          rm -f DropNet-v${VERSION}-macOS.dmg
 
           create-dmg \
-            --overwrite \
             --volname "DropNet" \
             --window-size 800 500 \
             --icon-size 128 \
