@@ -10,8 +10,11 @@ class AppDelegate: FlutterAppDelegate {
   override func applicationDidFinishLaunching(_ notification: Notification) {
     super.applicationDidFinishLaunching(notification)
     if let flutterViewController = NSApp.windows.first?.contentViewController as? FlutterViewController {
-      let channel = FlutterMethodChannel(name: "dropnet/share_intent", binaryMessenger: flutterViewController.binaryMessenger)
-      channel.setMethodCallHandler { [weak self] call, result in
+      let channel = FlutterMethodChannel(
+        name: "dropnet/share_intent",
+        binaryMessenger: flutterViewController.engine.binaryMessenger
+      )
+      channel.setMethodCallHandler { [weak self] (call: FlutterMethodCall, result: @escaping FlutterResult) in
         switch call.method {
         case "consumePendingSharedPayload":
           let files = self?.pendingSharedFilePaths ?? []
