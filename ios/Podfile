@@ -29,6 +29,8 @@ target 'Runner' do
   use_frameworks!
   use_modular_headers!
 
+  pod 'SwiftTryCatch', :git => 'https://github.com/williamFalcon/SwiftTryCatch.git'
+
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
 end
 

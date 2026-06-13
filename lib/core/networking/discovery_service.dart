@@ -37,6 +37,7 @@ class DiscoveryService {
   String _cpuArchitectureTag = '';
   String _deviceId = '';
   bool _pairingModeEnabled = false;
+  DeviceType? _customDeviceType;
   final LocalTlsCertificateService _tlsCertificates;
   String _tlsCertificateFingerprint = '';
   String _tlsCertificatePem = '';
@@ -77,32 +78,50 @@ class DiscoveryService {
   }
 
   Future<void> start() async {
-    await _loadIdentity();
+    try {
+      await _loadIdentity();
+    } catch (e) {
+      if (kDebugMode) {
+        print('[DiscoveryService] Error loading identity: $e');
+      }
+    }
+
     if (_socket != null) {
       _normalizeCachedDevices();
       return;
     }
 
-    await _bindSocket();
-    if (_socket == null) {
-      return;
+    try {
+      await _bindSocket();
+    } catch (e) {
+      if (kDebugMode) {
+        print('[DiscoveryService] Error binding socket: $e');
+      }
     }
 
     _normalizeCachedDevices();
 
-    if (!Platform.isWindows) {
-      await _startMdns();
+    if (!Platform.isWindows && _socket != null) {
+      try {
+        await _startMdns();
+      } catch (e) {
+        if (kDebugMode) {
+          print('[DiscoveryService] Error starting mDNS: $e');
+        }
+      }
     }
 
-    _announce();
-    _announceTimer = Timer.periodic(
-      const Duration(seconds: 3),
-      (_) => _announce(),
-    );
-    _pruneTimer = Timer.periodic(
-      const Duration(seconds: 3),
-      (_) => _pruneOfflineDevices(),
-    );
+    if (_socket != null) {
+      _announce();
+      _announceTimer = Timer.periodic(
+        const Duration(seconds: 3),
+        (_) => _announce(),
+      );
+      _pruneTimer = Timer.periodic(
+        const Duration(seconds: 3),
+        (_) => _pruneOfflineDevices(),
+      );
+    }
   }
 
   Future<void> updateDeviceName(String newName) async {
@@ -188,6 +207,28 @@ class DiscoveryService {
     }
   }
 
+  Future<void> updateCustomDeviceType(DeviceType? type) async {
+    if (_customDeviceType == type) {
+      return;
+    }
+    _customDeviceType = type;
+
+    if (_socket == null) {
+      return;
+    }
+
+    await _announce();
+    if (!Platform.isWindows) {
+      await _mdnsSub?.cancel();
+      _mdnsSub = null;
+      await _mdnsDiscovery?.stop();
+      _mdnsDiscovery = null;
+      await _mdnsBroadcast?.stop();
+      _mdnsBroadcast = null;
+      await _startMdns();
+    }
+  }
+
   Future<void> resetManufacturerTagToAuto() async {
     final detected = await _detectManufacturerTag();
     final normalized = _normalizeManufacturer(detected);
@@ -211,12 +252,30 @@ class DiscoveryService {
   Future<void> refreshNow() async {
     _cachedLocalIp = null;
     _lastIpCacheTime = null;
-    if (_socket == null) {
-      await start();
-      return;
-    }
-    _normalizeCachedDevices();
-    await _announce();
+    try {
+      if (_socket == null) {
+        await start().timeout(const Duration(seconds: 2));
+        return;
+      }
+      _normalizeCachedDevices();
+      await _announce().timeout(const Duration(seconds: 1));
+
+      // Refresh Bonsoir discovery by stopping and starting it again
+      if (!Platform.isWindows && _mdnsDiscovery != null) {
+        try {
+          await _mdnsSub?.cancel();
+          _mdnsSub = null;
+          await _mdnsDiscovery?.stop().timeout(const Duration(seconds: 1));
+          _mdnsDiscovery = null;
+
+          // Restart discovery
+          _mdnsDiscovery = BonsoirDiscovery(type: '_dropnet._tcp');
+          await _mdnsDiscovery!.initialize().timeout(const Duration(seconds: 1));
+          _mdnsSub = _mdnsDiscovery!.eventStream?.listen(_onMdnsEvent);
+          await _mdnsDiscovery!.start().timeout(const Duration(seconds: 1));
+        } catch (_) {}
+      }
+    } catch (_) {}
     _pruneOfflineDevices();
   }
 
@@ -354,38 +413,44 @@ class DiscoveryService {
   }
 
   Future<void> _startMdns() async {
-    final ipAddress = await getLocalIp();
-    if (ipAddress.isEmpty) {
-      return;
+    try {
+      final ipAddress = await getLocalIp();
+      if (ipAddress.isEmpty) {
+        return;
+      }
+
+      await _refreshTlsFingerprintAndCertificate();
+      if (_tlsCertificateFingerprint.isEmpty) {
+        return;
+      }
+
+      final service = BonsoirService(
+        name: deviceName,
+        type: '_dropnet._tcp',
+        port: 45455,
+        attributes: {
+          'deviceId': _deviceId,
+          'deviceType': _detectType().name,
+          'manufacturer': _manufacturerTag,
+          'platform': platformTag,
+          'tlsCertificateSha256': _tlsCertificateFingerprint,
+          'pairingModeEnabled': _pairingModeEnabled ? '1' : '0',
+        },
+      );
+
+      _mdnsBroadcast = BonsoirBroadcast(service: service);
+      await _mdnsBroadcast!.initialize();
+      await _mdnsBroadcast!.start();
+
+      _mdnsDiscovery = BonsoirDiscovery(type: '_dropnet._tcp');
+      await _mdnsDiscovery!.initialize();
+      _mdnsSub = _mdnsDiscovery!.eventStream?.listen(_onMdnsEvent);
+      await _mdnsDiscovery!.start();
+    } catch (e) {
+      if (kDebugMode) {
+        print('[DiscoveryService] Error starting mDNS: $e');
+      }
     }
-
-    await _refreshTlsFingerprintAndCertificate();
-    if (_tlsCertificateFingerprint.isEmpty) {
-      return;
-    }
-
-    final service = BonsoirService(
-      name: deviceName,
-      type: '_dropnet._tcp',
-      port: 45455,
-      attributes: {
-        'deviceId': _deviceId,
-        'deviceType': _detectType().name,
-        'manufacturer': _manufacturerTag,
-        'platform': platformTag,
-        'tlsCertificateSha256': _tlsCertificateFingerprint,
-        'pairingModeEnabled': _pairingModeEnabled ? '1' : '0',
-      },
-    );
-
-    _mdnsBroadcast = BonsoirBroadcast(service: service);
-    await _mdnsBroadcast!.initialize();
-    await _mdnsBroadcast!.start();
-
-    _mdnsDiscovery = BonsoirDiscovery(type: '_dropnet._tcp');
-    await _mdnsDiscovery!.initialize();
-    _mdnsSub = _mdnsDiscovery!.eventStream?.listen(_onMdnsEvent);
-    await _mdnsDiscovery!.start();
   }
 
   void _onMdnsEvent(BonsoirDiscoveryEvent event) {
@@ -398,51 +463,7 @@ class DiscoveryService {
       if (service.attributes['deviceId'] == _deviceId) {
         return;
       }
-      final host = service.host;
-      if (host == null || host.isEmpty) {
-        return;
-      }
-      final type = service.attributes['deviceType'] ?? DeviceType.other.name;
-      final manufacturer =
-          (service.attributes['manufacturer']?.toString() ?? '').trim();
-      final platform = _normalizePlatformLabel(
-        (service.attributes['platform']?.toString() ?? '').trim(),
-      );
-      final tlsCertificateSha256 =
-          (service.attributes['tlsCertificateSha256']?.toString() ?? '')
-              .trim()
-              .toLowerCase();
-      if (tlsCertificateSha256.isEmpty) {
-        return;
-      }
-      final incomingPairingMode = _parseBoolish(
-        service.attributes['pairingModeEnabled'],
-      );
-      if (incomingPairingMode != _pairingModeEnabled) {
-        return;
-      }
-      final rawId = (service.attributes['deviceId']?.toString() ?? '').trim();
-      final resolvedId = rawId.isNotEmpty ? rawId : host;
-      if (resolvedId == _deviceId) {
-        return;
-      }
-      _upsertDiscoveredDevice(
-        resolvedId,
-        DeviceModel(
-          deviceId: resolvedId,
-          deviceName: service.name,
-          manufacturer: manufacturer,
-          platform: platform,
-          ipAddress: host,
-          deviceType: DeviceType.values.firstWhere(
-            (value) => value.name == type,
-            orElse: () => DeviceType.other,
-          ),
-          isOnline: true,
-          lastSeen: DateTime.now(),
-          tlsCertificateSha256: tlsCertificateSha256,
-        ),
-      );
+      _handleResolvedServiceAsync(service);
       return;
     }
     if (event is BonsoirDiscoveryServiceLostEvent) {
@@ -452,6 +473,93 @@ class DiscoveryService {
       _devices.remove(id);
       _emitDevices();
     }
+  }
+
+  Future<void> _handleResolvedServiceAsync(dynamic service) async {
+    String host = service.host ?? '';
+    try {
+      final dynamic dynService = service;
+      final List<dynamic>? addresses = dynService.hostAddresses;
+      if (addresses != null && addresses.isNotEmpty) {
+        final ip = addresses.firstWhere(
+          (addr) => !addr.toString().contains(':'),
+          orElse: () => addresses.first,
+        ).toString().trim();
+        if (ip.isNotEmpty) {
+          host = ip;
+        }
+      } else {
+        final hostAddr = dynService.hostAddress?.toString().trim();
+        if (hostAddr != null && hostAddr.isNotEmpty) {
+          host = hostAddr;
+        }
+      }
+    } catch (_) {}
+
+    if (host.isEmpty) {
+      return;
+    }
+
+    if (host.contains('.local') || RegExp(r'[a-zA-Z]').hasMatch(host)) {
+      try {
+        final cleanHost = host.replaceAll(RegExp(r'\.+$'), '');
+        final addresses = await InternetAddress.lookup(cleanHost).timeout(
+          const Duration(milliseconds: 1500),
+        );
+        for (final addr in addresses) {
+          if (addr.type == InternetAddressType.IPv4) {
+            host = addr.address;
+            break;
+          }
+        }
+      } catch (e) {
+        if (kDebugMode) {
+          print('[DiscoveryService] DNS lookup failed for $host: $e');
+        }
+      }
+    }
+
+    final type = service.attributes['deviceType'] ?? DeviceType.other.name;
+    final manufacturer =
+        (service.attributes['manufacturer']?.toString() ?? '').trim();
+    final platform = _normalizePlatformLabel(
+      (service.attributes['platform']?.toString() ?? '').trim(),
+    );
+    final tlsCertificateSha256 =
+        (service.attributes['tlsCertificateSha256']?.toString() ?? '')
+            .trim()
+            .toLowerCase();
+    if (tlsCertificateSha256.isEmpty) {
+      return;
+    }
+    final incomingPairingMode = _parseBoolish(
+      service.attributes['pairingModeEnabled'],
+    );
+    if (incomingPairingMode != _pairingModeEnabled) {
+      return;
+    }
+    final rawId = (service.attributes['deviceId']?.toString() ?? '').trim();
+    final resolvedId = rawId.isNotEmpty ? rawId : host;
+    if (resolvedId == _deviceId) {
+      return;
+    }
+    _upsertDiscoveredDevice(
+      resolvedId,
+      DeviceModel(
+        deviceId: resolvedId,
+        deviceName: service.name,
+        manufacturer: manufacturer,
+        platform: platform,
+        ipAddress: host,
+        deviceType: DeviceType.values.firstWhere(
+          (value) => value.name == type,
+          orElse: () => DeviceType.other,
+        ),
+        isOnline: true,
+        lastSeen: DateTime.now(),
+        tlsCertificateSha256: tlsCertificateSha256,
+      ),
+    );
   }
 
   void _upsertDiscoveredDevice(String key, DeviceModel device) {
@@ -474,17 +582,27 @@ class DiscoveryService {
 
   Future<List<InternetAddress>> _collectBroadcastTargets() async {
     final targets = <String>{_broadcastAddress};
-    final wifiBroadcast = (await _networkInfo.getWifiBroadcast())?.trim() ?? '';
+    
+    String wifiBroadcast = '';
+    try {
+      wifiBroadcast = (await _networkInfo.getWifiBroadcast())?.trim() ?? '';
+    } catch (_) {}
     if (_isUsableIpv4(wifiBroadcast)) {
       targets.add(wifiBroadcast);
     }
 
-    final wifiIp = (await _networkInfo.getWifiIP())?.trim() ?? '';
+    String wifiIp = '';
+    try {
+      wifiIp = (await _networkInfo.getWifiIP())?.trim() ?? '';
+    } catch (_) {}
     if (_isUsableIpv4(wifiIp)) {
       targets.add(_fallbackBroadcastForIp(wifiIp));
     }
 
-    final wifiGateway = (await _networkInfo.getWifiGatewayIP())?.trim() ?? '';
+    String wifiGateway = '';
+    try {
+      wifiGateway = (await _networkInfo.getWifiGatewayIP())?.trim() ?? '';
+    } catch (_) {}
     if (_isUsableIpv4(wifiGateway)) {
       // Some Android hotspot/client combinations suppress L2 broadcast but still
       // pass unicast via the gateway/host.
@@ -553,7 +671,10 @@ class DiscoveryService {
       }
     }
 
-    final wifiIp = (await _networkInfo.getWifiIP())?.trim() ?? '';
+    String wifiIp = '';
+    try {
+      wifiIp = (await _networkInfo.getWifiIP())?.trim() ?? '';
+    } catch (_) {}
     final interfaces = await _listEligibleIpv4Addresses();
 
     String result = '';
@@ -675,6 +796,9 @@ class DiscoveryService {
   }
 
   DeviceType _detectType() {
+    if (_customDeviceType != null) {
+      return _customDeviceType!;
+    }
     if (kIsWeb) {
       return DeviceType.web;
     }
@@ -695,6 +819,16 @@ class DiscoveryService {
     }
     if (Platform.isAndroid || Platform.isIOS) {
       return DeviceType.phone;
+    }
+    if (Platform.isLinux) {
+      return DeviceType.laptop;
+    }
+    if (Platform.isMacOS) {
+      final model = _manufacturerTag.toLowerCase();
+      if (model.contains('macbook')) {
+        return DeviceType.laptop;
+      }
+      return DeviceType.desktop;
     }
     return DeviceType.desktop;
   }
@@ -858,7 +992,7 @@ class DiscoveryService {
         return 'Windows';
       }
       if (Platform.isMacOS) {
-        return 'Mac';
+        return 'Apple';
       }
       if (Platform.isLinux) {
         return 'Linux';

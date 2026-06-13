@@ -10,8 +10,11 @@ import 'package:go_router/go_router.dart';
 import 'package:flutter_dynamic_icon_plus/flutter_dynamic_icon_plus.dart';
 
 import '../../models/trusted_peer_model.dart';
+import '../../models/device_model.dart';
 import '../../core/state/app_state.dart';
 import '../../core/utils/dialog_utils.dart';
+import '../../widgets/macos_smiling_logo.dart';
+import 'package:flutter/cupertino.dart' show CupertinoIcons;
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -509,6 +512,56 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                           }).toList(),
                         ),
                       ],
+                      const SizedBox(height: 16),
+                      _SettingsDivider(),
+                      const SizedBox(height: 16),
+                      _PremiumSwitchTile(
+                        icon: Icons.devices_other_rounded,
+                        title: 'Auto-detect Device Icon',
+                        subtitle: 'Automatically assign the default icon based on this device\'s type.',
+                        value: state.useDefaultDeviceIcon,
+                        onChanged: (v) => ref.read(appControllerProvider.notifier).setUseDefaultDeviceIcon(v),
+                        accentColor: colorScheme.primary,
+                      ),
+                      if (!state.useDefaultDeviceIcon) ...[
+                        const SizedBox(height: 14),
+                        Row(
+                          children: [
+                            const SizedBox(width: 44),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Custom Device Icon',
+                                    style: theme.textTheme.labelMedium?.copyWith(
+                                      fontWeight: FontWeight.bold,
+                                      color: colorScheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  SizedBox(
+                                    width: double.infinity,
+                                    child: OutlinedButton.icon(
+                                      onPressed: () => _showDeviceIconPickerDialog(context),
+                                      icon: state.customDeviceIcon == DeviceType.macos
+                                          ? const MacOSSmilingLogo(size: 18)
+                                          : Icon(_iconForDeviceType(state.customDeviceIcon)),
+                                      label: Text(_labelForDeviceType(state.customDeviceIcon)),
+                                      style: OutlinedButton.styleFrom(
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(20),
+                                        ),
+                                        padding: const EdgeInsets.symmetric(vertical: 16),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                       if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) ...[
                         const SizedBox(height: 16),
                         _SettingsDivider(),
@@ -571,7 +624,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                               children: [
                                 Text('Save location', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold)),
                                 Text(
-                                  state.downloadDirectory,
+                                  Platform.isIOS
+                                      ? 'On My iPhone ➔ DropNet'
+                                      : state.downloadDirectory,
                                   style: theme.textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
@@ -579,11 +634,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                               ],
                             ),
                           ),
-                          const SizedBox(width: 8),
-                          FilledButton.tonal(
-                            onPressed: _pickSaveLocation,
-                            child: const Text('Choose'),
-                          ),
+                          if (!Platform.isIOS) ...[
+                            const SizedBox(width: 8),
+                            FilledButton.tonal(
+                              onPressed: _pickSaveLocation,
+                              child: const Text('Choose'),
+                            ),
+                          ],
                         ],
                       ),
                       const SizedBox(height: 14),
@@ -1216,6 +1273,303 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     await ref.read(appControllerProvider.notifier).setDownloadDirectory(path);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Save location updated.')));
+  }
+
+  IconData _iconForDeviceType(DeviceType type) {
+    switch (type) {
+      case DeviceType.phone:
+        return Icons.smartphone_rounded;
+      case DeviceType.tablet:
+        return Icons.tablet_mac_rounded;
+      case DeviceType.desktop:
+        return Icons.desktop_windows_rounded;
+      case DeviceType.web:
+        return Icons.language_rounded;
+      case DeviceType.other:
+        return Icons.devices_other_rounded;
+      case DeviceType.laptop:
+        return Icons.laptop_rounded;
+      case DeviceType.android:
+        return Icons.android_rounded;
+      case DeviceType.apple:
+        return Icons.apple;
+      case DeviceType.macos:
+        return CupertinoIcons.smiley;
+      case DeviceType.windows:
+        return Icons.window_rounded;
+      case DeviceType.linux:
+        return Icons.terminal_rounded;
+    }
+  }
+
+  String _labelForDeviceType(DeviceType type) {
+    switch (type) {
+      case DeviceType.phone:
+        return 'Phone';
+      case DeviceType.tablet:
+        return 'Tablet';
+      case DeviceType.desktop:
+        return 'Desktop';
+      case DeviceType.web:
+        return 'Web Browser';
+      case DeviceType.other:
+        return 'Other Device';
+      case DeviceType.laptop:
+        return 'Laptop';
+      case DeviceType.android:
+        return 'Android';
+      case DeviceType.apple:
+        return 'Apple';
+      case DeviceType.macos:
+        return 'macOS';
+      case DeviceType.windows:
+        return 'Windows';
+      case DeviceType.linux:
+        return 'Linux';
+    }
+  }
+
+  Future<void> _showDeviceIconPickerDialog(BuildContext context) async {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final state = ref.read(appControllerProvider);
+    final initialIcon = state.customDeviceIcon;
+    var selectedIcon = initialIcon;
+
+    final allOptions = <({String name, IconData icon, DeviceType type})>[];
+    if (kIsWeb) {
+      allOptions.addAll([
+        (name: 'Phone', icon: Icons.smartphone_rounded, type: DeviceType.phone),
+        (name: 'Tablet', icon: Icons.tablet_mac_rounded, type: DeviceType.tablet),
+        (name: 'Laptop', icon: Icons.laptop_rounded, type: DeviceType.laptop),
+        (name: 'Desktop', icon: Icons.desktop_windows_rounded, type: DeviceType.desktop),
+      ]);
+    } else {
+      if (Platform.isAndroid) {
+        allOptions.addAll([
+          (name: 'Phone', icon: Icons.smartphone_rounded, type: DeviceType.phone),
+          (name: 'Tablet', icon: Icons.tablet_mac_rounded, type: DeviceType.tablet),
+          (name: 'Android', icon: Icons.android_rounded, type: DeviceType.android),
+        ]);
+      } else if (Platform.isIOS) {
+        allOptions.addAll([
+          (name: 'Phone', icon: Icons.smartphone_rounded, type: DeviceType.phone),
+          (name: 'Tablet', icon: Icons.tablet_mac_rounded, type: DeviceType.tablet),
+          (name: 'Apple', icon: Icons.apple, type: DeviceType.apple),
+        ]);
+      } else if (Platform.isMacOS) {
+        allOptions.addAll([
+          (name: 'Tablet', icon: Icons.tablet_mac_rounded, type: DeviceType.tablet),
+          (name: 'Laptop', icon: Icons.laptop_rounded, type: DeviceType.laptop),
+          (name: 'Desktop', icon: Icons.desktop_windows_rounded, type: DeviceType.desktop),
+          (name: 'Apple', icon: Icons.apple, type: DeviceType.apple),
+          (name: 'macOS', icon: CupertinoIcons.smiley, type: DeviceType.macos),
+        ]);
+      } else if (Platform.isWindows) {
+        allOptions.addAll([
+          (name: 'Tablet', icon: Icons.tablet_mac_rounded, type: DeviceType.tablet),
+          (name: 'Laptop', icon: Icons.laptop_rounded, type: DeviceType.laptop),
+          (name: 'Desktop', icon: Icons.desktop_windows_rounded, type: DeviceType.desktop),
+          (name: 'Windows', icon: Icons.window_rounded, type: DeviceType.windows),
+        ]);
+      } else if (Platform.isLinux) {
+        allOptions.addAll([
+          (name: 'Tablet', icon: Icons.tablet_mac_rounded, type: DeviceType.tablet),
+          (name: 'Laptop', icon: Icons.laptop_rounded, type: DeviceType.laptop),
+          (name: 'Desktop', icon: Icons.desktop_windows_rounded, type: DeviceType.desktop),
+          (name: 'Linux', icon: Icons.terminal_rounded, type: DeviceType.linux),
+        ]);
+      }
+    }
+
+    await showDropNetDialog<void>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            final isChanged = selectedIcon != initialIcon;
+
+            return AlertDialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(32),
+              ),
+              backgroundColor: colorScheme.surface,
+              elevation: 6,
+              titlePadding: const EdgeInsets.fromLTRB(24, 28, 24, 12),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 24),
+              actionsPadding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+              icon: Container(
+                width: 68,
+                height: 68,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      colorScheme.primary,
+                      colorScheme.primary.withValues(alpha: 0.5),
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: colorScheme.primary.withValues(alpha: 0.15),
+                      blurRadius: 16,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: Icon(
+                  Icons.devices_other_rounded,
+                  color: colorScheme.onPrimary,
+                  size: 32,
+                ),
+              ),
+              title: Text(
+                'Select Custom Icon',
+                style: theme.textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w800,
+                  color: colorScheme.onSurface,
+                  letterSpacing: -0.5,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Choose a custom icon to represent this device on the network.',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 20),
+                    // Options grid
+                    Wrap(
+                      spacing: 12,
+                      runSpacing: 12,
+                      alignment: WrapAlignment.center,
+                      children: allOptions.map((item) {
+                        final isSelected = selectedIcon == item.type;
+                        return GestureDetector(
+                          onTap: () {
+                            setState(() {
+                              selectedIcon = item.type;
+                            });
+                          },
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 200),
+                            width: 100,
+                            height: 100,
+                            decoration: BoxDecoration(
+                              color: isSelected
+                                  ? colorScheme.primaryContainer.withValues(alpha: 0.3)
+                                  : colorScheme.surfaceContainerLow,
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(
+                                color: isSelected
+                                    ? colorScheme.primary
+                                    : colorScheme.outlineVariant.withValues(alpha: 0.4),
+                                width: isSelected ? 2.5 : 1,
+                              ),
+                              boxShadow: isSelected
+                                  ? [
+                                      BoxShadow(
+                                        color: colorScheme.primary.withValues(alpha: 0.1),
+                                        blurRadius: 8,
+                                        offset: const Offset(0, 4),
+                                      ),
+                                    ]
+                                  : null,
+                            ),
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                item.type == DeviceType.macos
+                                    ? MacOSSmilingLogo(
+                                        size: 36,
+                                        color: isSelected ? colorScheme.primary : colorScheme.onSurface,
+                                      )
+                                    : Icon(
+                                        item.icon,
+                                        size: 36,
+                                        color: isSelected ? colorScheme.primary : colorScheme.onSurface,
+                                      ),
+                                const SizedBox(height: 8),
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                                  child: Text(
+                                    item.name,
+                                    style: theme.textTheme.labelSmall?.copyWith(
+                                      fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                                      color: isSelected ? colorScheme.primary : colorScheme.onSurface,
+                                    ),
+                                    textAlign: TextAlign.center,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton(
+                        onPressed: isChanged
+                            ? () {
+                                ref.read(appControllerProvider.notifier).setCustomDeviceIcon(selectedIcon);
+                                Navigator.of(context).pop();
+                              }
+                            : null,
+                        style: FilledButton.styleFrom(
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                        ),
+                        child: const Text(
+                          'Save Icon',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        style: OutlinedButton.styleFrom(
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                        ),
+                        child: const Text(
+                          'Cancel',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   Future<void> _unpairTrustedPeer(TrustedPeer peer) async {

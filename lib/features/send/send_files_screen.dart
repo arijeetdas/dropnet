@@ -7,6 +7,7 @@ import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart' show CupertinoIcons;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
@@ -20,6 +21,7 @@ import '../../core/state/app_state.dart';
 import '../../core/utils/dialog_utils.dart';
 import '../../core/utils/file_utils.dart';
 import '../../models/device_model.dart';
+import '../../widgets/macos_smiling_logo.dart';
 import '../../widgets/adaptive_nav_scaffold.dart';
 import '../../widgets/pairing_code_dialog.dart';
 import '../../widgets/tab_shell_scope.dart';
@@ -942,13 +944,20 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
                             : colorScheme.outlineVariant.withValues(alpha: 0.4),
                       ),
                     ),
-                    child: Icon(
-                      _iconForDeviceType(device.deviceType),
-                      color: selected
-                          ? colorScheme.primary
-                          : colorScheme.onSurfaceVariant,
-                      size: 24,
-                    ),
+                    child: device.deviceType == DeviceType.macos
+                        ? MacOSSmilingLogo(
+                            size: 24,
+                            color: selected
+                                ? colorScheme.primary
+                                : colorScheme.onSurfaceVariant,
+                          )
+                        : Icon(
+                            _iconForDeviceType(device.deviceType),
+                            color: selected
+                                ? colorScheme.primary
+                                : colorScheme.onSurfaceVariant,
+                            size: 24,
+                          ),
                   ),
                   Positioned(
                     bottom: 1,
@@ -1464,6 +1473,18 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
         return Icons.language_rounded;
       case DeviceType.other:
         return Icons.devices_other_rounded;
+      case DeviceType.laptop:
+        return Icons.laptop_rounded;
+      case DeviceType.android:
+        return Icons.android_rounded;
+      case DeviceType.apple:
+        return Icons.apple;
+      case DeviceType.macos:
+        return CupertinoIcons.smiley;
+      case DeviceType.windows:
+        return Icons.window_rounded;
+      case DeviceType.linux:
+        return Icons.terminal_rounded;
     }
   }
 
@@ -1710,7 +1731,7 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
   ) {
     switch (kind) {
       case _MediaPickKind.media:
-        if (!kIsWeb && Platform.isWindows) {
+        if (!kIsWeb && (Platform.isWindows || Platform.isMacOS)) {
           return (
             type: FileType.custom,
             allowedExtensions: const [
@@ -1723,6 +1744,15 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
         }
         return (type: FileType.media, allowedExtensions: null);
       case _MediaPickKind.audio:
+        if (!kIsWeb && (Platform.isWindows || Platform.isMacOS)) {
+          return (
+            type: FileType.custom,
+            allowedExtensions: const [
+              'mp3', 'wav', 'm4a', 'flac', 'aac', 'ogg', 'wma', 'opus',
+              'caf', 'aiff', 'alac', 'mid', 'midi',
+            ],
+          );
+        }
         return (type: FileType.audio, allowedExtensions: null);
     }
   }

@@ -1,0 +1,23 @@
+PODS:
+  - bonsoir_darwin (0.0.1):
+    - Flutter
+    - FlutterMacOS
+  - FlutterMacOS (1.0.0)
+
+DEPENDENCIES:
+  - bonsoir_darwin (from `Flutter/ephemeral/.symlinks/plugins/bonsoir_darwin/darwin`)
+  - FlutterMacOS (from `Flutter/ephemeral`)
+
+EXTERNAL SOURCES:
+  bonsoir_darwin:
+    :path: Flutter/ephemeral/.symlinks/plugins/bonsoir_darwin/darwin
+  FlutterMacOS:
+    :path: Flutter/ephemeral
+
+SPEC CHECKSUMS:
+  bonsoir_darwin: 29c7ccf356646118844721f36e1de4b61f6cbd0e
+  FlutterMacOS: d0db08ddef1a9af05a5ec4b724367152bb0500b1
+
+PODFILE CHECKSUM: 528b06f6cbcdfce1a0c0cc02235463a0ca320102
+
+COCOAPODS: 1.16.2

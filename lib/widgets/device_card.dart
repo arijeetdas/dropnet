@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart' show CupertinoIcons;
 
 import '../models/device_model.dart';
+import 'macos_smiling_logo.dart';
 
 class DeviceCard extends StatelessWidget {
   const DeviceCard({
@@ -36,7 +38,9 @@ class DeviceCard extends StatelessWidget {
               children: [
                 CircleAvatar(
                   radius: 18,
-                  child: Icon(_iconForDeviceType(device.deviceType)),
+                  child: device.deviceType == DeviceType.macos
+                      ? const MacOSSmilingLogo(size: 24)
+                      : Icon(_iconForDeviceType(device.deviceType)),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -77,6 +81,18 @@ class DeviceCard extends StatelessWidget {
         return Icons.language;
       case DeviceType.other:
         return Icons.devices_other;
+      case DeviceType.laptop:
+        return Icons.laptop;
+      case DeviceType.android:
+        return Icons.android;
+      case DeviceType.apple:
+        return Icons.apple;
+      case DeviceType.macos:
+        return CupertinoIcons.smiley;
+      case DeviceType.windows:
+        return Icons.window;
+      case DeviceType.linux:
+        return Icons.terminal;
     }
   }
 }

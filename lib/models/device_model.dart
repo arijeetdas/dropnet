@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-enum DeviceType { phone, tablet, desktop, web, other }
+enum DeviceType { phone, tablet, desktop, web, other, laptop, android, apple, macos, windows, linux }
 
 class DeviceModel {
   const DeviceModel({

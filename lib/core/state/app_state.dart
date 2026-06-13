@@ -77,6 +77,8 @@ class AppState {
     required this.themeMode,
     required this.themeSeed,
     required this.useSystemAccent,
+    required this.useDefaultDeviceIcon,
+    required this.customDeviceIcon,
     required this.localDeviceName,
     required this.localDeviceId,
     required this.localDeviceManufacturer,
@@ -119,6 +121,8 @@ class AppState {
   final ThemeMode themeMode;
   final Color themeSeed;
   final bool useSystemAccent;
+  final bool useDefaultDeviceIcon;
+  final DeviceType customDeviceIcon;
   final String localDeviceName;
   final String localDeviceId;
   final String localDeviceManufacturer;
@@ -163,6 +167,8 @@ class AppState {
     themeMode: ThemeMode.system,
     themeSeed: Colors.indigo,
     useSystemAccent: true,
+    useDefaultDeviceIcon: true,
+    customDeviceIcon: DeviceType.other,
     localDeviceName: '',
     localDeviceId: '',
     localDeviceManufacturer: '',
@@ -206,6 +212,8 @@ class AppState {
     ThemeMode? themeMode,
     Color? themeSeed,
     bool? useSystemAccent,
+    bool? useDefaultDeviceIcon,
+    DeviceType? customDeviceIcon,
     String? localDeviceName,
     String? localDeviceId,
     String? localDeviceManufacturer,
@@ -250,6 +258,8 @@ class AppState {
       themeMode: themeMode ?? this.themeMode,
       themeSeed: themeSeed ?? this.themeSeed,
       useSystemAccent: useSystemAccent ?? this.useSystemAccent,
+      useDefaultDeviceIcon: useDefaultDeviceIcon ?? this.useDefaultDeviceIcon,
+      customDeviceIcon: customDeviceIcon ?? this.customDeviceIcon,
       localDeviceName: localDeviceName ?? this.localDeviceName,
       localDeviceId: localDeviceId ?? this.localDeviceId,
       localDeviceManufacturer:
@@ -389,6 +399,8 @@ class AppController extends StateNotifier<AppState> {
   static const _themeModeKey = 'settings.themeMode';
   static const _themeSeedKey = 'settings.themeSeed';
   static const _useSystemAccentKey = 'settings.useSystemAccent';
+  static const _useDefaultDeviceIconKey = 'settings.useDefaultDeviceIcon';
+  static const _customDeviceIconKey = 'settings.customDeviceIcon';
   static const _downloadDirectoryKey = 'settings.downloadDirectory';
   static const _saveMediaToGalleryKey = 'settings.saveMediaToGallery';
   static const _trustedPeersKey = 'security.trustedPeers';
@@ -436,6 +448,18 @@ class AppController extends StateNotifier<AppState> {
         ThemeMode.system;
     final restoredUseSystemAccent =
         _prefs!.getBool(_useSystemAccentKey) ?? true;
+    final restoredUseDefaultDeviceIcon =
+        _prefs!.getBool(_useDefaultDeviceIconKey) ?? true;
+    final restoredCustomDeviceIconStr =
+        _prefs!.getString(_customDeviceIconKey) ?? '';
+    DeviceType restoredCustomDeviceIcon = DeviceType.other;
+    if (restoredCustomDeviceIconStr.isNotEmpty) {
+      try {
+        restoredCustomDeviceIcon = DeviceType.values.firstWhere(
+          (e) => e.name == restoredCustomDeviceIconStr,
+        );
+      } catch (_) {}
+    }
     final restoredThemeSeedValue =
         _prefs!.getInt(_themeSeedKey) ?? Colors.indigo.toARGB32();
     final restoredSaveMediaToGallery =
@@ -475,8 +499,6 @@ class AppController extends StateNotifier<AppState> {
     });
 
     final downloadDir = await downloadDirFuture;
-    final localIp = await localIpFuture;
-    final localIps = await localIpsFuture;
     final installedApkType = await Future<String>(() async {
       if (kIsWeb || !Platform.isAndroid) return '';
       return AndroidStorageService().getInstalledApkType();
@@ -485,6 +507,9 @@ class AppController extends StateNotifier<AppState> {
     final initialShared = await _shareIntent.consumePendingSharedPayload();
 
     await _discovery.updatePairingModeEnabled(restoredRequirePairingCode);
+    if (!restoredUseDefaultDeviceIcon) {
+      await _discovery.updateCustomDeviceType(restoredCustomDeviceIcon);
+    }
 
     final effectiveQuickSaveMode =
         restoredRequirePairingCode ||
@@ -499,7 +524,22 @@ class AppController extends StateNotifier<AppState> {
       unawaited(_saveDownloadDirectory(downloadDir));
     }
 
-    // Update state with all settings
+    // Parallelize discovery and transfer startup
+    try {
+      await Future.wait<void>([
+        _discovery.start(),
+        _transfer.startReceiver(saveDirectory: downloadDir),
+      ]);
+    } catch (e) {
+      if (kDebugMode) {
+        print('Error starting network services: $e');
+      }
+    }
+
+    final localIp = await localIpFuture;
+    final localIps = await localIpsFuture;
+
+    // Update state with all settings (now that identity/discovery is started and loaded)
     state = state.copyWith(
       downloadDirectory: downloadDir,
       themeMode: restoredThemeMode,
@@ -522,6 +562,8 @@ class AppController extends StateNotifier<AppState> {
       trustedPeers: restoredTrustedPeers,
       favoritePeers: restoredFavoritePeers,
       quickSaveMode: effectiveQuickSaveMode,
+      useDefaultDeviceIcon: restoredUseDefaultDeviceIcon,
+      customDeviceIcon: restoredCustomDeviceIcon,
       quickSaveInfoDismissedModes: restoredDismissedModes,
       requirePairingCodeForDirectTransfers: restoredRequirePairingCode,
       showIncomingRequestList: restoredShowIncomingRequestList,
@@ -532,12 +574,6 @@ class AppController extends StateNotifier<AppState> {
     if (effectiveQuickSaveMode != restoredQuickSaveMode) {
       unawaited(_saveQuickSaveMode(effectiveQuickSaveMode));
     }
-
-    // Parallelize discovery and transfer startup
-    await Future.wait<void>([
-      _discovery.start(),
-      _transfer.startReceiver(saveDirectory: downloadDir),
-    ]);
 
     // Defer device number update to avoid blocking startup
     unawaited(
@@ -1301,6 +1337,24 @@ class AppController extends StateNotifier<AppState> {
   void setUseSystemAccent(bool value) {
     state = state.copyWith(useSystemAccent: value);
     unawaited(_saveUseSystemAccent(value));
+  }
+
+  void setUseDefaultDeviceIcon(bool value) {
+    state = state.copyWith(useDefaultDeviceIcon: value);
+    _prefs?.setBool(_useDefaultDeviceIconKey, value);
+    if (value) {
+      unawaited(_discovery.updateCustomDeviceType(null));
+    } else {
+      unawaited(_discovery.updateCustomDeviceType(state.customDeviceIcon));
+    }
+  }
+
+  void setCustomDeviceIcon(DeviceType iconType) {
+    state = state.copyWith(customDeviceIcon: iconType);
+    _prefs?.setString(_customDeviceIconKey, iconType.name);
+    if (!state.useDefaultDeviceIcon) {
+      unawaited(_discovery.updateCustomDeviceType(iconType));
+    }
   }
 
   Future<void> setDownloadDirectory(String path) async {
@@ -2092,8 +2146,15 @@ class AppController extends StateNotifier<AppState> {
       dir = await getApplicationDocumentsDirectory();
     }
     final target = Directory('${dir.path}${Platform.pathSeparator}DropNet');
-    await target.create(recursive: true);
-    return target.path;
+    try {
+      await target.create(recursive: true);
+      return target.path;
+    } catch (_) {
+      final fallbackDir = await getApplicationDocumentsDirectory();
+      final fallbackTarget = Directory('${fallbackDir.path}${Platform.pathSeparator}DropNet');
+      await fallbackTarget.create(recursive: true);
+      return fallbackTarget.path;
+    }
   }
 
   Future<String> _legacyMobileDownloadDirectory() async {

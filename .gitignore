@@ -47,5 +47,6 @@ app.*.map.json
 # Linux packaging / WSL files
 /AppDir/
 /deb_pkg/
+/deb_build/
 /*.AppImage
 /*.deb

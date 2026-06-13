@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart' show CupertinoIcons;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/state/app_state.dart';
+import '../../models/device_model.dart';
+import '../../widgets/macos_smiling_logo.dart';
 import '../../core/utils/dialog_utils.dart';
 import '../../widgets/adaptive_nav_scaffold.dart';
 import '../../widgets/tab_shell_scope.dart';
@@ -78,6 +81,8 @@ class _ReceiveScreenState extends ConsumerState<ReceiveScreen>
           pairingRequired: state.requirePairingCodeForDirectTransfers,
           showIncomingRequestList: state.showIncomingRequestList,
           pendingRequestsCount: state.pendingIncomingRequests.length,
+          useDefaultDeviceIcon: state.useDefaultDeviceIcon,
+          customDeviceIcon: state.customDeviceIcon,
         ),
       ),
     );
@@ -323,11 +328,18 @@ class _ReceiveScreenState extends ConsumerState<ReceiveScreen>
                                       width: 1.5,
                                     ),
                                   ),
-                                  child: Icon(
-                                    _getPlatformIcon(state.localDevicePlatform),
-                                    size: platformIconSize,
-                                    color: colorScheme.onPrimaryContainer,
-                                  ),
+                                  child: (!state.useDefaultDeviceIcon && state.customDeviceIcon == DeviceType.macos)
+                                      ? MacOSSmilingLogo(
+                                          size: platformIconSize,
+                                          color: colorScheme.onPrimaryContainer,
+                                        )
+                                      : Icon(
+                                          state.useDefaultDeviceIcon
+                                              ? _getPlatformIcon(state.localDevicePlatform)
+                                              : _iconForDeviceType(state.customDeviceIcon),
+                                          size: platformIconSize,
+                                          color: colorScheme.onPrimaryContainer,
+                                        ),
                                 ),
                               ],
                             ),
@@ -407,13 +419,18 @@ class _ReceiveScreenState extends ConsumerState<ReceiveScreen>
                                     child: Row(
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
-                                        Icon(
-                                          _getPlatformIcon(
-                                            state.localDevicePlatform,
-                                          ),
-                                          size: 14,
-                                          color: colorScheme.primary,
-                                        ),
+                                        (!state.useDefaultDeviceIcon && state.customDeviceIcon == DeviceType.macos)
+                                            ? MacOSSmilingLogo(
+                                                size: 14,
+                                                color: colorScheme.primary,
+                                              )
+                                            : Icon(
+                                                state.useDefaultDeviceIcon
+                                                    ? _getPlatformIcon(state.localDevicePlatform)
+                                                    : _iconForDeviceType(state.customDeviceIcon),
+                                                size: 14,
+                                                color: colorScheme.primary,
+                                              ),
                                         const SizedBox(width: 6),
                                         Text(
                                           state.localDevicePlatform
@@ -665,8 +682,35 @@ class _ReceiveScreenState extends ConsumerState<ReceiveScreen>
     if (lower.contains('macos') || lower.contains('mac')) {
       return Icons.laptop_mac_rounded;
     }
-    if (lower.contains('linux')) return Icons.settings_suggest_rounded;
+    if (lower.contains('linux')) return Icons.laptop_rounded;
     return Icons.devices_rounded;
+  }
+
+  IconData _iconForDeviceType(DeviceType type) {
+    switch (type) {
+      case DeviceType.phone:
+        return Icons.smartphone_rounded;
+      case DeviceType.tablet:
+        return Icons.tablet_mac_rounded;
+      case DeviceType.desktop:
+        return Icons.desktop_windows_rounded;
+      case DeviceType.web:
+        return Icons.language_rounded;
+      case DeviceType.other:
+        return Icons.devices_other_rounded;
+      case DeviceType.laptop:
+        return Icons.laptop_rounded;
+      case DeviceType.android:
+        return Icons.android_rounded;
+      case DeviceType.apple:
+        return Icons.apple;
+      case DeviceType.macos:
+        return CupertinoIcons.smiley;
+      case DeviceType.windows:
+        return Icons.window_rounded;
+      case DeviceType.linux:
+        return Icons.terminal_rounded;
+    }
   }
 
   Future<void> _onQuickSaveModeTapped(
