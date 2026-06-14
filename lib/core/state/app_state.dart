@@ -2123,18 +2123,91 @@ class AppController extends StateNotifier<AppState> {
       return fallback.path;
     }
 
+    if (Platform.isIOS || Platform.isMacOS) {
+      final documentsDir = await getApplicationDocumentsDirectory();
+      final isLegacyOrInsideDocs = preferredPath.isNotEmpty && (
+        _isSameNormalizedPath(preferredPath, '${documentsDir.path}${Platform.pathSeparator}DropNet') ||
+        preferredPath.toLowerCase().contains(documentsDir.path.toLowerCase()) ||
+        preferredPath.toLowerCase().contains('/documents/dropnet')
+      );
+      print('[DropNet] documentsDir: ${documentsDir.path}');
+      print('[DropNet] preferredPath: "$preferredPath", isLegacyOrInsideDocs: $isLegacyOrInsideDocs');
+
+      if (preferredPath.isNotEmpty && !isLegacyOrInsideDocs) {
+        try {
+          final preferredDir = Directory(preferredPath);
+          await preferredDir.create(recursive: true);
+          print('[DropNet] Using preferred directory: ${preferredDir.path}');
+          return preferredDir.path;
+        } catch (e) {
+          print('[DropNet] Error creating preferredDir: $e');
+        }
+      }
+
+      Directory? downloadsDir;
+      try {
+        downloadsDir = await getDownloadsDirectory();
+        print('[DropNet] getDownloadsDirectory: ${downloadsDir?.path}');
+      } catch (e) {
+        print('[DropNet] Error calling getDownloadsDirectory: $e');
+      }
+
+      if (downloadsDir != null) {
+        final target = Directory('${downloadsDir.path}${Platform.pathSeparator}DropNet');
+        try {
+          await target.create(recursive: true);
+          print('[DropNet] Successfully created Downloads target: ${target.path}');
+          return target.path;
+        } catch (e) {
+          print('[DropNet] Error creating Downloads target: $e');
+          try {
+            final fallbackTarget = Directory('${downloadsDir.parent.path}${Platform.pathSeparator}DropNet');
+            await fallbackTarget.create(recursive: true);
+            print('[DropNet] Successfully created Downloads parent target: ${fallbackTarget.path}');
+            return fallbackTarget.path;
+          } catch (e2) {
+            print('[DropNet] Error creating Downloads parent target: $e2');
+          }
+        }
+      }
+
+      final homePath = Platform.environment['HOME'];
+      print('[DropNet] HOME env: "$homePath"');
+      if (homePath != null && homePath.isNotEmpty) {
+        final target = Directory('$homePath${Platform.pathSeparator}Downloads${Platform.pathSeparator}DropNet');
+        try {
+          await target.create(recursive: true);
+          print('[DropNet] Successfully created HOME Downloads target: ${target.path}');
+          return target.path;
+        } catch (e) {
+          print('[DropNet] Error creating HOME Downloads target: $e');
+          try {
+            final fallbackTarget = Directory('$homePath${Platform.pathSeparator}DropNet');
+            await fallbackTarget.create(recursive: true);
+            print('[DropNet] Successfully created HOME target: ${fallbackTarget.path}');
+            return fallbackTarget.path;
+          } catch (e2) {
+            print('[DropNet] Error creating HOME target: $e2');
+          }
+        }
+      }
+
+      final fallbackTarget = Directory('${documentsDir.path}${Platform.pathSeparator}DropNet');
+      try {
+        await fallbackTarget.create(recursive: true);
+        print('[DropNet] Fallback to documents: ${fallbackTarget.path}');
+        return fallbackTarget.path;
+      } catch (e) {
+        print('[DropNet] Error creating fallback documents directory: $e');
+      }
+    }
+
     if (preferredPath.isNotEmpty) {
       try {
         final preferredDir = Directory(preferredPath);
         await preferredDir.create(recursive: true);
         return preferredDir.path;
       } catch (_) {}
-    }
-
-    if (Platform.isIOS) {
-      final fallback = Directory(await _legacyMobileDownloadDirectory());
-      await fallback.create(recursive: true);
-      return fallback.path;
     }
 
     Directory dir;

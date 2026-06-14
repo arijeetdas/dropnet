@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 
@@ -17,7 +18,12 @@ Future<T?> showDropNetDialog<T>({
     barrierLabel: barrierLabel,
     barrierColor: Colors.black.withValues(alpha: 0.54),
     transitionDuration: const Duration(milliseconds: 320),
-    pageBuilder: (context, anim1, anim2) => const SizedBox.shrink(),
+    pageBuilder: (context, anim1, anim2) {
+      return PopScope(
+        canPop: !Platform.isAndroid,
+        child: builder(context),
+      );
+    },
     transitionBuilder: (context, anim1, anim2, child) {
       final curve = CurvedAnimation(parent: anim1, curve: Curves.easeOutBack);
       return BackdropFilter(
@@ -29,10 +35,7 @@ Future<T?> showDropNetDialog<T>({
           scale: curve,
           child: FadeTransition(
             opacity: anim1,
-            child: PopScope(
-              canPop: false,
-              child: builder(context),
-            ),
+            child: child,
           ),
         ),
       );

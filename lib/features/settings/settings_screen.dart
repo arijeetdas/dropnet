@@ -625,8 +625,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                                 Text('Save location', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold)),
                                 Text(
                                   Platform.isIOS
-                                      ? 'On My iPhone ➔ DropNet'
-                                      : state.downloadDirectory,
+                                      ? _getIosPathDisplay(state.downloadDirectory)
+                                      : Platform.isMacOS
+                                          ? _getMacPathDisplay(state.downloadDirectory)
+                                          : state.downloadDirectory,
                                   style: theme.textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
@@ -634,13 +636,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                               ],
                             ),
                           ),
-                          if (!Platform.isIOS) ...[
-                            const SizedBox(width: 8),
-                            FilledButton.tonal(
-                              onPressed: _pickSaveLocation,
-                              child: const Text('Choose'),
-                            ),
-                          ],
+                          const SizedBox(width: 8),
+                          FilledButton.tonal(
+                            onPressed: _pickSaveLocation,
+                            child: const Text('Choose'),
+                          ),
                         ],
                       ),
                       const SizedBox(height: 14),
@@ -1267,12 +1267,68 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
+  String _getIosPathDisplay(String path) {
+    const docDirKeyword = '/Documents';
+    final docIndex = path.indexOf(docDirKeyword);
+    if (docIndex != -1) {
+      final relative = path.substring(docIndex + docDirKeyword.length);
+      if (relative.isEmpty || relative == '/') {
+        return 'On My iPhone ➔ DropNet';
+      }
+      final segments = relative.split('/').where((s) => s.isNotEmpty);
+      if (segments.isEmpty) {
+        return 'On My iPhone ➔ DropNet';
+      }
+      return ['On My iPhone', ...segments].join(' ➔ ');
+    }
+
+    if (path.contains('/Data/Application/')) {
+      final parts = path.split('/');
+      final appIndex = parts.indexOf('Application');
+      if (appIndex != -1 && parts.length > appIndex + 2) {
+        final relativeParts = parts.sublist(appIndex + 2);
+        return ['Sandbox', ...relativeParts].join(' ➔ ');
+      }
+    }
+    return path;
+  }
+
+  String _getMacPathDisplay(String path) {
+    if (path.contains('/Library/Containers/') && path.contains('/Data/Downloads')) {
+      final dataIndex = path.indexOf('/Data/Downloads');
+      final relative = path.substring(dataIndex + '/Data/Downloads'.length);
+      final segments = relative.split('/').where((s) => s.isNotEmpty).toList();
+      return ['Downloads', ...segments].join(' ➔ ');
+    }
+    if (path.contains('/Library/Containers/') && path.contains('/Data/Documents')) {
+      final dataIndex = path.indexOf('/Data/Documents');
+      final relative = path.substring(dataIndex + '/Data/Documents'.length);
+      final segments = relative.split('/').where((s) => s.isNotEmpty).toList();
+      return ['Documents (Sandbox)', ...segments].join(' ➔ ');
+    }
+    final home = Platform.environment['HOME'];
+    if (home != null && path.startsWith(home)) {
+      final relative = path.substring(home.length);
+      final segments = relative.split('/').where((s) => s.isNotEmpty).toList();
+      if (segments.isNotEmpty && segments.first.toLowerCase() == 'downloads') {
+        return ['Downloads', ...segments.sublist(1)].join(' ➔ ');
+      }
+      return segments.join(' ➔ ');
+    }
+    return path;
+  }
+
   Future<void> _pickSaveLocation() async {
-    final path = await FilePicker.platform.getDirectoryPath();
-    if (path == null || path.isEmpty) return;
-    await ref.read(appControllerProvider.notifier).setDownloadDirectory(path);
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Save location updated.')));
+    try {
+      final path = await FilePicker.platform.getDirectoryPath();
+      if (path == null || path.isEmpty) return;
+      await ref.read(appControllerProvider.notifier).setDownloadDirectory(path);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Save location updated.')));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not update save location: $e')));
+    }
   }
 
   IconData _iconForDeviceType(DeviceType type) {

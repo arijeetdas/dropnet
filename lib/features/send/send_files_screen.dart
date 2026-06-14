@@ -1938,6 +1938,101 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
     return created;
   }
 
+  Future<Directory> _getWritableTempDirectory() async {
+    final exceptions = <String>[];
+
+    // 1. Try path_provider's getTemporaryDirectory() with symlink resolution
+    try {
+      final tempDir = await getTemporaryDirectory();
+      await tempDir.create(recursive: true);
+      final resolvedPath = await tempDir.resolveSymbolicLinks();
+      final resolvedDir = Directory(resolvedPath);
+      await resolvedDir.create(recursive: true);
+      
+      // Verify writability with a test file
+      final testFile = File(p.join(resolvedDir.path, '.write_test_${DateTime.now().microsecondsSinceEpoch}'));
+      await testFile.writeAsString('test');
+      await testFile.delete();
+      return resolvedDir;
+    } catch (e) {
+      exceptions.add('getTemporaryDirectory (resolved): $e');
+    }
+
+    // 2. Try path_provider's getTemporaryDirectory() raw
+    try {
+      final tempDir = await getTemporaryDirectory();
+      await tempDir.create(recursive: true);
+      final testFile = File(p.join(tempDir.path, '.write_test_${DateTime.now().microsecondsSinceEpoch}'));
+      await testFile.writeAsString('test');
+      await testFile.delete();
+      return tempDir;
+    } catch (e) {
+      exceptions.add('getTemporaryDirectory (raw): $e');
+    }
+
+    // 3. Try Directory.systemTemp with resolved symlinks
+    try {
+      final sysTemp = Directory.systemTemp;
+      await sysTemp.create(recursive: true);
+      final resolvedPath = await sysTemp.resolveSymbolicLinks();
+      final resolvedDir = Directory(resolvedPath);
+      await resolvedDir.create(recursive: true);
+      
+      final testFile = File(p.join(resolvedDir.path, '.write_test_${DateTime.now().microsecondsSinceEpoch}'));
+      await testFile.writeAsString('test');
+      await testFile.delete();
+      return resolvedDir;
+    } catch (e) {
+      exceptions.add('Directory.systemTemp (resolved): $e');
+    }
+
+    // 4. Try Directory.systemTemp raw
+    try {
+      final sysTemp = Directory.systemTemp;
+      await sysTemp.create(recursive: true);
+      final testFile = File(p.join(sysTemp.path, '.write_test_${DateTime.now().microsecondsSinceEpoch}'));
+      await testFile.writeAsString('test');
+      await testFile.delete();
+      return sysTemp;
+    } catch (e) {
+      exceptions.add('Directory.systemTemp (raw): $e');
+    }
+
+    // 5. Try getApplicationDocumentsDirectory() + '/.tmp'
+    try {
+      final docsDir = await getApplicationDocumentsDirectory();
+      final tempPath = p.join(docsDir.path, '.tmp');
+      final tempDir = Directory(tempPath);
+      await tempDir.create(recursive: true);
+      
+      final testFile = File(p.join(tempDir.path, '.write_test_${DateTime.now().microsecondsSinceEpoch}'));
+      await testFile.writeAsString('test');
+      await testFile.delete();
+      return tempDir;
+    } catch (e) {
+      exceptions.add('getApplicationDocumentsDirectory/.tmp: $e');
+    }
+
+    // 6. Try getApplicationDocumentsDirectory() itself
+    try {
+      final docsDir = await getApplicationDocumentsDirectory();
+      final testFile = File(p.join(docsDir.path, '.write_test_${DateTime.now().microsecondsSinceEpoch}'));
+      await testFile.writeAsString('test');
+      await testFile.delete();
+      return docsDir;
+    } catch (e) {
+      exceptions.add('getApplicationDocumentsDirectory (raw): $e');
+    }
+
+    final errorsJoined = exceptions.join('; ');
+    print('[DropNet] All temporary directory resolution strategies failed: $errorsJoined');
+    throw FileSystemException(
+      'Failed to resolve a writable temporary directory. Errors: $errorsJoined',
+      '',
+      const OSError('Path not found', 2),
+    );
+  }
+
   Future<String?> _writeTextToTempFile(
     String text, {
     required String prefix,
@@ -1947,22 +2042,12 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
       return null;
     }
 
-    Directory tempDirectory;
-    try {
-      tempDirectory = await getTemporaryDirectory();
-    } catch (_) {
-      tempDirectory = Directory.systemTemp;
-    }
-
+    final tempDirectory = await _getWritableTempDirectory();
     final fileName =
         '${prefix}_${DateTime.now().microsecondsSinceEpoch}_${normalized.length}.txt';
     final file = File(p.join(tempDirectory.path, fileName));
-    try {
-      await file.writeAsString(normalized);
-      return file.path;
-    } catch (_) {
-      return null;
-    }
+    await file.writeAsString(normalized);
+    return file.path;
   }
 
   Future<void> _addPaths(Iterable<String> paths) async {
@@ -2800,9 +2885,7 @@ class _AddTextDialogState extends State<_AddTextDialog> {
     final isCapped = desiredHeight >= maxInputHeight;
     final trimmedText = _controller.text.trim();
 
-    return PopScope(
-      canPop: false,
-      child: AlertDialog(
+    return AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(32)),
         backgroundColor: colorScheme.surface,
         elevation: 6,
@@ -2944,7 +3027,7 @@ class _AddTextDialogState extends State<_AddTextDialog> {
             children: [
               Expanded(
                 child: OutlinedButton(
-                  onPressed: () => Navigator.of(context).pop(),
+                  onPressed: () => Navigator.of(context, rootNavigator: true).pop(),
                   style: OutlinedButton.styleFrom(
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(20),
@@ -2960,7 +3043,7 @@ class _AddTextDialogState extends State<_AddTextDialog> {
               const SizedBox(width: 12),
               Expanded(
                 child: FilledButton(
-                  onPressed: () => Navigator.of(context).pop(_controller.text),
+                  onPressed: () => Navigator.of(context, rootNavigator: true).pop(_controller.text),
                   style: FilledButton.styleFrom(
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(20),
@@ -2976,8 +3059,7 @@ class _AddTextDialogState extends State<_AddTextDialog> {
             ],
           ),
         ],
-      ),
-    );
+      );
   }
 }
 

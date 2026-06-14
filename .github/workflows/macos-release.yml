@@ -1,4 +1,4 @@
-name: Build macOS Release
+name: Build macOS & iOS Release
 
 on:
   workflow_dispatch:
@@ -70,3 +70,43 @@ jobs:
         with:
           name: DropNet-v${{ env.VERSION }}-macOS-dmg
           path: build/macos/Build/Products/Release/DropNet-v${{ env.VERSION }}-macOS.dmg
+
+  build-ios:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Flutter Version
+        run: flutter --version
+
+      - name: Get Dependencies
+        run: flutter pub get
+
+      - name: Extract Version
+        run: |
+          VERSION=$(grep '^version:' pubspec.yaml | sed 's/version: //' | cut -d '+' -f 1)
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "Detected version: $VERSION"
+
+      - name: Build iOS Release (No Codesign)
+        run: flutter build ios --release --no-codesign
+
+      - name: Package iOS IPA
+        run: |
+          mkdir -p Payload
+          cp -r build/ios/iphoneos/*.app Payload/
+          zip -r DropNet-v${VERSION}-iOS.ipa Payload
+
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DropNet-v${{ env.VERSION }}-iOS-ipa
+          path: DropNet-v${{ env.VERSION }}-iOS.ipa
