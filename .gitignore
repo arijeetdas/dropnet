@@ -33,6 +33,10 @@ migrate_working_dir/
 /build/
 /coverage/
 
+# Ignore pubspec.lock in sub-packages, keep in root
+**/pubspec.lock
+!/pubspec.lock
+
 # Symbolication related
 app.*.symbols
 
@@ -48,5 +52,7 @@ app.*.map.json
 /AppDir/
 /deb_pkg/
 /deb_build/
+/dropnet_*/
+/tools/wsl_build.sh
 /*.AppImage
 /*.deb

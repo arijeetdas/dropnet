@@ -5,6 +5,7 @@
 list(APPEND FLUTTER_PLUGIN_LIST
   desktop_drop
   dynamic_color
+  restart_app
   url_launcher_linux
 )
 

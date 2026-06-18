@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart' show CupertinoIcons;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../core/state/app_state.dart';
 import '../../models/device_model.dart';
+import '../../models/private_network_profile.dart';
 import '../../widgets/macos_smiling_logo.dart';
 import '../../core/utils/dialog_utils.dart';
 import '../../widgets/adaptive_nav_scaffold.dart';
@@ -83,6 +85,10 @@ class _ReceiveScreenState extends ConsumerState<ReceiveScreen>
           pendingRequestsCount: state.pendingIncomingRequests.length,
           useDefaultDeviceIcon: state.useDefaultDeviceIcon,
           customDeviceIcon: state.customDeviceIcon,
+          manualConnectEnabled: state.manualConnectEnabled,
+          fullPrivateModeEnabled: state.fullPrivateModeEnabled,
+          privateNetworkProfiles: state.privateNetworkProfiles,
+          activePrivateProfileId: state.activePrivateProfileId,
         ),
       ),
     );
@@ -360,6 +366,48 @@ class _ReceiveScreenState extends ConsumerState<ReceiveScreen>
                               ),
                             ],
                           ),
+                          if (state.fullPrivateModeEnabled) ...[
+                            const SizedBox(height: 8),
+                            () {
+                              PrivateNetworkProfile? activeProfile;
+                              for (final p in state.privateNetworkProfiles) {
+                                if (p.id == state.activePrivateProfileId) {
+                                  activeProfile = p;
+                                  break;
+                                }
+                              }
+                              final profileName = activeProfile?.name ?? 'Private';
+                              return Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                decoration: BoxDecoration(
+                                  color: colorScheme.primary.withValues(alpha: 0.1),
+                                  borderRadius: BorderRadius.circular(16),
+                                  border: Border.all(
+                                    color: colorScheme.primary.withValues(alpha: 0.25),
+                                    width: 1,
+                                  ),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      Icons.lock_outline_rounded,
+                                      size: 14,
+                                      color: colorScheme.primary,
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      '🔒 $profileName Network',
+                                      style: theme.textTheme.labelSmall?.copyWith(
+                                        color: colorScheme.primary,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            }(),
+                          ],
                         ],
                       ),
                       SizedBox(height: sectionGap),
@@ -520,6 +568,20 @@ class _ReceiveScreenState extends ConsumerState<ReceiveScreen>
                                   ),
                                 ],
                               ),
+                               if (state.manualConnectEnabled && !state.fullPrivateModeEnabled && state.localIp.isNotEmpty) ...[
+                                const SizedBox(height: 16),
+                                FilledButton.icon(
+                                  onPressed: () => _showConnectionQrDialog(context, state),
+                                  style: FilledButton.styleFrom(
+                                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(16),
+                                    ),
+                                  ),
+                                  icon: const Icon(Icons.qr_code_rounded, size: 18),
+                                  label: const Text('Show Connection QR', style: TextStyle(fontWeight: FontWeight.bold)),
+                                ),
+                              ],
                             ],
                           ),
                         ),
@@ -890,6 +952,177 @@ class _ReceiveScreenState extends ConsumerState<ReceiveScreen>
     ref
         .read(appControllerProvider.notifier)
         .setQuickSaveInfoDismissed(mode: mode, dismissed: true);
+  }
+
+  void _showConnectionQrDialog(BuildContext context, dynamic state) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final notifier = ref.read(appControllerProvider.notifier);
+    final appState = ref.read(appControllerProvider);
+    final port = notifier.getActiveListeningPort();
+    final localIp = state.localIp;
+
+    showDropNetDialog<void>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(32),
+          ),
+          backgroundColor: colorScheme.surface,
+          elevation: 6,
+          titlePadding: const EdgeInsets.fromLTRB(24, 28, 24, 12),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 24),
+          actionsPadding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+          icon: Container(
+            width: 68,
+            height: 68,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  colorScheme.primaryContainer,
+                  colorScheme.primaryContainer.withValues(alpha: 0.5),
+                ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: colorScheme.primary.withValues(alpha: 0.15),
+                  blurRadius: 16,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Icon(
+              Icons.qr_code_2_rounded,
+              color: colorScheme.onPrimaryContainer,
+              size: 32,
+            ),
+          ),
+          title: Text(
+            'Connection QR',
+            style: theme.textTheme.headlineSmall?.copyWith(
+              fontWeight: FontWeight.w800,
+              color: colorScheme.onSurface,
+              letterSpacing: -0.5,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          content: SizedBox(
+            width: 320,
+            child: Card(
+              elevation: 0,
+              color: colorScheme.surfaceContainerLow,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(24),
+                side: BorderSide(
+                  color: colorScheme.outlineVariant.withValues(alpha: 0.25),
+                ),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: FutureBuilder<String>(
+                  future: notifier.getLocalTlsCertificateSha256(),
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const SizedBox(
+                        height: 240,
+                        child: Center(
+                          child: CircularProgressIndicator(),
+                        ),
+                      );
+                    }
+                    if (snapshot.hasError || !snapshot.hasData) {
+                      return SizedBox(
+                        height: 184,
+                        child: Center(
+                          child: Text(
+                            'Failed to generate certificate fingerprint.',
+                            style: TextStyle(color: colorScheme.error, fontWeight: FontWeight.bold),
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                      );
+                    }
+
+                    final tlsFingerprint = snapshot.data!;
+                    final connectionUri = Uri(
+                      scheme: 'dropnet',
+                      host: 'connect',
+                      queryParameters: {
+                        'ip': localIp,
+                        'port': port.toString(),
+                        'name': appState.localDeviceBaseName,
+                        'id': appState.localDeviceId,
+                        'platform': appState.localDevicePlatform,
+                        'type': appState.customDeviceIcon.name,
+                        'tls': tlsFingerprint,
+                      },
+                    ).toString();
+
+                    return Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'Scan this code on the Sender device using the Scan QR camera to connect instantly.',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: colorScheme.onSurfaceVariant,
+                            fontWeight: FontWeight.w500,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 16),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(16),
+                          child: Container(
+                            color: isDark ? Colors.black : Colors.white,
+                            padding: const EdgeInsets.all(12),
+                            child: QrImageView(
+                              data: connectionUri,
+                              size: 184,
+                              eyeStyle: QrEyeStyle(
+                                color: isDark ? Colors.white : Colors.black,
+                              ),
+                              dataModuleStyle: QrDataModuleStyle(
+                                color: isDark ? Colors.white : Colors.black,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+              ),
+            ),
+          ),
+          actions: [
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    style: OutlinedButton.styleFrom(
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                    ),
+                    child: const Text(
+                      'Close',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        );
+      },
+    );
   }
 }
 

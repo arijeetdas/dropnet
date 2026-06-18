@@ -2,9 +2,13 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../core/networking/private_profile_manager.dart';
+import '../../core/state/app_state.dart';
 import '../../core/utils/dialog_utils.dart';
 
 import '../../core/platform/media_store_service.dart';
@@ -12,7 +16,7 @@ import '../../core/utils/file_utils.dart';
 import '../../core/utils/transfer_visuals.dart';
 import '../../models/transfer_model.dart';
 
-class ReceivedFileScreen extends StatefulWidget {
+class ReceivedFileScreen extends ConsumerStatefulWidget {
   const ReceivedFileScreen({
     super.key,
     required this.transfer,
@@ -21,11 +25,12 @@ class ReceivedFileScreen extends StatefulWidget {
   final TransferModel transfer;
 
   @override
-  State<ReceivedFileScreen> createState() => _ReceivedFileScreenState();
+  ConsumerState<ReceivedFileScreen> createState() => _ReceivedFileScreenState();
 }
 
-class _ReceivedFileScreenState extends State<ReceivedFileScreen> {
+class _ReceivedFileScreenState extends ConsumerState<ReceivedFileScreen> {
   bool _working = false;
+  bool _importingProfile = false;
   final MediaStoreService _mediaStoreService = const MediaStoreService();
 
   String get _localPath => widget.transfer.localPath?.trim() ?? '';
@@ -230,6 +235,17 @@ class _ReceivedFileScreenState extends State<ReceivedFileScreen> {
   }) {
     final kind = TransferVisuals.kindForName(transfer.fileName);
 
+    // Smart Import: .dnetprofile files get a dedicated import UI.
+    if (kind == TransferFileKind.config) {
+      return _buildProfileImportPreview(
+        context: context,
+        localPath: localPath,
+        accent: accent,
+        colorScheme: colorScheme,
+        theme: theme,
+      );
+    }
+
     if (kind == TransferFileKind.image && localPath.isNotEmpty) {
       return ClipRRect(
         borderRadius: BorderRadius.circular(20),
@@ -260,6 +276,580 @@ class _ReceivedFileScreenState extends State<ReceivedFileScreen> {
     }
 
     return _GenericPreview(fileName: transfer.fileName, accent: accent);
+  }
+
+  // ── Profile Import Preview ──────────────────────────────────────────────────
+
+  Widget _buildProfileImportPreview({
+    required BuildContext context,
+    required String localPath,
+    required Color accent,
+    required ColorScheme colorScheme,
+    required ThemeData theme,
+  }) {
+    return FutureBuilder<Map<String, dynamic>?>(
+      future: PrivateProfileManager.previewProfileFile(localPath),
+      builder: (context, snapshot) {
+        final data = snapshot.data;
+        final isLoading = snapshot.connectionState == ConnectionState.waiting;
+
+        if (isLoading) {
+          return const Center(child: CircularProgressIndicator());
+        }
+
+        if (data == null) {
+          // Fallback to generic if parsing fails.
+          return _GenericPreview(fileName: widget.transfer.fileName, accent: accent);
+        }
+
+        final name = (data['name'] as String? ?? '').trim();
+        final description = (data['description'] as String? ?? '').trim();
+        final discoveryPort = data['discoveryPort'] as int?;
+        final listeningPort = data['listeningPort'] as int?;
+        final webPortalPort = data['webPortalPort'] as int?;
+
+        return Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(28),
+            gradient: LinearGradient(
+              colors: [
+                accent.withValues(alpha: 0.12),
+                colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
+              ],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+          ),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Header
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: accent.withValues(alpha: 0.15),
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: accent.withValues(alpha: 0.3),
+                          width: 1.5,
+                        ),
+                      ),
+                      child: Icon(Icons.lan_rounded, color: accent, size: 28),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Private Network Profile',
+                            style: theme.textTheme.labelMedium?.copyWith(
+                              color: accent,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            name.isEmpty ? 'Unnamed Profile' : name,
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: -0.2,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                if (description.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  Text(
+                    description,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 20),
+                // Port details
+                Container(
+                  padding: const EdgeInsets.all(18),
+                  decoration: BoxDecoration(
+                    color: colorScheme.surface.withValues(alpha: 0.8),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: colorScheme.outlineVariant.withValues(alpha: 0.5),
+                    ),
+                  ),
+                  child: Column(
+                    children: [
+                      _PortInfoRow(
+                        icon: Icons.network_ping_rounded,
+                        label: 'Discovery Port',
+                        value: discoveryPort?.toString() ?? '—',
+                        accent: accent,
+                        theme: theme,
+                        colorScheme: colorScheme,
+                      ),
+                      if (listeningPort != null)
+                        const Divider(height: 20, thickness: 0.5),
+                      _PortInfoRow(
+                        icon: Icons.electrical_services_rounded,
+                        label: 'Listening Port',
+                        value: listeningPort?.toString() ?? '—',
+                        accent: accent,
+                        theme: theme,
+                        colorScheme: colorScheme,
+                      ),
+                      if (webPortalPort != null) ...[
+                        const Divider(height: 20, thickness: 0.5),
+                        _PortInfoRow(
+                          icon: Icons.language_rounded,
+                          label: 'Web Portal Port',
+                          value: webPortalPort.toString(),
+                          accent: accent,
+                          theme: theme,
+                          colorScheme: colorScheme,
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+                // Import button
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: _importingProfile ? null : () => _importProfile(localPath),
+                    icon: _importingProfile
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                          )
+                        : const Icon(Icons.download_rounded),
+                    label: Text(
+                      _importingProfile ? 'Importing…' : 'Import Profile',
+                      style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                    ),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: accent,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: _working ? null : _openFile,
+                    icon: const Icon(Icons.folder_open_rounded),
+                    label: const Text('Save / Open File'),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _importProfile(String filePath) async {
+    if (_importingProfile) return;
+    setState(() => _importingProfile = true);
+    try {
+      final theme = Theme.of(context);
+      final colorScheme = theme.colorScheme;
+
+      // Read the data first
+      final readRes = await ref
+          .read(appControllerProvider.notifier)
+          .readProfileDataFromFile(filePath);
+      if (readRes.error != null || readRes.data == null) {
+        _showMessage(readRes.error ?? 'Failed to read profile file.');
+        return;
+      }
+
+      final data = readRes.data!;
+      final name = data['name']?.toString() ?? 'Unnamed';
+      final desc = data['description']?.toString() ?? '';
+      final discoveryPort = data['discoveryPort'] as int? ?? 0;
+      final listeningPort = data['listeningPort'] as int? ?? 0;
+      final webPortalPort = data['webPortalPort'] as int?;
+
+      bool activateImmediately = true;
+
+      if (!mounted) return;
+
+      final shouldImport = await showDropNetDialog<bool>(
+        context: context,
+        builder: (context) => StatefulBuilder(
+          builder: (context, setLocalState) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(32)),
+            backgroundColor: colorScheme.surface,
+            elevation: 6,
+            titlePadding: const EdgeInsets.fromLTRB(24, 28, 24, 16),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 24),
+            actionsPadding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+            icon: Container(
+              width: 68,
+              height: 68,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    colorScheme.primaryContainer,
+                    colorScheme.primaryContainer.withValues(alpha: 0.5),
+                  ],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: colorScheme.primary.withValues(alpha: 0.15),
+                    blurRadius: 16,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Icon(
+                Icons.download_rounded,
+                color: colorScheme.onPrimaryContainer,
+                size: 32,
+              ),
+            ),
+            title: Text(
+              'Import Private Network',
+              style: theme.textTheme.headlineSmall?.copyWith(
+                fontWeight: FontWeight.w800,
+                color: colorScheme.onSurface,
+                letterSpacing: -0.5,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            content: SizedBox(
+              width: 520,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Card(
+                    elevation: 0,
+                    color: colorScheme.surfaceContainerLow,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(24),
+                      side: BorderSide(
+                        color: colorScheme.outlineVariant.withValues(alpha: 0.25),
+                      ),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(20),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Icon(Icons.label_rounded, size: 18, color: colorScheme.primary),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  name,
+                                  style: theme.textTheme.titleMedium?.copyWith(
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          if (desc.isNotEmpty) ...[
+                            const SizedBox(height: 8),
+                            Padding(
+                              padding: const EdgeInsets.only(left: 26),
+                              child: Text(
+                                desc,
+                                style: theme.textTheme.bodyMedium?.copyWith(
+                                  color: colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ),
+                          ],
+                          const Divider(height: 24, thickness: 0.5),
+                          Row(
+                            children: [
+                              Icon(Icons.network_ping_rounded, size: 18, color: colorScheme.secondary),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  'Discovery Port: $discoveryPort',
+                                  style: theme.textTheme.bodyMedium,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              Icon(Icons.electrical_services_rounded, size: 18, color: colorScheme.secondary),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  'Listening Port: $listeningPort',
+                                  style: theme.textTheme.bodyMedium,
+                                ),
+                              ),
+                            ],
+                          ),
+                          if (webPortalPort != null) ...[
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                Icon(Icons.language_rounded, size: 18, color: colorScheme.secondary),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    'Web Portal Port: $webPortalPort',
+                                    style: theme.textTheme.bodyMedium,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  CheckboxListTile(
+                    contentPadding: EdgeInsets.zero,
+                    controlAffinity: ListTileControlAffinity.leading,
+                    title: const Text('Activate immediately'),
+                    value: activateImmediately,
+                    onChanged: (v) {
+                      setLocalState(() {
+                        activateImmediately = v ?? true;
+                      });
+                    },
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.of(context).pop(false),
+                      style: OutlinedButton.styleFrom(
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                      ),
+                      child: const Text('Cancel', style: TextStyle(fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: FilledButton(
+                      onPressed: () => Navigator.of(context).pop(true),
+                      style: FilledButton.styleFrom(
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                      ),
+                      child: const Text('Import', style: TextStyle(fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      );
+
+      if (shouldImport != true || !mounted) return;
+
+      // Check duplicate
+      final duplicate = ref.read(appControllerProvider.notifier).checkDuplicateProfile(data);
+      if (duplicate != null) {
+        if (!mounted) return;
+        final conflictChoice = await showDropNetDialog<String>(
+          context: context,
+          builder: (context) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(32)),
+            backgroundColor: colorScheme.surface,
+            elevation: 6,
+            titlePadding: const EdgeInsets.fromLTRB(24, 28, 24, 16),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 24),
+            actionsPadding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+            icon: Container(
+              width: 68,
+              height: 68,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    colorScheme.errorContainer,
+                    colorScheme.errorContainer.withValues(alpha: 0.5),
+                  ],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: colorScheme.error.withValues(alpha: 0.15),
+                    blurRadius: 16,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Icon(
+                Icons.warning_amber_rounded,
+                color: colorScheme.onErrorContainer,
+                size: 32,
+              ),
+            ),
+            title: Text(
+              'Profile Already Exists',
+              style: theme.textTheme.headlineSmall?.copyWith(
+                fontWeight: FontWeight.w800,
+                color: colorScheme.onSurface,
+                letterSpacing: -0.5,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            content: SizedBox(
+              width: 520,
+              child: Card(
+                elevation: 0,
+                color: colorScheme.surfaceContainerLow,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(24),
+                  side: BorderSide(
+                    color: colorScheme.outlineVariant.withValues(alpha: 0.25),
+                  ),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Text(
+                    'A profile named "$name" or using ports ($discoveryPort, $listeningPort) already exists.\n\nWhat would you like to do?',
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            actions: [
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () => Navigator.of(context).pop('copy'),
+                          style: OutlinedButton.styleFrom(
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                          ),
+                          child: const Text('Import As Copy', style: TextStyle(fontWeight: FontWeight.bold)),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: FilledButton(
+                          onPressed: () => Navigator.of(context).pop('replace'),
+                          style: FilledButton.styleFrom(
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                          ),
+                          child: const Text('Replace Existing', style: TextStyle(fontWeight: FontWeight.bold)),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  OutlinedButton(
+                    onPressed: () => Navigator.of(context).pop('cancel'),
+                    style: OutlinedButton.styleFrom(
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                    ),
+                    child: const Text('Cancel', style: TextStyle(fontWeight: FontWeight.bold)),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+
+        if (conflictChoice == null || conflictChoice == 'cancel' || !mounted) return;
+
+        final importRes = await ref.read(appControllerProvider.notifier).importProfileWithDetails(
+          profileData: data,
+          mode: conflictChoice,
+          replaceProfileId: duplicate.id,
+          activate: activateImmediately,
+        );
+
+        if (!mounted) return;
+        if (importRes.error != null) {
+          _showMessage(importRes.error!);
+        } else {
+          _showMessage("Profile '${importRes.profile?.name}' imported successfully.");
+          Navigator.of(context).pop();
+          context.push('/settings/private-networks');
+        }
+      } else {
+        // Normal import
+        final importRes = await ref.read(appControllerProvider.notifier).importProfileWithDetails(
+          profileData: data,
+          mode: 'normal',
+          activate: activateImmediately,
+        );
+
+        if (!mounted) return;
+        if (importRes.error != null) {
+          _showMessage(importRes.error!);
+        } else {
+          _showMessage("Profile '${importRes.profile?.name}' imported successfully.");
+          Navigator.of(context).pop();
+          context.push('/settings/private-networks');
+        }
+      }
+    } catch (e) {
+      if (mounted) _showMessage('Import failed: $e');
+    } finally {
+      if (mounted) setState(() => _importingProfile = false);
+    }
   }
 
   void _showMessage(String message) {
@@ -387,11 +977,18 @@ class _ReceivedFileScreenState extends State<ReceivedFileScreen> {
                         icon: const Icon(Icons.delete_outline_rounded),
                         label: const Text('Delete'),
                       ),
-                      FilledButton.icon(
-                        onPressed: _working ? null : _openFile,
-                        icon: const Icon(Icons.open_in_new_rounded),
-                        label: const Text('Open'),
-                      ),
+                      if (TransferVisuals.kindForName(transfer.fileName) == TransferFileKind.config)
+                        FilledButton.icon(
+                          onPressed: _importingProfile ? null : () => _importProfile(_localPath),
+                          icon: const Icon(Icons.download_rounded),
+                          label: const Text('Import'),
+                        )
+                      else
+                        FilledButton.icon(
+                          onPressed: _working ? null : _openFile,
+                          icon: const Icon(Icons.open_in_new_rounded),
+                          label: const Text('Open'),
+                        ),
                     ],
                   ),
                 ],
@@ -1208,3 +1805,57 @@ class _DocPreview extends StatelessWidget {
     );
   }
 }
+
+// ── Port Info Row (used in profile import preview) ──────────────────────────
+
+class _PortInfoRow extends StatelessWidget {
+  const _PortInfoRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.accent,
+    required this.theme,
+    required this.colorScheme,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+  final Color accent;
+  final ThemeData theme;
+  final ColorScheme colorScheme;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, size: 16, color: accent),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            label,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color: accent.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: accent.withValues(alpha: 0.25)),
+          ),
+          child: Text(
+            value,
+            style: theme.textTheme.labelLarge?.copyWith(
+              color: accent,
+              fontWeight: FontWeight.w800,
+              fontFamily: 'monospace',
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}

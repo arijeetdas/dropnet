@@ -21,7 +21,9 @@ class DiscoveryService {
        _tlsCertificates = tlsCertificateService ?? LocalTlsCertificateService(),
        _deviceBaseName = _normalizeBaseName(deviceName) ?? _defaultBaseName();
 
-  static const _discoveryPort = 45454;
+  int _discoveryPort = 45454;
+  int _listeningPort = 45455;
+  bool _broadcastingEnabled = true;
   static const _broadcastAddress = '255.255.255.255';
   static const _presenceTransportBroadcast = 'broadcast';
   static const _presenceTransportReply = 'reply';
@@ -52,9 +54,12 @@ class DiscoveryService {
   RawDatagramSocket? _socket;
   StreamSubscription<RawSocketEvent>? _socketSub;
   bool _restartingSocket = false;
+  bool _fullPrivateMode = false;
+  bool _running = false;
   Timer? _announceTimer;
   Timer? _pruneTimer;
   final Map<String, DeviceModel> _devices = {};
+  final Set<String> _manualDeviceIds = {};
   bool _identityLoaded = false;
   String? _cachedLocalIp;
   DateTime? _lastIpCacheTime;
@@ -78,6 +83,10 @@ class DiscoveryService {
   }
 
   Future<void> start() async {
+    if (kDebugMode) {
+      print('[DiscoveryService] Starting service (running state: $_running, port: $_discoveryPort)');
+    }
+    _running = true;
     try {
       await _loadIdentity();
     } catch (e) {
@@ -111,18 +120,114 @@ class DiscoveryService {
       }
     }
 
-    if (_socket != null) {
+    if (_socket != null && _running) {
       _announce();
+      // Rapid announcements on startup to ensure instant detection
+      unawaited(Future.delayed(const Duration(milliseconds: 500), () {
+        if (_running) _announce();
+      }));
+      unawaited(Future.delayed(const Duration(milliseconds: 1500), () {
+        if (_running) _announce();
+      }));
+
       _announceTimer = Timer.periodic(
-        const Duration(seconds: 3),
-        (_) => _announce(),
+        const Duration(seconds: 2),
+        (_) {
+          if (_running) _announce();
+        },
       );
       _pruneTimer = Timer.periodic(
-        const Duration(seconds: 3),
-        (_) => _pruneOfflineDevices(),
+        const Duration(seconds: 2),
+        (_) {
+          if (_running) _pruneOfflineDevices();
+        },
       );
     }
   }
+
+  void configure({int? discoveryPort, int? listeningPort, bool? broadcastingEnabled, bool? fullPrivateMode}) {
+    if (discoveryPort != null) {
+      _discoveryPort = discoveryPort;
+    }
+    if (listeningPort != null) {
+      _listeningPort = listeningPort;
+    }
+    if (broadcastingEnabled != null) {
+      _broadcastingEnabled = broadcastingEnabled;
+    }
+    if (fullPrivateMode != null) {
+      _fullPrivateMode = fullPrivateMode;
+    }
+    if (kDebugMode) {
+      print('[DiscoveryService] Configured: Port=$_discoveryPort, Listening=$_listeningPort, Broad=$broadcastingEnabled, Private=$_fullPrivateMode');
+    }
+  }
+
+  Future<void> stop() async {
+    if (kDebugMode) {
+      print('[DiscoveryService] Stopping service');
+    }
+    _running = false;
+    // Broadcast offline presence packet to let peers know we are offline immediately
+    try {
+      if (_socket != null && _broadcastingEnabled) {
+        final packet = await _buildPresencePacket(
+          transport: _presenceTransportBroadcast,
+          isOnline: false,
+        );
+        if (packet != null) {
+          final targets = await _collectBroadcastTargets();
+          for (final target in targets) {
+            _socket?.send(packet, target, _discoveryPort);
+          }
+        }
+      }
+    } catch (_) {}
+
+    _announceTimer?.cancel();
+    _announceTimer = null;
+    _pruneTimer?.cancel();
+    _pruneTimer = null;
+    await _socketSub?.cancel();
+    _socketSub = null;
+    await _mdnsSub?.cancel();
+    _mdnsSub = null;
+    if (kDebugMode) {
+      if (_mdnsDiscovery != null) {
+        print('[DiscoveryService] Stopping mDNS Discovery browser');
+      }
+    }
+    await _mdnsDiscovery?.stop();
+    _mdnsDiscovery = null;
+    if (kDebugMode) {
+      if (_mdnsBroadcast != null) {
+        print('[DiscoveryService] Stopping mDNS Advertiser');
+      }
+    }
+    await _mdnsBroadcast?.stop();
+    _mdnsBroadcast = null;
+    _socket?.close();
+    _socket = null;
+  }
+
+  void addManualDevice(DeviceModel device) {
+    final key = device.deviceId.trim().isEmpty ? device.ipAddress : device.deviceId.trim();
+    _manualDeviceIds.add(key);
+    _upsertDiscoveredDevice(key, device);
+  }
+
+  bool isManualDevice(DeviceModel device) {
+    final key = device.deviceId.trim().isEmpty ? device.ipAddress : device.deviceId.trim();
+    return _manualDeviceIds.contains(key);
+  }
+
+  void removeManualDevice(DeviceModel device) {
+    final key = device.deviceId.trim().isEmpty ? device.ipAddress : device.deviceId.trim();
+    _manualDeviceIds.remove(key);
+    _devices.remove(key);
+    _emitDevices();
+  }
+
 
   Future<void> updateDeviceName(String newName) async {
     final normalized = _normalizeBaseName(newName);
@@ -280,41 +385,94 @@ class DiscoveryService {
   }
 
   Future<void> _bindSocket() async {
+    if (!_running) {
+      if (kDebugMode) {
+        print('[DiscoveryService] Aborting socket bind: service not running');
+      }
+      return;
+    }
+    if (kDebugMode) {
+      print('[DiscoveryService] Binding UDP socket on port $_discoveryPort');
+    }
     try {
-      _socket = await RawDatagramSocket.bind(
-        InternetAddress.anyIPv4,
-        _discoveryPort,
-        reuseAddress: true,
-        reusePort: !Platform.isWindows,
-      );
+      RawDatagramSocket? boundSocket;
+      int attempts = 0;
+      while (attempts < 5 && _running) {
+        try {
+          boundSocket = await RawDatagramSocket.bind(
+            InternetAddress.anyIPv4,
+            _discoveryPort,
+            reuseAddress: true,
+            reusePort: !Platform.isWindows,
+          );
+          break;
+        } catch (e) {
+          attempts++;
+          if (attempts >= 5) {
+            rethrow;
+          }
+          await Future<void>.delayed(Duration(milliseconds: 200 * attempts));
+        }
+      }
+
+      if (!_running) {
+        boundSocket?.close();
+        return;
+      }
+
+      _socket = boundSocket;
       _socket!.broadcastEnabled = true;
       _socketSub = _socket!.listen(
         _onSocketEvent,
-        onError: (_) {
+        onError: (err) {
+          if (kDebugMode) {
+            print('[DiscoveryService] UDP Socket error: $err');
+          }
           unawaited(_restartSocket());
         },
         onDone: () {
+          if (kDebugMode) {
+            print('[DiscoveryService] UDP Socket done/closed');
+          }
           unawaited(_restartSocket());
         },
       );
-    } catch (_) {
+      if (kDebugMode) {
+        print('[DiscoveryService] UDP Socket bound on port $_discoveryPort (actual bound: ${_socket?.port})');
+      }
+    } catch (e) {
       _socket = null;
+      if (kDebugMode) {
+        print('[DiscoveryService] Error binding UDP socket on port $_discoveryPort: $e');
+      }
     }
   }
 
   Future<void> _restartSocket() async {
-    if (_restartingSocket) {
+    if (_restartingSocket || !_running) {
+      if (kDebugMode) {
+        print('[DiscoveryService] Aborting socket restart: restarting=$_restartingSocket, running=$_running');
+      }
       return;
     }
     _restartingSocket = true;
+    if (kDebugMode) {
+      print('[DiscoveryService] Restarting UDP socket');
+    }
     try {
       await _socketSub?.cancel();
       _socketSub = null;
       _socket?.close();
       _socket = null;
       await Future<void>.delayed(const Duration(milliseconds: 500));
+      if (!_running) {
+        if (kDebugMode) {
+          print('[DiscoveryService] Aborting socket restart post-delay: service stopped');
+        }
+        return;
+      }
       await _bindSocket();
-      if (_socket != null) {
+      if (_socket != null && _running) {
         await _announce();
       }
     } finally {
@@ -332,6 +490,24 @@ class DiscoveryService {
         break;
       }
 
+      // Validate socket port matches configured port to filter out stale loops
+      final localBoundPort = _socket?.port;
+      if (_fullPrivateMode) {
+        if (localBoundPort != _discoveryPort) {
+          if (kDebugMode) {
+            print('[DiscoveryService] UDP Ignoring packet on stale/wrong bound port: $localBoundPort (expected $_discoveryPort)');
+          }
+          continue;
+        }
+      } else {
+        if (localBoundPort != 45454) {
+          if (kDebugMode) {
+            print('[DiscoveryService] UDP Ignoring packet on non-default port in default mode: $localBoundPort');
+          }
+          continue;
+        }
+      }
+
       try {
         final message = utf8.decode(datagram.data);
         final parsed = jsonDecode(message) as Map<String, dynamic>;
@@ -342,6 +518,29 @@ class DiscoveryService {
         final payloadMap = (parsed['payload'] as Map?)?.cast<String, dynamic>();
         if (payloadMap == null) {
           continue;
+        }
+
+        // Validate private mode status and ports
+        final peerPrivateMode = _parseBoolish(payloadMap['fullPrivateModeEnabled']);
+        final peerDiscoveryPort = (payloadMap['discoveryPort'] as num?)?.toInt();
+        final peerListeningPort = (payloadMap['port'] as num?)?.toInt();
+
+        if (peerPrivateMode != _fullPrivateMode) {
+          if (kDebugMode) {
+            print('[DiscoveryService] UDP Ignoring packet due to private mode mismatch. Peer: $peerPrivateMode, Local: $_fullPrivateMode');
+          }
+          continue;
+        }
+
+        if (_fullPrivateMode) {
+          if (peerDiscoveryPort != _discoveryPort || peerListeningPort != _listeningPort) {
+            if (kDebugMode) {
+              print('[DiscoveryService] UDP Ignoring packet in Private Mode due to port mismatch. '
+                  'Peer Discovery: $peerDiscoveryPort (expected $_discoveryPort), '
+                  'Peer Listening: $peerListeningPort (expected $_listeningPort)');
+            }
+            continue;
+          }
         }
 
         if (!_isPresenceSecurityValid(
@@ -366,6 +565,15 @@ class DiscoveryService {
         final key = incomingId.isNotEmpty
             ? incomingId
             : datagram.address.address;
+
+        if (!incoming.isOnline) {
+          if (_devices.containsKey(key)) {
+            _devices.remove(key);
+            _emitDevices();
+          }
+          continue;
+        }
+
         final previous = _devices[key];
         _upsertDiscoveredDevice(
           key,
@@ -375,19 +583,25 @@ class DiscoveryService {
             lastSeen: seenAt,
           ),
         );
+
+        final replyPort = peerDiscoveryPort ?? datagram.port;
+
         if (_shouldReplyToPresence(
           packet: parsed,
           previous: previous,
           senderAddress: datagram.address.address,
           seenAt: seenAt,
         )) {
-          unawaited(_replyToPresence(datagram.address));
+          unawaited(_replyToPresence(datagram.address, replyPort));
         }
       } catch (_) {}
     }
   }
 
   Future<void> _announce() async {
+    if (!_broadcastingEnabled) {
+      return;
+    }
     final packet = await _buildPresencePacket(
       transport: _presenceTransportBroadcast,
     );
@@ -397,11 +611,17 @@ class DiscoveryService {
 
     final targets = await _collectBroadcastTargets();
     for (final target in targets) {
+      if (kDebugMode) {
+        print('[DiscoveryService] Broadcasting presence packet to ${target.address}:$_discoveryPort');
+      }
       _socket?.send(packet, target, _discoveryPort);
     }
   }
 
-  Future<void> _replyToPresence(InternetAddress target) async {
+  Future<void> _replyToPresence(InternetAddress target, int targetPort) async {
+    if (!_broadcastingEnabled) {
+      return;
+    }
     final packet = await _buildPresencePacket(
       transport: _presenceTransportReply,
       preferredPeerIp: target.address,
@@ -409,10 +629,22 @@ class DiscoveryService {
     if (packet == null) {
       return;
     }
-    _socket?.send(packet, target, _discoveryPort);
+    if (kDebugMode) {
+      print('[DiscoveryService] Replying to presence at ${target.address}:$targetPort');
+    }
+    _socket?.send(packet, target, targetPort);
   }
 
   Future<void> _startMdns() async {
+    if (!_broadcastingEnabled || _fullPrivateMode) {
+      if (kDebugMode) {
+        print('[DiscoveryService] Skipping mDNS startup (broadcastingEnabled: $_broadcastingEnabled, fullPrivateMode: $_fullPrivateMode)');
+      }
+      return;
+    }
+    if (kDebugMode) {
+      print('[DiscoveryService] Starting mDNS Advertiser & Discovery on port $_listeningPort');
+    }
     try {
       final ipAddress = await getLocalIp();
       if (ipAddress.isEmpty) {
@@ -427,7 +659,7 @@ class DiscoveryService {
       final service = BonsoirService(
         name: deviceName,
         type: '_dropnet._tcp',
-        port: 45455,
+        port: _listeningPort,
         attributes: {
           'deviceId': _deviceId,
           'deviceType': _detectType().name,
@@ -435,17 +667,25 @@ class DiscoveryService {
           'platform': platformTag,
           'tlsCertificateSha256': _tlsCertificateFingerprint,
           'pairingModeEnabled': _pairingModeEnabled ? '1' : '0',
+          'fullPrivateModeEnabled': _fullPrivateMode ? '1' : '0',
+          'discoveryPort': _discoveryPort.toString(),
         },
       );
 
       _mdnsBroadcast = BonsoirBroadcast(service: service);
       await _mdnsBroadcast!.initialize();
       await _mdnsBroadcast!.start();
+      if (kDebugMode) {
+        print('[DiscoveryService] mDNS Advertiser started for $deviceName (_dropnet._tcp)');
+      }
 
       _mdnsDiscovery = BonsoirDiscovery(type: '_dropnet._tcp');
       await _mdnsDiscovery!.initialize();
       _mdnsSub = _mdnsDiscovery!.eventStream?.listen(_onMdnsEvent);
       await _mdnsDiscovery!.start();
+      if (kDebugMode) {
+        print('[DiscoveryService] mDNS Discovery browser started');
+      }
     } catch (e) {
       if (kDebugMode) {
         print('[DiscoveryService] Error starting mDNS: $e');
@@ -519,6 +759,28 @@ class DiscoveryService {
       }
     }
 
+    // Validate private mode and custom ports on resolved mDNS service
+    final incomingPrivate = _parseBoolish(service.attributes['fullPrivateModeEnabled']);
+    final incomingDiscoveryPort = int.tryParse(service.attributes['discoveryPort']?.toString() ?? '');
+    
+    if (incomingPrivate != _fullPrivateMode) {
+      if (kDebugMode) {
+        print('[DiscoveryService] Ignoring resolved mDNS service due to private mode mismatch. Peer: $incomingPrivate, Local: $_fullPrivateMode');
+      }
+      return;
+    }
+    
+    if (_fullPrivateMode) {
+      if (incomingDiscoveryPort != _discoveryPort || service.port != _listeningPort) {
+        if (kDebugMode) {
+          print('[DiscoveryService] Ignoring resolved mDNS service in Private Mode due to port mismatch. '
+              'Peer Discovery: $incomingDiscoveryPort (expected $_discoveryPort), '
+              'Peer Listening: ${service.port} (expected $_listeningPort)');
+        }
+        return;
+      }
+    }
+
     final type = service.attributes['deviceType'] ?? DeviceType.other.name;
     final manufacturer =
         (service.attributes['manufacturer']?.toString() ?? '').trim();
@@ -558,6 +820,7 @@ class DiscoveryService {
         isOnline: true,
         lastSeen: DateTime.now(),
         tlsCertificateSha256: tlsCertificateSha256,
+        port: service.port,
       ),
     );
   }
@@ -629,7 +892,12 @@ class DiscoveryService {
     final now = DateTime.now();
     final remove = <String>[];
     for (final entry in _devices.entries) {
-      if (now.difference(entry.value.lastSeen) > const Duration(seconds: 10)) {
+      // Never prune manually-added devices — they persist until app restart
+      // or they are discovered via normal UDP/mDNS (which keeps lastSeen fresh)
+      if (_manualDeviceIds.contains(entry.key)) {
+        continue;
+      }
+      if (now.difference(entry.value.lastSeen) > const Duration(seconds: 6)) {
         remove.add(entry.key);
       }
     }
@@ -885,13 +1153,21 @@ class DiscoveryService {
   }
 
   Future<void> dispose() async {
+    _running = false;
     _announceTimer?.cancel();
+    _announceTimer = null;
     _pruneTimer?.cancel();
+    _pruneTimer = null;
     await _socketSub?.cancel();
+    _socketSub = null;
     await _mdnsSub?.cancel();
+    _mdnsSub = null;
     await _mdnsDiscovery?.stop();
+    _mdnsDiscovery = null;
     await _mdnsBroadcast?.stop();
+    _mdnsBroadcast = null;
     _socket?.close();
+    _socket = null;
     await _devicesController.close();
   }
 
@@ -1045,6 +1321,7 @@ class DiscoveryService {
   Future<List<int>?> _buildPresencePacket({
     required String transport,
     String? preferredPeerIp,
+    bool isOnline = true,
   }) async {
     final ipAddress = await getLocalIp(preferredPeerIp: preferredPeerIp);
     if (ipAddress.isEmpty) {
@@ -1063,9 +1340,10 @@ class DiscoveryService {
       platform: platformTag,
       ipAddress: ipAddress,
       deviceType: _detectType(),
-      isOnline: true,
+      isOnline: isOnline,
       lastSeen: DateTime.now(),
       tlsCertificateSha256: _tlsCertificateFingerprint,
+      port: _listeningPort,
     );
 
     final timestampMs = DateTime.now().millisecondsSinceEpoch;
@@ -1077,6 +1355,8 @@ class DiscoveryService {
         'payload': {
           ...device.toJson(),
           'pairingModeEnabled': _pairingModeEnabled,
+          'fullPrivateModeEnabled': _fullPrivateMode,
+          'discoveryPort': _discoveryPort,
         },
         'security': {'version': 1, 'timestampMs': timestampMs, 'nonce': nonce},
       }),

@@ -10,6 +10,7 @@ enum TransferFileKind {
   archive,
   code,
   document,
+  config,
   generic,
 }
 
@@ -90,6 +91,10 @@ class TransferVisuals {
     '.webloc',
   };
 
+  static const Set<String> _configExtensions = {
+    '.dnetprofile',
+  };
+
   static String extensionOf(String fileNameOrPath) {
     return p.extension(fileNameOrPath).toLowerCase();
   }
@@ -120,6 +125,9 @@ class TransferVisuals {
     if (_documentExtensions.contains(extension)) {
       return TransferFileKind.document;
     }
+    if (_configExtensions.contains(extension)) {
+      return TransferFileKind.config;
+    }
     return TransferFileKind.generic;
   }
 
@@ -136,7 +144,8 @@ class TransferVisuals {
     return kind == TransferFileKind.image ||
         kind == TransferFileKind.video ||
         kind == TransferFileKind.pdf ||
-        kind == TransferFileKind.document;
+        kind == TransferFileKind.document ||
+        kind == TransferFileKind.config;
   }
 
   static String kindLabel(String fileNameOrPath) {
@@ -149,6 +158,7 @@ class TransferVisuals {
       TransferFileKind.archive => 'Archive',
       TransferFileKind.code => 'Code',
       TransferFileKind.document => 'Document',
+      TransferFileKind.config => 'Private Network Profile',
       TransferFileKind.generic => 'File',
     };
   }
@@ -163,6 +173,7 @@ class TransferVisuals {
       TransferFileKind.archive => Icons.folder_zip_rounded,
       TransferFileKind.code => Icons.code_rounded,
       TransferFileKind.document => Icons.article_rounded,
+      TransferFileKind.config => Icons.lan_rounded,
       TransferFileKind.generic => Icons.insert_drive_file_rounded,
     };
   }
@@ -178,6 +189,7 @@ class TransferVisuals {
       TransferFileKind.archive => const Color(0xFF8A5A00),
       TransferFileKind.code => const Color(0xFF00658F),
       TransferFileKind.document => const Color(0xFF386A20),
+      TransferFileKind.config => const Color(0xFF4A6572),
       TransferFileKind.generic => colorScheme.outline,
     };
   }

@@ -12,8 +12,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../models/device_model.dart';
 import '../../models/favorite_peer_model.dart';
+import '../../models/private_network_profile.dart';
 import '../../models/trusted_peer_model.dart';
 import '../../models/transfer_model.dart';
+import '../networking/private_profile_manager.dart';
 import '../platform/media_store_service.dart';
 import '../platform/share_intent_service.dart';
 import '../platform/android_saf_service.dart';
@@ -63,6 +65,15 @@ bool isDeviceTrusted({
   );
 }
 
+class RecipientCancellationNotice {
+  final String sessionId;
+  final String deviceName;
+  const RecipientCancellationNotice({
+    required this.sessionId,
+    required this.deviceName,
+  });
+}
+
 enum QuickSaveMode { off, favorites, on }
 
 class AppState {
@@ -109,6 +120,19 @@ class AppState {
     required this.showIncomingRequestList,
     required this.maxIncomingRequests,
     required this.incomingRequestTimeoutSeconds,
+    required this.advancedFeaturesEnabled,
+    required this.parallelSendingEnabled,
+    required this.manualConnectEnabled,
+    required this.semiPrivateModeEnabled,
+    required this.customListeningPort,
+    required this.fullPrivateModeEnabled,
+    required this.privateDiscoveryPort,
+    required this.privateListeningPort,
+    required this.pendingRecipientCancellationNotices,
+    required this.pendingManualConnectRequests,
+    required this.pendingManualDisconnectNotices,
+    required this.privateNetworkProfiles,
+    required this.activePrivateProfileId,
   });
 
   final List<DeviceModel> devices;
@@ -118,6 +142,7 @@ class AppState {
   final String downloadDirectory;
   final List<IncomingTransferRequest> pendingIncomingRequests;
   final List<IncomingPairingRequest> pendingPairingRequests;
+  final List<IncomingManualConnectRequest> pendingManualConnectRequests;
   final ThemeMode themeMode;
   final Color themeSeed;
   final bool useSystemAccent;
@@ -155,6 +180,21 @@ class AppState {
   final bool showIncomingRequestList;
   final int maxIncomingRequests;
   final int incomingRequestTimeoutSeconds;
+
+  final bool advancedFeaturesEnabled;
+  final bool parallelSendingEnabled;
+  final bool manualConnectEnabled;
+  final bool semiPrivateModeEnabled;
+  final int customListeningPort;
+  final bool fullPrivateModeEnabled;
+  final int privateDiscoveryPort;
+  final int privateListeningPort;
+  final List<RecipientCancellationNotice> pendingRecipientCancellationNotices;
+  final List<RemoteManualDisconnectNotice> pendingManualDisconnectNotices;
+
+  /// Profile-based private network configuration.
+  final List<PrivateNetworkProfile> privateNetworkProfiles;
+  final String? activePrivateProfileId;
 
   static AppState initial() => AppState(
     devices: const [],
@@ -199,6 +239,19 @@ class AppState {
     showIncomingRequestList: false,
     maxIncomingRequests: 5,
     incomingRequestTimeoutSeconds: 60,
+    advancedFeaturesEnabled: false,
+    parallelSendingEnabled: false,
+    manualConnectEnabled: false,
+    semiPrivateModeEnabled: false,
+    customListeningPort: 45455,
+    fullPrivateModeEnabled: false,
+    privateDiscoveryPort: 45454,
+    privateListeningPort: 45455,
+    pendingRecipientCancellationNotices: const [],
+    pendingManualConnectRequests: const [],
+    pendingManualDisconnectNotices: const [],
+    privateNetworkProfiles: const [],
+    activePrivateProfileId: null,
   );
 
   AppState copyWith({
@@ -244,6 +297,19 @@ class AppState {
     bool? showIncomingRequestList,
     int? maxIncomingRequests,
     int? incomingRequestTimeoutSeconds,
+    bool? advancedFeaturesEnabled,
+    bool? parallelSendingEnabled,
+    bool? manualConnectEnabled,
+    bool? semiPrivateModeEnabled,
+    int? customListeningPort,
+    bool? fullPrivateModeEnabled,
+    int? privateDiscoveryPort,
+    int? privateListeningPort,
+    List<RecipientCancellationNotice>? pendingRecipientCancellationNotices,
+    List<IncomingManualConnectRequest>? pendingManualConnectRequests,
+    List<RemoteManualDisconnectNotice>? pendingManualDisconnectNotices,
+    List<PrivateNetworkProfile>? privateNetworkProfiles,
+    Object? activePrivateProfileId = _sentinel,
   }) {
     return AppState(
       devices: devices ?? this.devices,
@@ -305,9 +371,47 @@ class AppState {
       maxIncomingRequests: maxIncomingRequests ?? this.maxIncomingRequests,
       incomingRequestTimeoutSeconds:
           incomingRequestTimeoutSeconds ?? this.incomingRequestTimeoutSeconds,
+      advancedFeaturesEnabled:
+          advancedFeaturesEnabled ?? this.advancedFeaturesEnabled,
+      parallelSendingEnabled:
+          parallelSendingEnabled ?? this.parallelSendingEnabled,
+      manualConnectEnabled: manualConnectEnabled ?? this.manualConnectEnabled,
+      semiPrivateModeEnabled:
+          semiPrivateModeEnabled ?? this.semiPrivateModeEnabled,
+      customListeningPort: customListeningPort ?? this.customListeningPort,
+      fullPrivateModeEnabled:
+          fullPrivateModeEnabled ?? this.fullPrivateModeEnabled,
+      privateDiscoveryPort: privateDiscoveryPort ?? this.privateDiscoveryPort,
+      privateListeningPort: privateListeningPort ?? this.privateListeningPort,
+      pendingRecipientCancellationNotices:
+          pendingRecipientCancellationNotices ??
+          this.pendingRecipientCancellationNotices,
+      pendingManualConnectRequests:
+          pendingManualConnectRequests ?? this.pendingManualConnectRequests,
+      pendingManualDisconnectNotices:
+          pendingManualDisconnectNotices ?? this.pendingManualDisconnectNotices,
+      privateNetworkProfiles:
+          privateNetworkProfiles ?? this.privateNetworkProfiles,
+      activePrivateProfileId: identical(activePrivateProfileId, _sentinel)
+          ? this.activePrivateProfileId
+          : activePrivateProfileId as String?,
     );
   }
+
+  PrivateNetworkProfile? get activePrivateProfile {
+    if (activePrivateProfileId == null) return null;
+    for (final p in privateNetworkProfiles) {
+      if (p.id == activePrivateProfileId) {
+        return p;
+      }
+    }
+    return null;
+  }
 }
+
+// Sentinel value used by copyWith to distinguish between 'not provided' and
+// explicit null for nullable fields.
+const Object _sentinel = Object();
 
 final discoveryServiceProvider = Provider<DiscoveryService>((ref) {
   final service = DiscoveryService();
@@ -394,8 +498,8 @@ class AppController extends StateNotifier<AppState> {
   final TemporaryLinkShareService _tempShare;
   final ShareIntentService _shareIntent;
   final MediaStoreService _mediaStore;
+  final PrivateProfileManager _profileManager = PrivateProfileManager();
   SharedPreferences? _prefs;
-
   static const _themeModeKey = 'settings.themeMode';
   static const _themeSeedKey = 'settings.themeSeed';
   static const _useSystemAccentKey = 'settings.useSystemAccent';
@@ -414,6 +518,15 @@ class AppController extends StateNotifier<AppState> {
   static const _incomingRequestTimeoutSecondsKey =
       'receive.incomingRequestTimeoutSeconds';
 
+  static const _advancedFeaturesEnabledKey = 'advanced.advancedFeaturesEnabled';
+  static const _parallelSendingEnabledKey = 'advanced.parallelSendingEnabled';
+  static const _manualConnectEnabledKey = 'advanced.manualConnectEnabled';
+  static const _semiPrivateModeEnabledKey = 'advanced.semiPrivateModeEnabled';
+  static const _customListeningPortKey = 'advanced.customListeningPort';
+  static const _fullPrivateModeEnabledKey = 'advanced.fullPrivateModeEnabled';
+  static const _privateDiscoveryPortKey = 'advanced.privateDiscoveryPort';
+  static const _privateListeningPortKey = 'advanced.privateListeningPort';
+
   StreamSubscription<List<DeviceModel>>? _devicesSub;
   StreamSubscription<List<TransferModel>>? _activeSub;
   StreamSubscription<TransferModel>? _completedTransferSub;
@@ -421,6 +534,8 @@ class AppController extends StateNotifier<AppState> {
   StreamSubscription<List<IncomingTransferRequest>>? _incomingSub;
   StreamSubscription<List<IncomingPairingRequest>>? _incomingPairingSub;
   StreamSubscription<List<RemoteUnpairNotice>>? _remoteUnpairSub;
+  StreamSubscription<List<IncomingManualConnectRequest>>? _incomingManualConnectSub;
+  StreamSubscription<List<RemoteManualDisconnectNotice>>? _remoteManualDisconnectSub;
   StreamSubscription<WebShareState>? _webSub;
   StreamSubscription<List<WebPeerConnectRequest>>? _webPeerReqSub;
   StreamSubscription<List<WebPeer>>? _webPeerSub;
@@ -437,6 +552,7 @@ class AppController extends StateNotifier<AppState> {
       <String, TransferModel>{};
   final Set<String> _gallerySyncedPaths = <String>{};
   final Set<String> _processedRemoteUnpairNoticeIds = <String>{};
+  final Set<String> _processedRemoteManualDisconnectNoticeIds = <String>{};
   final Set<String> _knownIncomingRequestIds = <String>{};
 
   Future<void> bootstrap() async {
@@ -488,6 +604,18 @@ class AppController extends StateNotifier<AppState> {
       _prefs!.getStringList(_historyKey) ?? const <String>[],
     );
 
+    final restoredAdvancedFeaturesEnabled = _prefs!.getBool(_advancedFeaturesEnabledKey) ?? false;
+    final restoredParallelSendingEnabled = _prefs!.getBool(_parallelSendingEnabledKey) ?? false;
+    final restoredManualConnectEnabled = restoredRequirePairingCode ? false : (_prefs!.getBool(_manualConnectEnabledKey) ?? false);
+    final restoredSemiPrivateModeEnabled = restoredRequirePairingCode ? false : (_prefs!.getBool(_semiPrivateModeEnabledKey) ?? false);
+    final restoredCustomListeningPort = _prefs!.getInt(_customListeningPortKey) ?? TcpTransferService.defaultPort;
+    final restoredFullPrivateModeEnabled = restoredRequirePairingCode ? false : (_prefs!.getBool(_fullPrivateModeEnabledKey) ?? false);
+    final restoredPrivateDiscoveryPort = _prefs!.getInt(_privateDiscoveryPortKey) ?? 45454;
+    final restoredPrivateListeningPort = _prefs!.getInt(_privateListeningPortKey) ?? TcpTransferService.defaultPort;
+
+    // Load private network profiles (includes migration).
+    await _profileManager.load(_prefs!);
+
     // Parallelize async operations that don't depend on each other
     final downloadDirFuture = _resolveDownloadDirectory(
       preferred: _prefs!.getString(_downloadDirectoryKey),
@@ -524,11 +652,31 @@ class AppController extends StateNotifier<AppState> {
       unawaited(_saveDownloadDirectory(downloadDir));
     }
 
+    // Configure ports and modes before starting.
+    // When Full Private Mode is on, prefer the active profile's ports.
+    final activeProfile = _profileManager.activeProfile;
+    final listeningPort = restoredFullPrivateModeEnabled
+        ? (activeProfile?.listeningPort ?? restoredPrivateListeningPort)
+        : restoredCustomListeningPort;
+
+    final discoveryPort = restoredFullPrivateModeEnabled
+        ? (activeProfile?.discoveryPort ?? restoredPrivateDiscoveryPort)
+        : 45454;
+
+    final broadcastingEnabled = !restoredSemiPrivateModeEnabled;
+
+    _discovery.configure(
+      discoveryPort: discoveryPort,
+      listeningPort: listeningPort,
+      broadcastingEnabled: broadcastingEnabled,
+      fullPrivateMode: restoredFullPrivateModeEnabled,
+    );
+
     // Parallelize discovery and transfer startup
     try {
       await Future.wait<void>([
         _discovery.start(),
-        _transfer.startReceiver(saveDirectory: downloadDir),
+        _transfer.startReceiver(saveDirectory: downloadDir, port: listeningPort),
       ]);
     } catch (e) {
       if (kDebugMode) {
@@ -569,6 +717,18 @@ class AppController extends StateNotifier<AppState> {
       showIncomingRequestList: restoredShowIncomingRequestList,
       maxIncomingRequests: restoredMaxIncomingRequests,
       incomingRequestTimeoutSeconds: restoredIncomingRequestTimeoutSeconds,
+      advancedFeaturesEnabled: restoredAdvancedFeaturesEnabled,
+      parallelSendingEnabled: restoredParallelSendingEnabled,
+      manualConnectEnabled: restoredManualConnectEnabled,
+      semiPrivateModeEnabled: restoredSemiPrivateModeEnabled,
+      customListeningPort: restoredCustomListeningPort,
+      fullPrivateModeEnabled: restoredFullPrivateModeEnabled,
+      privateDiscoveryPort: restoredPrivateDiscoveryPort,
+      privateListeningPort: restoredPrivateListeningPort,
+      pendingRecipientCancellationNotices: const [],
+      pendingManualDisconnectNotices: const [],
+      privateNetworkProfiles: _profileManager.profiles,
+      activePrivateProfileId: _profileManager.activeProfileId,
     );
 
     if (effectiveQuickSaveMode != restoredQuickSaveMode) {
@@ -597,6 +757,7 @@ class AppController extends StateNotifier<AppState> {
           Duration.zero,
         ); // Yield to allow UI to render
         _setupStreamSubscribers();
+        unawaited(_updateTransferIdentity());
       }),
     );
   }
@@ -661,6 +822,16 @@ class AppController extends StateNotifier<AppState> {
           unawaited(_saveMediaToGalleryIfEligible(localPath));
         }
       }
+      if (completedTransfer.direction == TransferDirection.sent &&
+          completedTransfer.status == TransferStatus.canceled &&
+          completedTransfer.errorMessage == 'Cancelled by recipient.') {
+        final notices = List<RecipientCancellationNotice>.from(state.pendingRecipientCancellationNotices)
+          ..add(RecipientCancellationNotice(
+            sessionId: completedTransfer.sessionId ?? completedTransfer.id,
+            deviceName: completedTransfer.deviceName,
+          ));
+        state = state.copyWith(pendingRecipientCancellationNotices: notices);
+      }
       unawaited(_enqueueTransferPreviewIfEligible(completedTransfer));
     });
 
@@ -722,6 +893,41 @@ class AppController extends StateNotifier<AppState> {
       requests,
     ) {
       state = state.copyWith(pendingPairingRequests: requests);
+    });
+
+    _incomingManualConnectSub ??= _transfer.incomingManualConnectRequestsStream.listen((
+      requests,
+    ) {
+      state = state.copyWith(pendingManualConnectRequests: requests);
+    });
+
+    _remoteManualDisconnectSub ??= _transfer.remoteManualDisconnectNoticesStream.listen((notices) {
+      final nextNotices = List<RemoteManualDisconnectNotice>.from(state.pendingManualDisconnectNotices);
+      var updated = false;
+
+      for (final notice in notices) {
+        if (!_processedRemoteManualDisconnectNoticeIds.add(notice.id)) {
+          continue;
+        }
+
+        nextNotices.add(notice);
+        updated = true;
+
+        final matchedDevice = state.devices.where(
+          (d) {
+            final key = d.deviceId.trim().isEmpty ? d.ipAddress : d.deviceId.trim();
+            final noticeKey = notice.fromDeviceId.trim().isEmpty ? notice.fromAddress : notice.fromDeviceId.trim();
+            return key.toLowerCase() == noticeKey.toLowerCase();
+          },
+        ).firstOrNull;
+        if (matchedDevice != null) {
+          _discovery.removeManualDevice(matchedDevice);
+        }
+      }
+
+      if (updated) {
+        state = state.copyWith(pendingManualDisconnectNotices: nextNotices);
+      }
     });
 
     _remoteUnpairSub ??= _transfer.remoteUnpairNoticesStream.listen((notices) {
@@ -841,6 +1047,63 @@ class AppController extends StateNotifier<AppState> {
     });
   }
 
+  void addManualDevice(DeviceModel device) {
+    _discovery.addManualDevice(device);
+  }
+
+  bool isManualDevice(DeviceModel device) {
+    return _discovery.isManualDevice(device);
+  }
+
+  void removeManualDevice(DeviceModel device) {
+    unawaited(() async {
+      try {
+        final localFingerprint = await _discovery.ensureLocalTlsCertificateSha256();
+        await _transfer.requestManualDisconnect(
+          target: device,
+          senderDeviceName: _taggedLocalName(),
+          senderDeviceId: state.localDeviceId,
+          senderTlsCertificateSha256: localFingerprint,
+          port: device.port ?? TcpTransferService.defaultPort,
+        );
+      } catch (_) {}
+    }());
+    _discovery.removeManualDevice(device);
+  }
+
+  void dismissManualDisconnectNotice(String id) {
+    final nextNotices = state.pendingManualDisconnectNotices
+        .where((n) => n.id != id)
+        .toList(growable: false);
+    state = state.copyWith(pendingManualDisconnectNotices: nextNotices);
+  }
+
+  Future<String> getLocalTlsCertificateSha256() async {
+    return _discovery.ensureLocalTlsCertificateSha256();
+  }
+
+  Future<void> _updateTransferIdentity() async {
+    final fingerprint = await _discovery.ensureLocalTlsCertificateSha256();
+    _transfer.setIdentity(
+      name: _discovery.deviceName,
+      id: _discovery.deviceId,
+      platform: _discovery.platformTag,
+      type: state.customDeviceIcon.name,
+      tls: fingerprint,
+    );
+  }
+
+  Future<DeviceModel> checkDirectDevice(String ip, int port) async {
+    return _transfer.checkDirectDevice(ip, port);
+  }
+
+  int getActiveListeningPort() {
+    if (state.fullPrivateModeEnabled) {
+      return state.activePrivateProfile?.listeningPort ?? state.privateListeningPort;
+    }
+    return state.customListeningPort;
+  }
+
   Future<void> sendFiles(
     DeviceModel target,
     List<String> filePaths, {
@@ -861,6 +1124,7 @@ class AppController extends StateNotifier<AppState> {
       senderDeviceId: state.localDeviceId,
       senderTlsCertificateSha256: localFingerprint,
       pairingCode: pairingCode,
+      port: target.port ?? TcpTransferService.defaultPort,
     );
   }
 
@@ -896,6 +1160,48 @@ class AppController extends StateNotifier<AppState> {
     _transfer.rejectIncomingPairingRequest(request.id);
   }
 
+  Future<bool> requestManualConnect(DeviceModel target) async {
+    final localFingerprint = await _discovery.ensureLocalTlsCertificateSha256();
+    return _transfer.requestManualConnect(
+      target: target,
+      senderDeviceName: _taggedLocalName(),
+      senderDeviceId: state.localDeviceId,
+      senderTlsCertificateSha256: localFingerprint,
+      senderDevicePlatform: state.localDevicePlatform,
+      senderDeviceType: state.customDeviceIcon.name,
+      senderPort: getActiveListeningPort(),
+      port: target.port ?? TcpTransferService.defaultPort,
+    );
+  }
+
+  Future<void> respondToIncomingManualConnectRequest(
+    IncomingManualConnectRequest request, {
+    required bool approved,
+  }) async {
+    if (approved) {
+      final deviceType = DeviceType.values.firstWhere(
+        (e) => e.name == request.fromDeviceType,
+        orElse: () => DeviceType.other,
+      );
+      final device = DeviceModel(
+        deviceId: request.fromDeviceId,
+        deviceName: request.fromDeviceName,
+        manufacturer: 'Manual Connection',
+        platform: request.fromDevicePlatform,
+        ipAddress: request.fromAddress,
+        deviceType: deviceType,
+        isOnline: true,
+        lastSeen: DateTime.now(),
+        tlsCertificateSha256: request.fromTlsCertificateSha256,
+        port: request.fromPort ?? TcpTransferService.defaultPort,
+      );
+      addManualDevice(device);
+      _transfer.approveIncomingManualConnectRequest(request.id);
+      return;
+    }
+    _transfer.rejectIncomingManualConnectRequest(request.id);
+  }
+
   void cancelPairing(String targetDeviceId) {
     _transfer.cancelPairing(targetDeviceId);
   }
@@ -927,6 +1233,7 @@ class AppController extends StateNotifier<AppState> {
       senderDeviceId: state.localDeviceId,
       senderTlsCertificateSha256: localFingerprint,
       pairingCode: pairingCode,
+      port: device.port ?? TcpTransferService.defaultPort,
     );
     if (!pairingResult.accepted) {
       throw StateError('Pairing was rejected or timed out.');
@@ -994,6 +1301,7 @@ class AppController extends StateNotifier<AppState> {
         senderDeviceName: _taggedLocalName(),
         senderDeviceId: state.localDeviceId,
         senderTlsCertificateSha256: localFingerprint,
+        port: device.port ?? TcpTransferService.defaultPort,
       );
       if (!accepted) {
         throw StateError(
@@ -1225,6 +1533,142 @@ class AppController extends StateNotifier<AppState> {
     _transfer.cancelTransfer(id);
   }
 
+  Future<void> cancelTransferSession(String sessionId) async {
+    final sessionItems = state.transferSessionItems.where((t) => t.sessionId == sessionId).toList();
+    if (sessionItems.isEmpty) return;
+
+    // Tell the TCP layer to stop queuing new files for this session
+    _transfer.cancelTransferSession(sessionId);
+
+    for (final item in sessionItems) {
+      if (item.status == TransferStatus.transferring ||
+          item.status == TransferStatus.connecting) {
+        if (item.direction == TransferDirection.received) {
+          await _transfer.cancelTransferByReceiver(item.id);
+        } else {
+          _transfer.cancelTransfer(item.id);
+        }
+      }
+    }
+
+    // Mark all non-terminal items as cancelled
+    for (final item in sessionItems) {
+      // Mark every non-terminal session item as cancelled immediately in the map
+      if (!_isTerminalStatus(item.status)) {
+        final current = _transferSessionMap[item.id];
+        if (current != null) {
+          _transferSessionMap[item.id] = current.copyWith(
+            status: TransferStatus.canceled,
+            errorMessage: 'Cancelled by recipient.',
+          );
+        }
+      }
+    }
+
+    state = state.copyWith(
+      transferSessionItems: _sortedTransferSessionItems(),
+    );
+  }
+
+  void setAdvancedFeaturesEnabled(bool value) {
+    if (!value) {
+      state = state.copyWith(
+        advancedFeaturesEnabled: false,
+        parallelSendingEnabled: false,
+        manualConnectEnabled: false,
+        semiPrivateModeEnabled: false,
+        customListeningPort: TcpTransferService.defaultPort,
+        fullPrivateModeEnabled: false,
+        privateDiscoveryPort: 45454,
+        privateListeningPort: TcpTransferService.defaultPort,
+      );
+      _prefs?.setBool(_advancedFeaturesEnabledKey, false);
+      _prefs?.setBool(_parallelSendingEnabledKey, false);
+      _prefs?.setBool(_manualConnectEnabledKey, false);
+      _prefs?.setBool(_semiPrivateModeEnabledKey, false);
+      _prefs?.setInt(_customListeningPortKey, TcpTransferService.defaultPort);
+      _prefs?.setBool(_fullPrivateModeEnabledKey, false);
+      _prefs?.setInt(_privateDiscoveryPortKey, 45454);
+      _prefs?.setInt(_privateListeningPortKey, TcpTransferService.defaultPort);
+      unawaited(_updateNetworkServices());
+    } else {
+      state = state.copyWith(advancedFeaturesEnabled: true);
+      _prefs?.setBool(_advancedFeaturesEnabledKey, true);
+    }
+  }
+
+  void setParallelSendingEnabled(bool value) {
+    state = state.copyWith(parallelSendingEnabled: value);
+    _prefs?.setBool(_parallelSendingEnabledKey, value);
+  }
+
+  void setManualConnectEnabled(bool value) {
+    state = state.copyWith(manualConnectEnabled: value);
+    _prefs?.setBool(_manualConnectEnabledKey, value);
+  }
+
+  void setSemiPrivateModeEnabled(bool value) {
+    state = state.copyWith(semiPrivateModeEnabled: value);
+    _prefs?.setBool(_semiPrivateModeEnabledKey, value);
+    unawaited(_updateNetworkServices());
+  }
+
+  void setCustomListeningPort(int value) {
+    state = state.copyWith(customListeningPort: value);
+    _prefs?.setInt(_customListeningPortKey, value);
+    unawaited(_updateNetworkServices());
+  }
+
+  void setFullPrivateModeEnabled(bool value) {
+    state = state.copyWith(fullPrivateModeEnabled: value);
+    _prefs?.setBool(_fullPrivateModeEnabledKey, value);
+    unawaited(_updateNetworkServices());
+  }
+
+  void setPrivateDiscoveryPort(int value) {
+    state = state.copyWith(privateDiscoveryPort: value);
+    _prefs?.setInt(_privateDiscoveryPortKey, value);
+    unawaited(_updateNetworkServices());
+  }
+
+  void setPrivateListeningPort(int value) {
+    state = state.copyWith(privateListeningPort: value);
+    _prefs?.setInt(_privateListeningPortKey, value);
+    unawaited(_updateNetworkServices());
+  }
+
+  void dismissRecipientCancellationNotice(String sessionId) {
+    final updated = state.pendingRecipientCancellationNotices
+        .where((n) => n.sessionId != sessionId)
+        .toList(growable: false);
+    state = state.copyWith(pendingRecipientCancellationNotices: updated);
+  }
+
+  Future<void> resetAdvancedSettings() async {
+    state = state.copyWith(
+      advancedFeaturesEnabled: false,
+      parallelSendingEnabled: false,
+      manualConnectEnabled: false,
+      semiPrivateModeEnabled: false,
+      customListeningPort: TcpTransferService.defaultPort,
+      fullPrivateModeEnabled: false,
+      privateDiscoveryPort: 45454,
+      privateListeningPort: TcpTransferService.defaultPort,
+    );
+
+    _prefs ??= await SharedPreferences.getInstance();
+    await _prefs!.setBool(_advancedFeaturesEnabledKey, false);
+    await _prefs!.setBool(_parallelSendingEnabledKey, false);
+    await _prefs!.setBool(_manualConnectEnabledKey, false);
+    await _prefs!.setBool(_semiPrivateModeEnabledKey, false);
+    await _prefs!.setInt(_customListeningPortKey, TcpTransferService.defaultPort);
+    await _prefs!.setBool(_fullPrivateModeEnabledKey, false);
+    await _prefs!.setInt(_privateDiscoveryPortKey, 45454);
+    await _prefs!.setInt(_privateListeningPortKey, TcpTransferService.defaultPort);
+
+    await _updateNetworkServices();
+  }
+
   void approveIncomingRequest(String id) {
     _transfer.approveIncomingRequest(id);
   }
@@ -1248,10 +1692,18 @@ class AppController extends StateNotifier<AppState> {
       state = state.copyWith(tempLinkShare: _tempShare.currentState);
     }
 
+    int effectivePort = port;
+    if (state.fullPrivateModeEnabled) {
+      final activeProfile = state.activePrivateProfile;
+      if (activeProfile?.webPortalPort != null) {
+        effectivePort = activeProfile!.webPortalPort!;
+      }
+    }
+
     await _web.start(
       rootDirectory: state.downloadDirectory,
       hostDeviceName: _taggedLocalName(),
-      port: port,
+      port: effectivePort,
       pin: pin,
     );
     state = state.copyWith(webState: _web.currentState);
@@ -1347,6 +1799,7 @@ class AppController extends StateNotifier<AppState> {
     } else {
       unawaited(_discovery.updateCustomDeviceType(state.customDeviceIcon));
     }
+    unawaited(_updateTransferIdentity());
   }
 
   void setCustomDeviceIcon(DeviceType iconType) {
@@ -1355,6 +1808,7 @@ class AppController extends StateNotifier<AppState> {
     if (!state.useDefaultDeviceIcon) {
       unawaited(_discovery.updateCustomDeviceType(iconType));
     }
+    unawaited(_updateTransferIdentity());
   }
 
   Future<void> setDownloadDirectory(String path) async {
@@ -1512,6 +1966,7 @@ class AppController extends StateNotifier<AppState> {
       localDeviceBaseName: _discovery.deviceBaseName,
       localDeviceNumber: _discovery.deviceNumber,
     );
+    unawaited(_updateTransferIdentity());
   }
 
   Future<void> setDeviceManufacturer(String value) async {
@@ -1524,6 +1979,7 @@ class AppController extends StateNotifier<AppState> {
       localDeviceBaseName: _discovery.deviceBaseName,
       localDeviceNumber: _discovery.deviceNumber,
     );
+    unawaited(_updateTransferIdentity());
   }
 
   Future<void> resetDeviceManufacturerToAuto() async {
@@ -1536,6 +1992,7 @@ class AppController extends StateNotifier<AppState> {
       localDeviceBaseName: _discovery.deviceBaseName,
       localDeviceNumber: _discovery.deviceNumber,
     );
+    unawaited(_updateTransferIdentity());
   }
 
   Future<void> setDeviceNumber(int value) async {
@@ -1548,6 +2005,7 @@ class AppController extends StateNotifier<AppState> {
       localDeviceBaseName: _discovery.deviceBaseName,
       localDeviceNumber: _discovery.deviceNumber,
     );
+    unawaited(_updateTransferIdentity());
   }
 
   Future<void> randomizeDeviceName() async {
@@ -1558,9 +2016,11 @@ class AppController extends StateNotifier<AppState> {
       localDeviceBaseName: _discovery.deviceBaseName,
       localDeviceNumber: _discovery.deviceNumber,
     );
+    unawaited(_updateTransferIdentity());
   }
 
   Future<void> shutdownNetworkServices() async {
+    await _discovery.stop();
     await _tempShare.stop();
     await _web.stop();
     await _transfer.stopReceiver();
@@ -1659,6 +2119,224 @@ class AppController extends StateNotifier<AppState> {
       ..sort((a, b) => a.startedAt.compareTo(b.startedAt));
     return items;
   }
+
+  static bool _isTerminalStatus(TransferStatus status) {
+    return status == TransferStatus.completed ||
+        status == TransferStatus.failed ||
+        status == TransferStatus.canceled;
+  }
+
+  Future<void> _updateNetworkServices() async {
+    try {
+      await _discovery.stop();
+      await _transfer.stopReceiver();
+
+      // When Full Private Mode is active, derive ports from the active profile.
+      final activeProfile = _profileManager.activeProfile;
+      final listeningPort = state.fullPrivateModeEnabled
+          ? (activeProfile?.listeningPort ?? state.privateListeningPort)
+          : state.customListeningPort;
+
+      final discoveryPort = state.fullPrivateModeEnabled
+          ? (activeProfile?.discoveryPort ?? state.privateDiscoveryPort)
+          : 45454;
+
+      final broadcastingEnabled = !state.semiPrivateModeEnabled;
+
+      _discovery.configure(
+        discoveryPort: discoveryPort,
+        listeningPort: listeningPort,
+        broadcastingEnabled: broadcastingEnabled,
+        fullPrivateMode: state.fullPrivateModeEnabled,
+      );
+
+      await Future.wait<void>([
+        _discovery.start(),
+        _transfer.startReceiver(
+          saveDirectory: state.downloadDirectory,
+          port: listeningPort,
+        ),
+      ]);
+    } catch (e) {
+      if (kDebugMode) {
+        print('Error updating network services: $e');
+      }
+    }
+  }
+
+  // ── Private Network Profile management ────────────────────────────────────
+
+  /// Returns all private network profiles.
+  List<PrivateNetworkProfile> get privateNetworkProfiles =>
+      _profileManager.profiles;
+
+  /// Returns the currently active private network profile, or null.
+  PrivateNetworkProfile? get activePrivateProfile =>
+      _profileManager.activeProfile;
+
+  Future<({PrivateNetworkProfile? profile, String? error})> createPrivateProfile({
+    required String name,
+    required String description,
+    required int discoveryPort,
+    required int listeningPort,
+    int? webPortalPort,
+    bool activateImmediately = false,
+  }) async {
+    _prefs ??= await SharedPreferences.getInstance();
+    final result = await _profileManager.createProfile(
+      prefs: _prefs!,
+      name: name,
+      description: description,
+      discoveryPort: discoveryPort,
+      listeningPort: listeningPort,
+      webPortalPort: webPortalPort,
+      activate: activateImmediately,
+    );
+    state = state.copyWith(
+      privateNetworkProfiles: _profileManager.profiles,
+      activePrivateProfileId: _profileManager.activeProfileId,
+    );
+    if (activateImmediately && state.fullPrivateModeEnabled) {
+      unawaited(_updateNetworkServices());
+    }
+    return result;
+  }
+
+  Future<String?> updatePrivateProfile(PrivateNetworkProfile updated) async {
+    _prefs ??= await SharedPreferences.getInstance();
+    final error = await _profileManager.updateProfile(
+      prefs: _prefs!,
+      updated: updated,
+    );
+    state = state.copyWith(
+      privateNetworkProfiles: _profileManager.profiles,
+    );
+    // If the active profile was updated and full private mode is on, restart.
+    if (error == null &&
+        updated.id == _profileManager.activeProfileId &&
+        state.fullPrivateModeEnabled) {
+      unawaited(_updateNetworkServices());
+    }
+    return error;
+  }
+
+  Future<String?> deletePrivateProfile(String id) async {
+    _prefs ??= await SharedPreferences.getInstance();
+    final wasActive = id == _profileManager.activeProfileId;
+    final error = await _profileManager.deleteProfile(
+      prefs: _prefs!,
+      id: id,
+    );
+    state = state.copyWith(
+      privateNetworkProfiles: _profileManager.profiles,
+      activePrivateProfileId: _profileManager.activeProfileId,
+    );
+    if (error == null && wasActive && state.fullPrivateModeEnabled) {
+      unawaited(_updateNetworkServices());
+    }
+    return error;
+  }
+
+  Future<PrivateNetworkProfile?> duplicatePrivateProfile(String id) async {
+    _prefs ??= await SharedPreferences.getInstance();
+    final copy = await _profileManager.duplicateProfile(
+      prefs: _prefs!,
+      id: id,
+    );
+    state = state.copyWith(
+      privateNetworkProfiles: _profileManager.profiles,
+    );
+    return copy;
+  }
+
+  Future<PrivateNetworkProfile?> activatePrivateProfile(String id) async {
+    _prefs ??= await SharedPreferences.getInstance();
+    final activated = await _profileManager.activateProfile(
+      prefs: _prefs!,
+      id: id,
+    );
+    state = state.copyWith(
+      privateNetworkProfiles: _profileManager.profiles,
+      activePrivateProfileId: _profileManager.activeProfileId,
+    );
+    if (activated != null && state.fullPrivateModeEnabled) {
+      unawaited(_updateNetworkServices());
+    }
+    return activated;
+  }
+
+  Future<String> exportPrivateProfile(String id) async {
+    return _profileManager.exportProfile(id: id);
+  }
+
+  Future<({Map<String, dynamic>? data, String? error})> readProfileDataFromFile(
+    String filePath,
+  ) async {
+    return _profileManager.readProfileDataFromFile(filePath);
+  }
+
+  PrivateNetworkProfile? checkDuplicateProfile(Map<String, dynamic> data) {
+    return _profileManager.findDuplicateProfile(
+      name: (data['name']?.toString() ?? '').trim(),
+      discoveryPort: data['discoveryPort'] as int? ?? 0,
+      listeningPort: data['listeningPort'] as int? ?? 0,
+    );
+  }
+
+  Future<({PrivateNetworkProfile? profile, String? error})> importProfileWithDetails({
+    required Map<String, dynamic> profileData,
+    required String mode,
+    String? replaceProfileId,
+    bool activate = false,
+  }) async {
+    _prefs ??= await SharedPreferences.getInstance();
+    final result = await _profileManager.importProfile(
+      prefs: _prefs!,
+      profileData: profileData,
+      mode: mode,
+      replaceProfileId: replaceProfileId,
+      activate: activate,
+    );
+    state = state.copyWith(
+      privateNetworkProfiles: _profileManager.profiles,
+      activePrivateProfileId: _profileManager.activeProfileId,
+    );
+    if (activate && state.fullPrivateModeEnabled) {
+      unawaited(_updateNetworkServices());
+    }
+    return result;
+  }
+
+  Future<({PrivateNetworkProfile? profile, String? error})> importPrivateProfile(
+    String filePath,
+  ) async {
+    _prefs ??= await SharedPreferences.getInstance();
+    final result = await _profileManager.importProfileFromFile(
+      prefs: _prefs!,
+      filePath: filePath,
+    );
+    state = state.copyWith(
+      privateNetworkProfiles: _profileManager.profiles,
+      activePrivateProfileId: _profileManager.activeProfileId,
+    );
+    return result;
+  }
+
+  Future<({PrivateNetworkProfile? profile, String? error})> importPrivateProfileFromJson(
+    String jsonContent,
+  ) async {
+    _prefs ??= await SharedPreferences.getInstance();
+    final result = await _profileManager.importProfileFromJson(
+      prefs: _prefs!,
+      jsonContent: jsonContent,
+    );
+    state = state.copyWith(
+      privateNetworkProfiles: _profileManager.profiles,
+      activePrivateProfileId: _profileManager.activeProfileId,
+    );
+    return result;
+  }
+
 
   void _emitCombinedHistory() {
     final all = <TransferHistoryEntry>[
@@ -2258,6 +2936,8 @@ class AppController extends StateNotifier<AppState> {
     _historySub?.cancel();
     _incomingSub?.cancel();
     _incomingPairingSub?.cancel();
+    _incomingManualConnectSub?.cancel();
+    _remoteManualDisconnectSub?.cancel();
     _remoteUnpairSub?.cancel();
     _webSub?.cancel();
     _webPeerReqSub?.cancel();

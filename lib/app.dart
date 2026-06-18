@@ -24,6 +24,8 @@ import 'features/receive/incoming_requests_screen.dart';
 import 'features/send/send_files_screen.dart';
 import 'features/settings/favorite_devices_screen.dart';
 import 'features/settings/settings_screen.dart';
+import 'features/settings/advanced_settings.dart';
+import 'features/settings/private_networks_screen.dart';
 import 'features/transfers/active_transfers_screen.dart';
 import 'features/transfers/transfer_session_screen.dart';
 import 'features/web_mode/web_mode_screen.dart';
@@ -108,6 +110,14 @@ final _router = GoRouter(
       builder: (context, state) => const FavoriteDevicesScreen(),
     ),
     GoRoute(
+      path: '/settings/advanced',
+      builder: (context, state) => const AdvancedSettingsScreen(),
+    ),
+    GoRoute(
+      path: '/settings/private-networks',
+      builder: (context, state) => const PrivateNetworksScreen(),
+    ),
+    GoRoute(
       path: '/receive/incoming-requests',
       builder: (context, state) => const IncomingRequestsScreen(),
     ),
@@ -168,8 +178,11 @@ class DropNetApp extends ConsumerStatefulWidget {
 class _DropNetAppState extends ConsumerState<DropNetApp> {
   final Set<String> _dialogShownFor = {};
   final Set<String> _pairingDialogShownFor = {};
+  final Set<String> _manualConnectDialogShownFor = {};
   final Set<String> _peerDialogShownFor = {};
   final Set<String> _webUploadDialogShownFor = {};
+  final Set<String> _cancellationNoticeShownFor = {};
+  final Set<String> _manualDisconnectNoticeShownFor = {};
   final Map<String, _ActivePairingDialog> _activePairingDialogs = {};
   bool _transferSessionOpen = false;
   bool _sharedTextOpening = false;
@@ -268,12 +281,21 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
       _pairingDialogShownFor.removeWhere(
         (id) => !next.pendingPairingRequests.any((request) => request.id == id),
       );
+      _manualConnectDialogShownFor.removeWhere(
+        (id) => !next.pendingManualConnectRequests.any((request) => request.id == id),
+      );
       _peerDialogShownFor.removeWhere(
         (id) => !next.pendingWebPeerRequests.any((request) => request.id == id),
       );
       _webUploadDialogShownFor.removeWhere(
         (id) =>
             !next.pendingWebIncomingUploads.any((request) => request.id == id),
+      );
+      _cancellationNoticeShownFor.removeWhere(
+        (id) => !next.pendingRecipientCancellationNotices.any((notice) => notice.sessionId == id),
+      );
+      _manualDisconnectNoticeShownFor.removeWhere(
+        (id) => !next.pendingManualDisconnectNotices.any((notice) => notice.id == id),
       );
 
       if (!_sharedTextOpening && next.pendingTransferPreviewTexts.isNotEmpty) {
@@ -324,7 +346,8 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
         }
       }
 
-      if (next.transferSessionActive && !_transferSessionOpen) {
+      final sessionStarted = next.transferSessionActive && !(previous?.transferSessionActive ?? false);
+      if (sessionStarted && !_transferSessionOpen) {
         _transferSessionOpen = true;
         Future<void>(() async {
           await _router.push('/transfer-session');
@@ -473,6 +496,16 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
         }
       }
 
+      for (final request in next.pendingManualConnectRequests) {
+        if (!_manualConnectDialogShownFor.contains(request.id)) {
+          _manualConnectDialogShownFor.add(request.id);
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _showIncomingManualConnectDialog(request);
+          });
+          break;
+        }
+      }
+
       for (final peerRequest in next.pendingWebPeerRequests) {
         if (!_peerDialogShownFor.contains(peerRequest.id)) {
           _peerDialogShownFor.add(peerRequest.id);
@@ -488,6 +521,26 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
           _webUploadDialogShownFor.add(uploadRequest.id);
           WidgetsBinding.instance.addPostFrameCallback((_) {
             _showWebIncomingUploadDialog(uploadRequest);
+          });
+          break;
+        }
+      }
+
+      for (final notice in next.pendingRecipientCancellationNotices) {
+        if (!_cancellationNoticeShownFor.contains(notice.sessionId)) {
+          _cancellationNoticeShownFor.add(notice.sessionId);
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _showCancellationDialog(notice);
+          });
+          break;
+        }
+      }
+
+      for (final notice in next.pendingManualDisconnectNotices) {
+        if (!_manualDisconnectNoticeShownFor.contains(notice.id)) {
+          _manualDisconnectNoticeShownFor.add(notice.id);
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _showIncomingManualDisconnectDialog(notice);
           });
           break;
         }
@@ -722,6 +775,142 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
     }
   }
 
+  Future<void> _showIncomingManualConnectDialog(
+    IncomingManualConnectRequest request,
+  ) async {
+    final dialogContext = _rootNavigatorKey.currentContext;
+    if (!mounted || dialogContext == null) {
+      _manualConnectDialogShownFor.remove(request.id);
+      return;
+    }
+
+    final theme = Theme.of(dialogContext);
+    final colorScheme = theme.colorScheme;
+
+    final approved = await showDropNetDialog<bool>(
+      context: dialogContext,
+      builder: (context) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(32),
+          ),
+          backgroundColor: colorScheme.surface,
+          elevation: 6,
+          titlePadding: const EdgeInsets.fromLTRB(24, 28, 24, 16),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 24),
+          actionsPadding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+          icon: Container(
+            width: 68,
+            height: 68,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  colorScheme.primaryContainer,
+                  colorScheme.primaryContainer.withValues(alpha: 0.5),
+                ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: colorScheme.primary.withValues(alpha: 0.15),
+                  blurRadius: 16,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Icon(
+              Icons.lan_rounded,
+              color: colorScheme.onPrimaryContainer,
+              size: 32,
+            ),
+          ),
+          title: Text(
+            'Connection Request',
+            style: theme.textTheme.headlineSmall?.copyWith(
+              fontWeight: FontWeight.w800,
+              color: colorScheme.onSurface,
+              letterSpacing: -0.5,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          content: SizedBox(
+            width: 320,
+            child: Card(
+              elevation: 0,
+              color: colorScheme.surfaceContainerLow,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(24),
+                side: BorderSide(
+                  color: colorScheme.outlineVariant.withValues(
+                    alpha: 0.25,
+                  ),
+                ),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Text(
+                  '${request.fromDeviceName} (${request.fromDevicePlatform.toUpperCase()}) wants to connect manually with this device.\n\nDo you want to accept?',
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                    height: 1.4,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          actions: [
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.of(context).pop(false),
+                    style: OutlinedButton.styleFrom(
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                    ),
+                    child: const Text(
+                      'Reject',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: FilledButton(
+                    onPressed: () => Navigator.of(context).pop(true),
+                    style: FilledButton.styleFrom(
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                    ),
+                    child: const Text(
+                      'Accept',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        );
+      },
+    );
+
+    if (!mounted) {
+      return;
+    }
+
+    await ref
+        .read(appControllerProvider.notifier)
+        .respondToIncomingManualConnectRequest(request, approved: approved == true);
+  }
+
   bool _isSendRouteVisible() {
     final path = _router.routeInformationProvider.value.uri.path;
     final hasPushedRoute = _rootNavigatorKey.currentState?.canPop() ?? false;
@@ -760,6 +949,227 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
         ),
       ),
     );
+  }
+
+  Future<void> _showCancellationDialog(RecipientCancellationNotice notice) async {
+    final dialogContext = _rootNavigatorKey.currentContext;
+    if (!mounted || dialogContext == null) {
+      _cancellationNoticeShownFor.remove(notice.sessionId);
+      return;
+    }
+    
+    final theme = Theme.of(dialogContext);
+    final colorScheme = theme.colorScheme;
+    
+    await showDropNetDialog<void>(
+      context: dialogContext,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(32),
+        ),
+        backgroundColor: colorScheme.surface,
+        elevation: 6,
+        titlePadding: const EdgeInsets.fromLTRB(24, 28, 24, 16),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 24),
+        actionsPadding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+        icon: Container(
+          width: 68,
+          height: 68,
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                colorScheme.errorContainer,
+                colorScheme.errorContainer.withValues(alpha: 0.5),
+              ],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            shape: BoxShape.circle,
+            boxShadow: [
+              BoxShadow(
+                color: colorScheme.error.withValues(alpha: 0.15),
+                blurRadius: 16,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Icon(
+            Icons.cancel_outlined,
+            color: colorScheme.onErrorContainer,
+            size: 32,
+          ),
+        ),
+        title: Text(
+          'Transfer Cancelled',
+          style: theme.textTheme.headlineSmall?.copyWith(
+            fontWeight: FontWeight.w800,
+            color: colorScheme.onSurface,
+            letterSpacing: -0.5,
+          ),
+          textAlign: TextAlign.center,
+        ),
+        content: Card(
+          elevation: 0,
+          color: colorScheme.surfaceContainerLow,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+            side: BorderSide(
+              color: colorScheme.outlineVariant.withValues(
+                alpha: 0.25,
+              ),
+            ),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Text(
+              'The transfer session was cancelled by the Recipient (${notice.deviceName}).\n\nAny partially sent files have been rejected and cleaned up.',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+                height: 1.45,
+              ),
+            ),
+          ),
+        ),
+        actions: [
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton.tonal(
+                  onPressed: () => Navigator.of(context).pop(),
+                  style: FilledButton.styleFrom(
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                  ),
+                  child: const Text(
+                    'Close',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+    
+    if (mounted) {
+      ref.read(appControllerProvider.notifier).dismissRecipientCancellationNotice(notice.sessionId);
+    }
+  }
+
+  Future<void> _showIncomingManualDisconnectDialog(
+    RemoteManualDisconnectNotice notice,
+  ) async {
+    final dialogContext = _rootNavigatorKey.currentContext;
+    if (!mounted || dialogContext == null) {
+      _manualDisconnectNoticeShownFor.remove(notice.id);
+      return;
+    }
+
+    final theme = Theme.of(dialogContext);
+    final colorScheme = theme.colorScheme;
+
+    await showDropNetDialog<void>(
+      context: dialogContext,
+      builder: (context) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(32),
+          ),
+          backgroundColor: colorScheme.surface,
+          elevation: 6,
+          titlePadding: const EdgeInsets.fromLTRB(24, 28, 24, 16),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 24),
+          actionsPadding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+          icon: Container(
+            width: 68,
+            height: 68,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  colorScheme.errorContainer,
+                  colorScheme.errorContainer.withValues(alpha: 0.5),
+                ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: colorScheme.error.withValues(alpha: 0.15),
+                  blurRadius: 16,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Icon(
+              Icons.link_off_rounded,
+              color: colorScheme.onErrorContainer,
+              size: 32,
+            ),
+          ),
+          title: Text(
+            'Device disconnected',
+            style: theme.textTheme.headlineSmall?.copyWith(
+              fontWeight: FontWeight.w800,
+              color: colorScheme.onSurface,
+              letterSpacing: -0.5,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          content: Card(
+            elevation: 0,
+            color: colorScheme.surfaceContainerLow,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(24),
+              side: BorderSide(
+                color: colorScheme.outlineVariant.withValues(
+                  alpha: 0.25,
+                ),
+              ),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Text(
+                '${notice.fromDeviceName} disconnected the manual connection.',
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                  height: 1.45,
+                ),
+              ),
+            ),
+          ),
+          actions: [
+            Row(
+              children: [
+                Expanded(
+                  child: FilledButton.tonal(
+                    onPressed: () => Navigator.of(context).pop(),
+                    style: FilledButton.styleFrom(
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                    ),
+                    child: const Text(
+                      'Close',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        );
+      },
+    );
+
+    if (mounted) {
+      ref.read(appControllerProvider.notifier).dismissManualDisconnectNotice(notice.id);
+    }
   }
 
   Future<void> _showIncomingDialog(IncomingTransferRequest request) async {

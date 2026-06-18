@@ -242,3 +242,45 @@ class RemoteUnpairNotice {
   final String fromTlsCertificateSha256;
   final DateTime notifiedAt;
 }
+
+class RemoteManualDisconnectNotice {
+  const RemoteManualDisconnectNotice({
+    required this.id,
+    required this.fromAddress,
+    required this.fromDeviceName,
+    required this.fromDeviceId,
+    required this.fromTlsCertificateSha256,
+    required this.notifiedAt,
+  });
+
+  final String id;
+  final String fromAddress;
+  final String fromDeviceName;
+  final String fromDeviceId;
+  final String fromTlsCertificateSha256;
+  final DateTime notifiedAt;
+}
+
+class IncomingManualConnectRequest {
+  const IncomingManualConnectRequest({
+    required this.id,
+    required this.fromAddress,
+    required this.fromDeviceName,
+    required this.fromDeviceId,
+    required this.fromTlsCertificateSha256,
+    required this.fromDevicePlatform,
+    required this.fromDeviceType,
+    required this.requestedAt,
+    this.fromPort,
+  });
+
+  final String id;
+  final String fromAddress;
+  final String fromDeviceName;
+  final String fromDeviceId;
+  final String fromTlsCertificateSha256;
+  final String fromDevicePlatform;
+  final String fromDeviceType;
+  final DateTime requestedAt;
+  final int? fromPort;
+}

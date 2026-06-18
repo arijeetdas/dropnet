@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui';
@@ -13,6 +14,8 @@ import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import '../../core/platform/android_installed_apps_service.dart';
 import '../../core/platform/media_store_service.dart';
@@ -261,7 +264,7 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
                                 ? colorScheme.primary
                                 : colorScheme.onSurfaceVariant,
                           ),
-                          const SizedBox(width: 10),
+                          const SizedBox(width: 8),
                           Text(
                             'Nearby Devices',
                             style: theme.textTheme.titleMedium?.copyWith(
@@ -269,35 +272,50 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
                             ),
                           ),
                           const Spacer(),
-                          IconButton(
-                            iconSize: 20,
-                            tooltip: 'Select all',
-                            onPressed: _sending
-                                ? null
-                                : () => _selectAllTargets(state),
-                            icon: const Icon(Icons.select_all_rounded),
-                          ),
-                          IconButton(
-                            iconSize: 20,
-                            tooltip: 'Clear selection',
-                            onPressed: _sending || _selectedTargets.isEmpty
-                                ? null
-                                : _clearTargets,
-                            icon: const Icon(Icons.clear_all_rounded),
-                          ),
-                          IconButton(
-                            iconSize: 20,
-                            tooltip: 'Refresh',
-                            onPressed: _sending || _refreshingNearby
-                                ? null
-                                : _refreshNearbyDevices,
-                            icon: _refreshingNearby
-                                ? const SizedBox(
-                                    width: 18,
-                                    height: 18,
-                                    child: ExpressiveLoader(),
-                                  )
-                                : const Icon(Icons.refresh_rounded),
+                          FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.centerRight,
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                IconButton(
+                                  iconSize: 20,
+                                  tooltip: 'Select all',
+                                  padding: const EdgeInsets.all(6),
+                                  constraints: const BoxConstraints(),
+                                  onPressed: _sending
+                                      ? null
+                                      : () => _selectAllTargets(state),
+                                  icon: const Icon(Icons.select_all_rounded),
+                                ),
+                                IconButton(
+                                  iconSize: 20,
+                                  tooltip: 'Clear selection',
+                                  padding: const EdgeInsets.all(6),
+                                  constraints: const BoxConstraints(),
+                                  onPressed: _sending || _selectedTargets.isEmpty
+                                      ? null
+                                      : _clearTargets,
+                                  icon: const Icon(Icons.clear_all_rounded),
+                                ),
+                                IconButton(
+                                  iconSize: 20,
+                                  tooltip: 'Refresh',
+                                  padding: const EdgeInsets.all(6),
+                                  constraints: const BoxConstraints(),
+                                  onPressed: _sending || _refreshingNearby
+                                      ? null
+                                      : _refreshNearbyDevices,
+                                  icon: _refreshingNearby
+                                      ? const SizedBox(
+                                          width: 18,
+                                          height: 18,
+                                          child: ExpressiveLoader(),
+                                        )
+                                      : const Icon(Icons.refresh_rounded),
+                                ),
+                              ],
+                            ),
                           ),
                         ],
                       ),
@@ -353,6 +371,7 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
                                           ),
                                       textAlign: TextAlign.center,
                                     ),
+
                                   ],
                                 ),
                               ))
@@ -369,6 +388,39 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
                           ],
                         ),
                 ),
+                if (state.manualConnectEnabled && !state.fullPrivateModeEnabled) ...[
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: _sending ? null : _showManualConnectDialog,
+                      style: OutlinedButton.styleFrom(
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        side: BorderSide(
+                          color: colorScheme.outlineVariant.withValues(alpha: 0.5),
+                        ),
+                      ),
+                      icon: Icon(
+                        (defaultTargetPlatform == TargetPlatform.iOS || defaultTargetPlatform == TargetPlatform.android)
+                            ? Icons.qr_code_scanner_rounded
+                            : Icons.add_rounded,
+                        size: 20,
+                      ),
+                      label: Text(
+                        (defaultTargetPlatform == TargetPlatform.iOS || defaultTargetPlatform == TargetPlatform.android)
+                            ? 'Scan QR / Manual Connect'
+                            : 'Manual Connection',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 10),
                 AnimatedContainer(
                   duration: const Duration(milliseconds: 220),
@@ -869,6 +921,7 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
     final trusted = _isTrustedDevice(appState, device);
     final favorite = _isFavoriteDevice(appState, device);
     final pairingRequired = appState.requirePairingCodeForDirectTransfers;
+    final isManual = ref.read(appControllerProvider.notifier).isManualDevice(device);
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
 
@@ -1029,6 +1082,26 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  if (isManual) ...[
+                    IconButton(
+                      iconSize: 18,
+                      visualDensity: VisualDensity.compact,
+                      tooltip: 'Disconnect device',
+                      onPressed: _sending
+                          ? null
+                          : () {
+                              ref.read(appControllerProvider.notifier).removeManualDevice(device);
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text('${device.deviceName} disconnected.')),
+                              );
+                            },
+                      icon: Icon(
+                        Icons.link_off_rounded,
+                        color: colorScheme.error,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                  ],
                   IconButton(
                     iconSize: 18,
                     visualDensity: VisualDensity.compact,
@@ -2017,26 +2090,48 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
       final appState = ref.read(appControllerProvider);
       final controller = ref.read(appControllerProvider.notifier);
 
+      final deviceTargets = <DeviceModel>[];
       for (final target in targets) {
         if (target.startsWith('device:')) {
           final deviceId = target.substring('device:'.length);
           final device = appState.devices
               .where((item) => item.deviceId == deviceId)
               .firstOrNull;
-          if (device == null) {
-            continue;
+          if (device != null) {
+            deviceTargets.add(device);
           }
-          try {
-            await controller.sendFiles(device, files);
-            sentToDevices++;
-          } catch (error) {
-            failedTargets.add('${device.taggedName}: $error');
-          }
-          continue;
-        }
-
-        if (target.startsWith('web:')) {
+        } else if (target.startsWith('web:')) {
           webPeerIds.add(target.substring('web:'.length));
+        }
+      }
+
+      if (deviceTargets.isNotEmpty) {
+        if (appState.parallelSendingEnabled) {
+          final futures = deviceTargets.map((device) async {
+            try {
+              await controller.sendFiles(device, files);
+              return (device: device, success: true, error: null);
+            } catch (error) {
+              return (device: device, success: false, error: error);
+            }
+          });
+          final results = await Future.wait(futures);
+          for (final res in results) {
+            if (res.success) {
+              sentToDevices++;
+            } else {
+              failedTargets.add('${res.device.taggedName}: ${res.error}');
+            }
+          }
+        } else {
+          for (final device in deviceTargets) {
+            try {
+              await controller.sendFiles(device, files);
+              sentToDevices++;
+            } catch (error) {
+              failedTargets.add('${device.taggedName}: $error');
+            }
+          }
         }
       }
 
@@ -2663,6 +2758,28 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
     return result;
   }
 
+  void _showManualConnectDialog() {
+    showDropNetDialog<void>(
+      context: context,
+      builder: (context) {
+        return _ManualConnectDialog(
+          onDeviceConnected: (device) {
+            ref.read(appControllerProvider.notifier).addManualDevice(device);
+            setState(() {
+              _selectedTargets.add('device:${device.deviceId}');
+            });
+          },
+          onDeviceDisconnected: (device) {
+            ref.read(appControllerProvider.notifier).removeManualDevice(device);
+            setState(() {
+              _selectedTargets.remove('device:${device.deviceId}');
+            });
+          },
+        );
+      },
+    );
+  }
+
   void _showMessage(String message) {
     if (!mounted) {
       return;
@@ -2670,6 +2787,1092 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(message)));
+  }
+}
+
+class _ManualConnectDialog extends ConsumerStatefulWidget {
+  const _ManualConnectDialog({
+    required this.onDeviceConnected,
+    required this.onDeviceDisconnected,
+  });
+  final ValueChanged<DeviceModel> onDeviceConnected;
+  final ValueChanged<DeviceModel> onDeviceDisconnected;
+
+  @override
+  ConsumerState<_ManualConnectDialog> createState() => _ManualConnectDialogState();
+}
+
+class _ManualConnectDialogState extends ConsumerState<_ManualConnectDialog> {
+  int _activeTab = 0; // 0 = Scan QR, 1 = Direct IP (Mobile). On Desktop: 0 = Direct IP
+  final _ipController = TextEditingController();
+  final _portController = TextEditingController(text: '45455');
+  MobileScannerController? _scannerController;
+
+  // Permission state
+  PermissionStatus _cameraPermissionStatus = PermissionStatus.denied;
+  bool _isCheckingPermission = true;
+
+  // Searching state
+  bool _isSearching = false;
+  String? _ipError;
+  DeviceModel? _foundDevice;
+  bool _searchFailed = false;
+  bool _isAlreadyDiscoveredState = false;
+  bool _isAwaitingApproval = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final bool isMobile = defaultTargetPlatform == TargetPlatform.iOS || defaultTargetPlatform == TargetPlatform.android;
+    if (isMobile) {
+      _checkCameraPermission();
+    } else {
+      _isCheckingPermission = false;
+    }
+  }
+
+  @override
+  void dispose() {
+    _ipController.dispose();
+    _portController.dispose();
+    _scannerController?.dispose();
+    super.dispose();
+  }
+
+  Future<void> _checkCameraPermission() async {
+    setState(() => _isCheckingPermission = true);
+    final status = await Permission.camera.status;
+    setState(() {
+      _cameraPermissionStatus = status;
+      _isCheckingPermission = false;
+    });
+    if (status.isGranted) {
+      _initScanner();
+    }
+  }
+
+  Future<void> _requestCameraPermission() async {
+    final status = await Permission.camera.request();
+    setState(() {
+      _cameraPermissionStatus = status;
+    });
+    if (status.isPermanentlyDenied) {
+      await openAppSettings();
+    } else {
+      _initScanner();
+    }
+  }
+
+  void _initScanner() {
+    if (_scannerController == null && _cameraPermissionStatus.isGranted) {
+      _scannerController = MobileScannerController(
+        detectionSpeed: DetectionSpeed.normal,
+        facing: CameraFacing.back,
+      );
+      _scannerController!.start();
+    }
+  }
+
+  void _onTabChanged(int index) {
+    setState(() {
+      _activeTab = index;
+    });
+    if (index == 0) {
+      _scannerController?.start();
+    } else {
+      _scannerController?.stop();
+    }
+  }
+
+  Future<void> _submitIp() async {
+    final ip = _ipController.text.trim();
+    if (ip.isEmpty) {
+      setState(() => _ipError = 'Please enter an IP address');
+      return;
+    }
+
+    final ipv4Regex = RegExp(r'^((25[0-5]|(2[0-4]|1\d|[1-9]|)\d)\.?\b){4}$');
+    if (!ipv4Regex.hasMatch(ip)) {
+      setState(() => _ipError = 'Invalid IPv4 address format');
+      return;
+    }
+
+    final portStr = _portController.text.trim();
+    final port = int.tryParse(portStr) ?? 45455;
+
+    // Check if the IP is already present in the nearby discovery list first
+    final appState = ref.read(appControllerProvider);
+    final preDiscoveredIndex = appState.devices.indexWhere(
+      (d) => d.ipAddress == ip,
+    );
+    if (preDiscoveredIndex != -1) {
+      final preDiscoveredDevice = appState.devices[preDiscoveredIndex];
+      setState(() {
+        _foundDevice = preDiscoveredDevice;
+        _isSearching = false;
+        _isAlreadyDiscoveredState = true;
+        _searchFailed = false;
+      });
+      return;
+    }
+
+    setState(() {
+      _isSearching = true;
+      _searchFailed = false;
+      _foundDevice = null;
+      _ipError = null;
+      _isAlreadyDiscoveredState = false;
+    });
+
+    try {
+      final device = await ref
+          .read(appControllerProvider.notifier)
+          .checkDirectDevice(ip, port)
+          .timeout(const Duration(seconds: 10));
+
+      final appState = ref.read(appControllerProvider);
+      final alreadyDiscovered = appState.devices.any(
+        (d) => d.deviceId == device.deviceId || d.ipAddress == device.ipAddress,
+      );
+
+      setState(() {
+        _foundDevice = device;
+        _isSearching = false;
+        _isAlreadyDiscoveredState = alreadyDiscovered;
+      });
+    } catch (_) {
+      setState(() {
+        _searchFailed = true;
+        _isSearching = false;
+      });
+    }
+  }
+
+  Future<void> _requestConnectionForScannedDevice(DeviceModel device) async {
+    setState(() {
+      _isAwaitingApproval = true;
+    });
+    try {
+      final approved = await ref.read(appControllerProvider.notifier).requestManualConnect(device);
+      if (!mounted) return;
+      setState(() {
+        _isAwaitingApproval = false;
+      });
+      if (approved) {
+        widget.onDeviceConnected(device);
+        Navigator.of(context).pop();
+      } else {
+        Navigator.of(context).pop();
+        _showConnectionCancelledDialog(context, device);
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _isAwaitingApproval = false;
+          _searchFailed = true;
+          _foundDevice = null;
+        });
+      }
+    }
+  }
+
+  DeviceModel? _parseConnectionCode(String rawCode) {
+    final code = rawCode.trim();
+    if (code.isEmpty) return null;
+
+    try {
+      if (code.startsWith('{')) {
+        final json = jsonDecode(code) as Map<String, dynamic>;
+        final ip = json['ip'] ?? json['ipAddress'] ?? '';
+        if (ip.toString().isEmpty) return null;
+        
+        final portVal = json['port'] != null ? int.tryParse(json['port'].toString()) : null;
+        final devTypeStr = json['deviceType'] ?? json['type'] ?? 'other';
+        final deviceType = DeviceType.values.firstWhere(
+          (e) => e.name == devTypeStr,
+          orElse: () => DeviceType.other,
+        );
+        
+        return DeviceModel(
+          deviceId: json['deviceId']?.toString() ?? 'manual_${DateTime.now().millisecondsSinceEpoch}',
+          deviceName: json['deviceName']?.toString() ?? json['name']?.toString() ?? 'Manual Peer',
+          manufacturer: json['manufacturer']?.toString() ?? 'Manual Connection',
+          platform: json['platform']?.toString() ?? 'other',
+          ipAddress: ip.toString(),
+          deviceType: deviceType,
+          isOnline: true,
+          lastSeen: DateTime.now(),
+          tlsCertificateSha256: json['tlsCertificateSha256']?.toString() ?? json['tls']?.toString(),
+          port: portVal ?? 45455,
+        );
+      } else if (code.startsWith('dropnet://connect')) {
+        final uri = Uri.parse(code);
+        final ip = uri.queryParameters['ip'] ?? '';
+        if (ip.isEmpty) return null;
+        
+        final portVal = uri.queryParameters['port'] != null ? int.tryParse(uri.queryParameters['port']!) : null;
+        final devTypeStr = uri.queryParameters['type'] ?? 'other';
+        final deviceType = DeviceType.values.firstWhere(
+          (e) => e.name == devTypeStr,
+          orElse: () => DeviceType.other,
+        );
+        
+        return DeviceModel(
+          deviceId: uri.queryParameters['id'] ?? 'manual_${DateTime.now().millisecondsSinceEpoch}',
+          deviceName: uri.queryParameters['name'] ?? 'Manual Peer',
+          manufacturer: uri.queryParameters['manufacturer'] ?? 'Manual Connection',
+          platform: uri.queryParameters['platform'] ?? 'other',
+          ipAddress: ip,
+          deviceType: deviceType,
+          isOnline: true,
+          lastSeen: DateTime.now(),
+          tlsCertificateSha256: uri.queryParameters['tls'],
+          port: portVal ?? 45455,
+        );
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final bool isMobile = defaultTargetPlatform == TargetPlatform.iOS || defaultTargetPlatform == TargetPlatform.android;
+
+    IconData iconData = Icons.qr_code_scanner_rounded;
+    Color iconColor = colorScheme.onPrimaryContainer;
+    List<Color> gradientColors = [
+      colorScheme.primaryContainer,
+      colorScheme.primaryContainer.withValues(alpha: 0.5),
+    ];
+    String titleText = 'Manual Connection';
+
+    if (_isAwaitingApproval) {
+      iconData = Icons.hourglass_empty_rounded;
+      iconColor = colorScheme.onPrimaryContainer;
+      gradientColors = [
+        colorScheme.primaryContainer,
+        colorScheme.primaryContainer.withValues(alpha: 0.5),
+      ];
+      titleText = 'Awaiting Approval';
+    } else if (_isSearching) {
+      iconData = Icons.lan_rounded;
+      titleText = 'Searching Device';
+    } else if (_searchFailed) {
+      iconData = Icons.error_outline_rounded;
+      iconColor = colorScheme.onErrorContainer;
+      gradientColors = [
+        colorScheme.errorContainer,
+        colorScheme.errorContainer.withValues(alpha: 0.5),
+      ];
+      titleText = 'Device Not Found';
+    } else if (_isAlreadyDiscoveredState) {
+      iconData = Icons.info_outline_rounded;
+      iconColor = colorScheme.onPrimaryContainer;
+      gradientColors = [
+        colorScheme.primaryContainer,
+        colorScheme.primaryContainer.withValues(alpha: 0.5),
+      ];
+      titleText = 'Device Discovered';
+    } else if (_foundDevice != null) {
+      iconData = Icons.check_circle_outline_rounded;
+      iconColor = colorScheme.onPrimaryContainer;
+      gradientColors = [
+        colorScheme.primaryContainer,
+        colorScheme.primaryContainer.withValues(alpha: 0.5),
+      ];
+      titleText = 'Device Found';
+    } else if (isMobile && _activeTab == 1) {
+      iconData = Icons.lan_rounded;
+    }
+
+    final bool useScroll = !(_activeTab == 0 &&
+        isMobile &&
+        _foundDevice == null &&
+        !_isAlreadyDiscoveredState &&
+        !_isSearching &&
+        !_searchFailed &&
+        !_isAwaitingApproval);
+
+    final cardWidget = Card(
+      elevation: 0,
+      color: colorScheme.surfaceContainerLow,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(24),
+        side: BorderSide(
+          color: colorScheme.outlineVariant.withValues(alpha: 0.25),
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: _buildContent(isMobile, theme, colorScheme, isDark),
+      ),
+    );
+
+    Widget dialogContent = Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 68,
+          height: 68,
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: gradientColors,
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            shape: BoxShape.circle,
+            boxShadow: [
+              BoxShadow(
+                color: (_searchFailed ? colorScheme.error : colorScheme.primary).withValues(alpha: 0.15),
+                blurRadius: 16,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Icon(
+            iconData,
+            color: iconColor,
+            size: 32,
+          ),
+        ),
+        const SizedBox(height: 16),
+        Text(
+          titleText,
+          style: theme.textTheme.headlineSmall?.copyWith(
+            fontWeight: FontWeight.w800,
+            color: colorScheme.onSurface,
+            letterSpacing: -0.5,
+          ),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 20),
+        ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: 360,
+            maxHeight: useScroll ? double.infinity : MediaQuery.of(context).size.height * 0.6,
+          ),
+          child: cardWidget,
+        ),
+        if (_buildActions(colorScheme).isNotEmpty) ...[
+          const SizedBox(height: 20),
+          Column(
+            children: _buildActions(colorScheme),
+          ),
+        ],
+      ],
+    );
+
+    if (useScroll) {
+      dialogContent = SingleChildScrollView(
+        physics: const ClampingScrollPhysics(),
+        child: dialogContent,
+      );
+    }
+
+    return Dialog(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(32),
+      ),
+      backgroundColor: colorScheme.surface,
+      elevation: 6,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(
+          maxWidth: 400,
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+          child: dialogContent,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildContent(bool isMobile, ThemeData theme, ColorScheme colorScheme, bool isDark) {
+    if (_isAwaitingApproval) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(
+            height: 80,
+            child: ExpressiveLoader(),
+          ),
+          const SizedBox(height: 20),
+          Text(
+            'Requesting connection...',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              fontWeight: FontWeight.bold,
+              color: colorScheme.onSurface,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'Please check the recipient device and accept the incoming connection request.',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: colorScheme.onSurfaceVariant,
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      );
+    }
+
+    if (_isSearching) {
+      final ip = _ipController.text.trim();
+      final portStr = _portController.text.trim();
+      final port = int.tryParse(portStr) ?? 45455;
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(
+            height: 80,
+            child: ExpressiveLoader(),
+          ),
+          const SizedBox(height: 20),
+          Text(
+            'Searching for device at\n$ip:$port...',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              fontWeight: FontWeight.bold,
+              color: colorScheme.onSurface,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'Ensure the receiving device has "Manual IP Connection" enabled in Advanced Settings and is currently on the Receive Screen.',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: colorScheme.onSurfaceVariant,
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      );
+    }
+
+    if (_searchFailed) {
+      final ip = _ipController.text.trim();
+      final portStr = _portController.text.trim();
+      final port = int.tryParse(portStr) ?? 45455;
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.warning_amber_rounded,
+            size: 48,
+            color: colorScheme.error,
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'Device Not Found',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              fontWeight: FontWeight.bold,
+              color: colorScheme.error,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'Could not establish a secure handshake with a DropNet device at $ip:$port.\n\nDouble check the IP address and port, and ensure the receiver is active.',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: colorScheme.onSurfaceVariant,
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      );
+    }
+
+    if (_isAlreadyDiscoveredState && _foundDevice != null) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'This device is already in your nearby devices list.',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: colorScheme.onSurfaceVariant,
+              fontWeight: FontWeight.w500,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 16),
+          _buildDetailRow('Name', _foundDevice!.deviceName, theme, colorScheme),
+          const Divider(height: 16, thickness: 0.5),
+          _buildDetailRow('Platform', _foundDevice!.platform.toUpperCase(), theme, colorScheme),
+          const Divider(height: 16, thickness: 0.5),
+          _buildDetailRow('IP Address', _foundDevice!.ipAddress, theme, colorScheme),
+          const Divider(height: 16, thickness: 0.5),
+          _buildDetailRow('Port', _foundDevice!.port?.toString() ?? '45455', theme, colorScheme),
+        ],
+      );
+    }
+
+    if (_foundDevice != null) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'Device details verified successfully. Do you want to connect to this device?',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: colorScheme.onSurfaceVariant,
+              fontWeight: FontWeight.w500,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 16),
+          _buildDetailRow('Name', _foundDevice!.deviceName, theme, colorScheme),
+          const Divider(height: 16, thickness: 0.5),
+          _buildDetailRow('Platform', _foundDevice!.platform.toUpperCase(), theme, colorScheme),
+          const Divider(height: 16, thickness: 0.5),
+          _buildDetailRow('IP Address', _foundDevice!.ipAddress, theme, colorScheme),
+          const Divider(height: 16, thickness: 0.5),
+          _buildDetailRow('Port', _foundDevice!.port?.toString() ?? '45455', theme, colorScheme),
+        ],
+      );
+    }
+
+    if (isMobile) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            decoration: BoxDecoration(
+              color: colorScheme.surfaceContainer,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            padding: const EdgeInsets.all(4),
+            child: Row(
+              children: [
+                Expanded(
+                  child: InkWell(
+                    onTap: () => _onTabChanged(0),
+                    borderRadius: BorderRadius.circular(12),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      decoration: BoxDecoration(
+                        color: _activeTab == 0 ? colorScheme.primary : Colors.transparent,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      alignment: Alignment.center,
+                      child: Text(
+                        'Scan QR',
+                        style: TextStyle(
+                          color: _activeTab == 0 ? colorScheme.onPrimary : colorScheme.onSurface,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: InkWell(
+                    onTap: () => _onTabChanged(1),
+                    borderRadius: BorderRadius.circular(12),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      decoration: BoxDecoration(
+                        color: _activeTab == 1 ? colorScheme.primary : Colors.transparent,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      alignment: Alignment.center,
+                      child: Text(
+                        'Direct IP',
+                        style: TextStyle(
+                          color: _activeTab == 1 ? colorScheme.onPrimary : colorScheme.onSurface,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+          if (_activeTab == 0) _buildScannerView(theme, colorScheme, isDark) else _buildDirectIpView(theme, colorScheme),
+        ],
+      );
+    }
+
+    return _buildDirectIpView(theme, colorScheme);
+  }
+
+  Widget _buildDetailRow(String label, String value, ThemeData theme, ColorScheme colorScheme) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(
+          label,
+          style: theme.textTheme.bodySmall?.copyWith(
+            fontWeight: FontWeight.bold,
+            color: colorScheme.onSurfaceVariant,
+          ),
+        ),
+        Text(
+          value,
+          style: theme.textTheme.bodySmall?.copyWith(
+            fontWeight: FontWeight.w600,
+            color: colorScheme.onSurface,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildScannerView(ThemeData theme, ColorScheme colorScheme, bool isDark) {
+    if (_isCheckingPermission) {
+      return const SizedBox(
+        height: 240,
+        child: Center(
+          child: CircularProgressIndicator(),
+        ),
+      );
+    }
+
+    if (_cameraPermissionStatus != PermissionStatus.granted) {
+      final isPermDenied = _cameraPermissionStatus == PermissionStatus.permanentlyDenied;
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: colorScheme.surfaceContainer,
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              Icons.camera_alt_rounded,
+              size: 40,
+              color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'Camera Access Required',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              fontWeight: FontWeight.bold,
+              color: colorScheme.onSurface,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Camera permission is needed to scan connection QR codes from other devices.',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: colorScheme.onSurfaceVariant,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 16),
+          FilledButton.icon(
+            onPressed: _requestCameraPermission,
+            icon: Icon(isPermDenied ? Icons.settings_rounded : Icons.camera_alt_rounded),
+            label: Text(isPermDenied ? 'Open App Settings' : 'Grant Camera Access'),
+          ),
+        ],
+      );
+    }
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          'Position the recipient\'s Connection QR code within the scanner to pair instantly.',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: colorScheme.onSurfaceVariant,
+            fontWeight: FontWeight.w500,
+          ),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 16),
+        Center(
+          child: SizedBox(
+            width: 240,
+            height: 240,
+            child: Stack(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
+                  child: MobileScanner(
+                    controller: _scannerController,
+                    onDetect: (capture) {
+                      final List<Barcode> barcodes = capture.barcodes;
+                      for (final barcode in barcodes) {
+                        final String? raw = barcode.rawValue;
+                        if (raw != null) {
+                          final device = _parseConnectionCode(raw);
+                          if (device != null) {
+                            _scannerController?.stop();
+                            final appState = ref.read(appControllerProvider);
+                            final alreadyDiscovered = appState.devices.any(
+                              (d) => d.deviceId == device.deviceId || d.ipAddress == device.ipAddress,
+                            );
+                            if (alreadyDiscovered) {
+                              setState(() {
+                                _foundDevice = device;
+                                _isAlreadyDiscoveredState = true;
+                              });
+                            } else {
+                              setState(() {
+                                _foundDevice = device;
+                              });
+                              _requestConnectionForScannedDevice(device);
+                            }
+                            break;
+                          }
+                        }
+                      }
+                    },
+                  ),
+                ),
+                Positioned.fill(
+                  child: _ScannerOverlay(),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDirectIpView(ThemeData theme, ColorScheme colorScheme) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          'Enter the target device\'s local IP address and port to scan and verify connection details.',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: colorScheme.onSurfaceVariant,
+            fontWeight: FontWeight.w500,
+          ),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 16),
+        TextField(
+          controller: _ipController,
+          decoration: InputDecoration(
+            labelText: 'IP Address',
+            errorText: _ipError,
+            prefixIcon: const Icon(Icons.lan_rounded),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+            filled: true,
+            hintText: 'e.g. 192.168.1.50',
+          ),
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          onChanged: (_) => setState(() => _ipError = null),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _portController,
+          decoration: InputDecoration(
+            labelText: 'Port',
+            prefixIcon: const Icon(Icons.settings_ethernet_rounded),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+            filled: true,
+            hintText: '45455',
+          ),
+          keyboardType: TextInputType.number,
+        ),
+      ],
+    );
+  }
+
+  List<Widget> _buildActions(ColorScheme colorScheme) {
+    if (_isAwaitingApproval) {
+      return [];
+    }
+
+    if (_isSearching) {
+      return [
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton(
+                onPressed: () => Navigator.of(context).pop(),
+                style: OutlinedButton.styleFrom(
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                ),
+                child: const Text(
+                  'Cancel',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ];
+    }
+
+    if (_searchFailed) {
+      return [
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton(
+                onPressed: () => Navigator.of(context).pop(),
+                style: OutlinedButton.styleFrom(
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                ),
+                child: const Text(
+                  'Cancel',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: FilledButton.icon(
+                onPressed: () => setState(() {
+                  _searchFailed = false;
+                }),
+                icon: const Icon(Icons.refresh_rounded),
+                label: const Text(
+                  'Retry',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                style: FilledButton.styleFrom(
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ];
+    }
+
+    if (_isAlreadyDiscoveredState) {
+      final isManual = _foundDevice != null && ref.read(appControllerProvider.notifier).isManualDevice(_foundDevice!);
+      return [
+        Row(
+          children: [
+            if (isManual) ...[
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () {
+                    widget.onDeviceDisconnected(_foundDevice!);
+                    Navigator.of(context).pop();
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('${_foundDevice!.deviceName} disconnected.')),
+                    );
+                  },
+                  style: OutlinedButton.styleFrom(
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    foregroundColor: colorScheme.error,
+                    side: BorderSide(color: colorScheme.error.withValues(alpha: 0.5)),
+                  ),
+                  child: const Text(
+                    'Disconnect',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+            ],
+            Expanded(
+              child: FilledButton(
+                onPressed: () => Navigator.of(context).pop(),
+                style: FilledButton.styleFrom(
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                ),
+                child: const Text(
+                  'Close',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ];
+    }
+
+    if (_foundDevice != null) {
+      return [
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton(
+                onPressed: () => setState(() {
+                  _foundDevice = null;
+                }),
+                style: OutlinedButton.styleFrom(
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                ),
+                child: const Text(
+                  'Back',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: FilledButton.icon(
+                onPressed: () async {
+                  setState(() {
+                    _isAwaitingApproval = true;
+                  });
+                  final approved = await ref.read(appControllerProvider.notifier).requestManualConnect(_foundDevice!);
+                  if (!mounted) return;
+                  setState(() {
+                    _isAwaitingApproval = false;
+                  });
+                  if (approved) {
+                    widget.onDeviceConnected(_foundDevice!);
+                    Navigator.of(context).pop();
+                  } else {
+                    Navigator.of(context).pop();
+                    _showConnectionCancelledDialog(context, _foundDevice!);
+                  }
+                },
+                icon: const Icon(Icons.arrow_forward_rounded),
+                label: const Text(
+                  'Confirm',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                style: FilledButton.styleFrom(
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ];
+    }
+
+    final bool isMobile = defaultTargetPlatform == TargetPlatform.iOS || defaultTargetPlatform == TargetPlatform.android;
+    final bool showConnectButton = !isMobile || _activeTab == 1;
+
+    return [
+      Row(
+        children: [
+          Expanded(
+            child: OutlinedButton(
+              onPressed: () => Navigator.of(context).pop(),
+              style: OutlinedButton.styleFrom(
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                padding: const EdgeInsets.symmetric(vertical: 16),
+              ),
+              child: const Text(
+                'Cancel',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ),
+          ),
+          if (showConnectButton) ...[
+            const SizedBox(width: 12),
+            Expanded(
+              child: FilledButton.icon(
+                onPressed: _submitIp,
+                icon: const Icon(Icons.arrow_forward_rounded),
+                label: const Text(
+                  'Connect',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                style: FilledButton.styleFrom(
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    ];
+  }
+}
+
+class _ScannerOverlay extends StatefulWidget {
+  @override
+  State<_ScannerOverlay> createState() => _ScannerOverlayState();
+}
+
+class _ScannerOverlayState extends State<_ScannerOverlay> with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 2),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        return Stack(
+          children: [
+            Container(
+              decoration: BoxDecoration(
+                border: Border.all(color: colorScheme.primary.withValues(alpha: 0.5), width: 2),
+                borderRadius: BorderRadius.circular(16),
+              ),
+            ),
+            Positioned(
+              top: _controller.value * 236,
+              left: 10,
+              right: 10,
+              child: Container(
+                height: 3,
+                decoration: BoxDecoration(
+                  color: colorScheme.primary,
+                  boxShadow: [
+                    BoxShadow(
+                      color: colorScheme.primary,
+                      blurRadius: 8,
+                      spreadRadius: 2,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
   }
 }
 
@@ -3607,4 +4810,107 @@ class _MediaOptionCard extends StatelessWidget {
       ),
     );
   }
+}
+
+void _showConnectionCancelledDialog(BuildContext context, DeviceModel device) {
+  final theme = Theme.of(context);
+  final colorScheme = theme.colorScheme;
+  showDropNetDialog<void>(
+    context: context,
+    builder: (context) {
+      return AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(32),
+        ),
+        backgroundColor: colorScheme.surface,
+        elevation: 6,
+        titlePadding: const EdgeInsets.fromLTRB(24, 28, 24, 16),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 24),
+        actionsPadding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+        icon: Container(
+          width: 68,
+          height: 68,
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                colorScheme.errorContainer,
+                colorScheme.errorContainer.withValues(alpha: 0.5),
+              ],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            shape: BoxShape.circle,
+            boxShadow: [
+              BoxShadow(
+                color: colorScheme.error.withValues(alpha: 0.15),
+                blurRadius: 16,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Icon(
+            Icons.warning_amber_rounded,
+            color: colorScheme.onErrorContainer,
+            size: 32,
+          ),
+        ),
+        title: Text(
+          'Connection Cancelled',
+          style: theme.textTheme.headlineSmall?.copyWith(
+            fontWeight: FontWeight.w800,
+            color: colorScheme.onSurface,
+            letterSpacing: -0.5,
+          ),
+          textAlign: TextAlign.center,
+        ),
+        content: SizedBox(
+          width: 320,
+          child: Card(
+            elevation: 0,
+            color: colorScheme.surfaceContainerLow,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(24),
+              side: BorderSide(
+                color: colorScheme.outlineVariant.withValues(
+                  alpha: 0.25,
+                ),
+              ),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Text(
+                'The manual connection was cancelled or rejected by ${device.deviceName}.',
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                  height: 1.4,
+                ),
+              ),
+            ),
+          ),
+        ),
+        actions: [
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton.tonal(
+                  onPressed: () => Navigator.of(context).pop(),
+                  style: FilledButton.styleFrom(
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                  ),
+                  child: const Text(
+                    'Close',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      );
+    },
+  );
 }

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/state/app_state.dart';
 import '../../core/utils/file_utils.dart';
+import '../../core/utils/dialog_utils.dart';
 import '../../core/utils/transfer_visuals.dart';
 import '../../models/transfer_model.dart';
 import '../../widgets/wavy_progress_indicators.dart';
@@ -16,6 +17,12 @@ class TransferSessionScreen extends ConsumerWidget {
     final items = state.transferSessionItems;
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
+
+    final groupedItems = <String, List<TransferModel>>{};
+    for (final item in items) {
+      final key = item.deviceName.trim().isEmpty ? 'Unknown Device' : item.deviceName.trim();
+      groupedItems.putIfAbsent(key, () => []).add(item);
+    }
 
     final totalBytes = items.fold<int>(0, (sum, item) => sum + item.size);
     final sessionTotalBytes = items.isNotEmpty
@@ -35,6 +42,7 @@ class TransferSessionScreen extends ConsumerWidget {
         ? 0
         : (items.map((item) => item.sessionFileCount).firstWhere((c) => c != null, orElse: () => 1) ?? 1);
 
+    final isCancelled = items.any((item) => item.status == TransferStatus.canceled);
     final hasErrors = items.any((item) => item.status == TransferStatus.failed || item.status == TransferStatus.canceled);
     final completedCount = items.where((item) => item.status == TransferStatus.completed).length;
 
@@ -118,7 +126,9 @@ class TransferSessionScreen extends ConsumerWidget {
                         fontWeight: FontWeight.w900,
                         fontSize: 16,
                         color: allDone
-                            ? (hasErrors ? colorScheme.onErrorContainer : Colors.green.shade900)
+                            ? (isCancelled
+                                ? colorScheme.onSurfaceVariant
+                                : (hasErrors ? colorScheme.onErrorContainer : Colors.green.shade900))
                             : colorScheme.onPrimaryContainer,
                         letterSpacing: -0.3,
                       ),
@@ -126,11 +136,15 @@ class TransferSessionScreen extends ConsumerWidget {
                     const SizedBox(height: 3),
                     Text(
                       allDone
-                          ? (hasErrors ? 'FINISHED WITH ISSUES' : 'COMPLETED SUCCESSFULLY')
+                          ? (isCancelled
+                              ? 'TRANSFER CANCELLED'
+                              : (hasErrors ? 'FINISHED WITH ISSUES' : 'COMPLETED SUCCESSFULLY'))
                           : 'SYNCING ${(overallProgress * 100).toStringAsFixed(0)}% • SECURE EXPRESS',
                       style: theme.textTheme.labelSmall?.copyWith(
                         color: allDone
-                            ? (hasErrors ? colorScheme.error : Colors.green.shade700)
+                            ? (isCancelled
+                                ? colorScheme.onSurfaceVariant
+                                : (hasErrors ? colorScheme.error : Colors.green.shade700))
                             : colorScheme.primary,
                         fontWeight: FontWeight.w900,
                         fontSize: 8.5,
@@ -170,28 +184,44 @@ class TransferSessionScreen extends ConsumerWidget {
                             ),
                           ),
                         )
-                      : ListView.separated(
-                          reverse: true, // stacks from the bottom upwards
-                          itemCount: items.length,
-                          padding: const EdgeInsets.fromLTRB(0, 135, 0, 8),
-                          separatorBuilder: (context, index) => const SizedBox(height: 10),
-                          itemBuilder: (context, index) {
-                            final item = items[index];
-                            final accent = TransferVisuals.accentColor(context, item.fileName);
-                            final isSuccess = item.status == TransferStatus.completed;
-                            final isFailure = item.status == TransferStatus.failed || item.status == TransferStatus.canceled;
+                      : (state.parallelSendingEnabled
+                          ? ListView.separated(
+                              itemCount: groupedItems.length,
+                              padding: const EdgeInsets.fromLTRB(0, 135, 0, 8),
+                              separatorBuilder: (context, index) => const SizedBox(height: 12),
+                              itemBuilder: (context, index) {
+                                final key = groupedItems.keys.elementAt(index);
+                                final deviceItems = groupedItems[key]!;
+                                return _DeviceProgressCard(
+                                  deviceName: key,
+                                  items: deviceItems,
+                                  colorScheme: colorScheme,
+                                  theme: theme,
+                                );
+                              },
+                            )
+                          : ListView.separated(
+                              reverse: true, // stacks from the bottom upwards
+                              itemCount: items.length,
+                              padding: const EdgeInsets.fromLTRB(0, 135, 0, 8),
+                              separatorBuilder: (context, index) => const SizedBox(height: 10),
+                              itemBuilder: (context, index) {
+                                final item = items[index];
+                                final accent = TransferVisuals.accentColor(context, item.fileName);
+                                final isSuccess = item.status == TransferStatus.completed;
+                                final isFailure = item.status == TransferStatus.failed || item.status == TransferStatus.canceled;
 
-                            return _AnimatedFileItemTile(
-                              key: ValueKey(item.id),
-                              item: item,
-                              accent: accent,
-                              isSuccess: isSuccess,
-                              isFailure: isFailure,
-                              colorScheme: colorScheme,
-                              theme: theme,
-                            );
-                          },
-                        ),
+                                return _AnimatedFileItemTile(
+                                  key: ValueKey(item.id),
+                                  item: item,
+                                  accent: accent,
+                                  isSuccess: isSuccess,
+                                  isFailure: isFailure,
+                                  colorScheme: colorScheme,
+                                  theme: theme,
+                                );
+                              },
+                            )),
                 ),
                 const SizedBox(height: 16),
 
@@ -207,9 +237,11 @@ class TransferSessionScreen extends ConsumerWidget {
                       color: allDone ? null : colorScheme.surfaceContainerLow,
                       gradient: allDone
                           ? LinearGradient(
-                              colors: hasErrors
-                                  ? [const Color(0xFFE53935), const Color(0xFFB71C1C)]
-                                  : [const Color(0xFF43A047), const Color(0xFF1B5E20)],
+                              colors: isCancelled
+                                  ? [const Color(0xFF78909C), const Color(0xFF455A64)]
+                                  : (hasErrors
+                                      ? [const Color(0xFFE53935), const Color(0xFFB71C1C)]
+                                      : [const Color(0xFF43A047), const Color(0xFF1B5E20)]),
                               begin: Alignment.topLeft,
                               end: Alignment.bottomRight,
                             )
@@ -217,9 +249,11 @@ class TransferSessionScreen extends ConsumerWidget {
                       boxShadow: [
                         BoxShadow(
                           color: allDone
-                              ? (hasErrors
-                                  ? const Color(0xFFE53935).withValues(alpha: 0.25)
-                                  : const Color(0xFF43A047).withValues(alpha: 0.25))
+                              ? (isCancelled
+                                  ? const Color(0xFF78909C).withValues(alpha: 0.25)
+                                  : (hasErrors
+                                      ? const Color(0xFFE53935).withValues(alpha: 0.25)
+                                      : const Color(0xFF43A047).withValues(alpha: 0.25)))
                               : Colors.black.withValues(alpha: 0.03),
                           blurRadius: 24,
                           offset: const Offset(0, 8),
@@ -254,14 +288,18 @@ class TransferSessionScreen extends ConsumerWidget {
                                     ],
                                   ),
                                   child: Icon(
-                                    hasErrors ? Icons.close_rounded : Icons.check_rounded,
+                                    isCancelled
+                                        ? Icons.cancel_rounded
+                                        : (hasErrors ? Icons.close_rounded : Icons.check_rounded),
                                     size: 44,
                                     color: Colors.white,
                                   ),
                                 ),
                                 const SizedBox(height: 16),
                                 Text(
-                                  hasErrors ? 'Session Finished with Issues' : 'All Files Transferred!',
+                                  isCancelled
+                                      ? 'Transfer Cancelled'
+                                      : (hasErrors ? 'Session Finished with Issues' : 'All Files Transferred!'),
                                   style: theme.textTheme.titleMedium?.copyWith(
                                     fontWeight: FontWeight.w800,
                                     color: Colors.white,
@@ -272,9 +310,11 @@ class TransferSessionScreen extends ConsumerWidget {
                                 ),
                                 const SizedBox(height: 6),
                                 Text(
-                                  hasErrors
-                                      ? 'Some files failed or were canceled.'
-                                      : 'All $expectedCount files were successfully shared.',
+                                  isCancelled
+                                      ? 'The transfer session was cancelled.'
+                                      : (hasErrors
+                                          ? 'Some files failed or were canceled.'
+                                          : 'All $expectedCount files were successfully shared.'),
                                   style: theme.textTheme.bodySmall?.copyWith(
                                     color: Colors.white.withValues(alpha: 0.85),
                                     fontWeight: FontWeight.w500,
@@ -384,74 +424,232 @@ class TransferSessionScreen extends ConsumerWidget {
                   ),
                 const SizedBox(height: 16),
 
-                // Premium Done Button Block
-                SizedBox(
-                  width: double.infinity,
-                  height: 58,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(24),
-                      boxShadow: allDone
-                          ? [
-                              BoxShadow(
-                                color: colorScheme.primary.withValues(alpha: 0.3),
-                                blurRadius: 16,
-                                offset: const Offset(0, 4),
-                              ),
-                            ]
-                          : null,
-                    ),
-                    child: FilledButton(
-                      onPressed: allDone
-                          ? () {
-                              ref.read(appControllerProvider.notifier).closeTransferSession();
-                              Navigator.of(context).maybePop();
-                            }
-                          : null,
-                      style: FilledButton.styleFrom(
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(24),
-                        ),
-                        backgroundColor: allDone ? colorScheme.primary : colorScheme.surfaceContainerHigh,
-                        foregroundColor: allDone ? colorScheme.onPrimary : colorScheme.onSurface.withValues(alpha: 0.38),
-                        padding: EdgeInsets.zero,
-                        elevation: 0,
-                      ),
-                      child: allDone
-                          ? const Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(Icons.check_circle_outline_rounded, size: 22),
-                                SizedBox(width: 8),
-                                Text(
-                                  'Finish Session',
-                                  style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
-                                ),
-                              ],
-                            )
-                          : Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                WavyCircularProgressIndicator(
-                                  value: overallProgress,
-                                  size: 22.0,
-                                  color: colorScheme.onSurface.withValues(alpha: 0.38),
-                                  strokeWidth: 3.5,
-                                  waveAmplitude: 1.0,
-                                ),
-                                const SizedBox(width: 12),
-                                Text(
-                                  'Transferring (${(overallProgress * 100).toStringAsFixed(0)}%)',
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 15,
-                                    color: colorScheme.onSurface.withValues(alpha: 0.38),
-                                  ),
-                                ),
-                              ],
+                // Premium Action Buttons Row (with smooth width extension)
+                Row(
+                  children: [
+                    Expanded(
+                      child: SizedBox(
+                        height: 58,
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 400),
+                          curve: Curves.easeInOut,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(24),
+                            boxShadow: allDone
+                                ? [
+                                    BoxShadow(
+                                      color: colorScheme.primary.withValues(alpha: 0.3),
+                                      blurRadius: 16,
+                                      offset: const Offset(0, 4),
+                                    ),
+                                  ]
+                                : null,
+                          ),
+                          child: FilledButton(
+                            onPressed: allDone
+                                ? () {
+                                    ref.read(appControllerProvider.notifier).closeTransferSession();
+                                    Navigator.of(context).maybePop();
+                                  }
+                                : null,
+                            style: FilledButton.styleFrom(
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(24)),
+                              backgroundColor: allDone ? colorScheme.primary : colorScheme.surfaceContainerHigh,
+                              foregroundColor: allDone ? colorScheme.onPrimary : colorScheme.onSurface.withValues(alpha: 0.38),
+                              padding: EdgeInsets.zero,
+                              elevation: 0,
                             ),
+                            child: allDone
+                                ? const Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(Icons.check_circle_outline_rounded, size: 22),
+                                      SizedBox(width: 8),
+                                      Text(
+                                        'Finish Session',
+                                        style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+                                      ),
+                                    ],
+                                  )
+                                : Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      WavyCircularProgressIndicator(
+                                        value: overallProgress,
+                                        size: 22.0,
+                                        color: colorScheme.onSurface.withValues(alpha: 0.38),
+                                        strokeWidth: 3.5,
+                                        waveAmplitude: 1.0,
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Text(
+                                        'Transferring (${(overallProgress * 100).toStringAsFixed(0)}%)',
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 15,
+                                          color: colorScheme.onSurface.withValues(alpha: 0.38),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                          ),
+                        ),
+                      ),
                     ),
-                  ),
+                    AnimatedContainer(
+                      duration: const Duration(milliseconds: 400),
+                      width: allDone ? 0 : 12,
+                    ),
+                    AnimatedContainer(
+                      duration: const Duration(milliseconds: 400),
+                      curve: Curves.easeInOut,
+                      width: allDone ? 0 : 150,
+                      height: 58,
+                      child: ClipRect(
+                        child: OverflowBox(
+                          minWidth: 150,
+                          maxWidth: 150,
+                          alignment: Alignment.centerRight,
+                          child: OutlinedButton.icon(
+                            onPressed: () async {
+                              final confirm = await showDropNetDialog<bool>(
+                                context: context,
+                                builder: (context) => AlertDialog(
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(32),
+                                  ),
+                                  backgroundColor: colorScheme.surface,
+                                  elevation: 6,
+                                  titlePadding: const EdgeInsets.fromLTRB(24, 28, 24, 12),
+                                  contentPadding: const EdgeInsets.symmetric(horizontal: 24),
+                                  actionsPadding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+                                  icon: Container(
+                                    width: 68,
+                                    height: 68,
+                                    decoration: BoxDecoration(
+                                      gradient: LinearGradient(
+                                        colors: [
+                                          colorScheme.errorContainer,
+                                          colorScheme.errorContainer.withValues(alpha: 0.5),
+                                        ],
+                                        begin: Alignment.topLeft,
+                                        end: Alignment.bottomRight,
+                                      ),
+                                      shape: BoxShape.circle,
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: colorScheme.error.withValues(alpha: 0.15),
+                                          blurRadius: 16,
+                                          offset: const Offset(0, 4),
+                                        ),
+                                      ],
+                                    ),
+                                    child: Icon(
+                                      Icons.warning_amber_rounded,
+                                      color: colorScheme.onErrorContainer,
+                                      size: 32,
+                                    ),
+                                  ),
+                                  title: Text(
+                                    'Cancel Transfer?',
+                                    style: theme.textTheme.headlineSmall?.copyWith(
+                                      fontWeight: FontWeight.w800,
+                                      color: colorScheme.onSurface,
+                                      letterSpacing: -0.5,
+                                    ),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                  content: SizedBox(
+                                    width: 320,
+                                    child: Card(
+                                      elevation: 0,
+                                      color: colorScheme.surfaceContainerLow,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(24),
+                                        side: BorderSide(
+                                          color: colorScheme.outlineVariant.withValues(alpha: 0.25),
+                                        ),
+                                      ),
+                                      child: Padding(
+                                        padding: const EdgeInsets.all(20),
+                                        child: Text(
+                                          'Are you sure you want to cancel the transfer session? Partially received files will be deleted.',
+                                          style: theme.textTheme.bodyMedium?.copyWith(
+                                            color: colorScheme.onSurfaceVariant,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                          textAlign: TextAlign.center,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  actions: [
+                                    Row(
+                                      children: [
+                                        Expanded(
+                                          child: OutlinedButton(
+                                            onPressed: () => Navigator.of(context).pop(false),
+                                            style: OutlinedButton.styleFrom(
+                                              shape: RoundedRectangleBorder(
+                                                borderRadius: BorderRadius.circular(20),
+                                              ),
+                                              padding: const EdgeInsets.symmetric(vertical: 16),
+                                            ),
+                                            child: const Text(
+                                              'No',
+                                              style: TextStyle(fontWeight: FontWeight.bold),
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 12),
+                                        Expanded(
+                                          child: FilledButton(
+                                            onPressed: () => Navigator.of(context).pop(true),
+                                            style: FilledButton.styleFrom(
+                                              backgroundColor: colorScheme.error,
+                                              foregroundColor: colorScheme.onError,
+                                              shape: RoundedRectangleBorder(
+                                                borderRadius: BorderRadius.circular(20),
+                                              ),
+                                              padding: const EdgeInsets.symmetric(vertical: 16),
+                                            ),
+                                            child: const Text(
+                                              'Yes, Cancel',
+                                              style: TextStyle(fontWeight: FontWeight.bold),
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                              );
+                              if (confirm == true) {
+                                final sessionId = items.firstOrNull?.sessionId;
+                                if (sessionId != null) {
+                                  await ref.read(appControllerProvider.notifier).cancelTransferSession(sessionId);
+                                }
+                              }
+                            },
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: colorScheme.error,
+                              side: BorderSide(color: colorScheme.error.withValues(alpha: 0.5)),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(24),
+                              ),
+                              padding: const EdgeInsets.symmetric(vertical: 16),
+                            ),
+                            icon: const Icon(Icons.cancel_outlined),
+                            label: const Text(
+                              'Cancel',
+                              style: TextStyle(fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -464,8 +662,196 @@ class TransferSessionScreen extends ConsumerWidget {
   static bool _isTerminal(TransferStatus status) {
     return status == TransferStatus.completed || status == TransferStatus.failed || status == TransferStatus.canceled;
   }
+}
 
+class _DeviceProgressCard extends StatefulWidget {
+  const _DeviceProgressCard({
+    required this.deviceName,
+    required this.items,
+    required this.colorScheme,
+    required this.theme,
+  });
 
+  final String deviceName;
+  final List<TransferModel> items;
+  final ColorScheme colorScheme;
+  final ThemeData theme;
+
+  @override
+  State<_DeviceProgressCard> createState() => _DeviceProgressCardState();
+}
+
+class _DeviceProgressCardState extends State<_DeviceProgressCard> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = widget.theme;
+    final colorScheme = widget.colorScheme;
+    final items = widget.items;
+
+    final totalSize = items.fold<int>(0, (sum, i) => sum + i.size);
+    final doneBytes = items.fold<double>(0.0, (sum, i) {
+      if (i.status == TransferStatus.completed) return sum + i.size;
+      return sum + (i.size * i.progress.clamp(0.0, 1.0));
+    });
+    final progress = totalSize == 0 ? 0.0 : (doneBytes / totalSize).clamp(0.0, 1.0);
+    final speed = items.fold<double>(0.0, (sum, i) => i.status == TransferStatus.transferring ? sum + i.speed : sum);
+
+    final completedCount = items.where((i) => i.status == TransferStatus.completed).length;
+    final totalCount = items.length;
+
+    var status = TransferStatus.connecting;
+    if (items.any((i) => i.status == TransferStatus.failed)) {
+      status = TransferStatus.failed;
+    } else if (items.any((i) => i.status == TransferStatus.canceled)) {
+      status = TransferStatus.canceled;
+    } else if (items.any((i) => i.status == TransferStatus.transferring)) {
+      status = TransferStatus.transferring;
+    } else if (items.every((i) => i.status == TransferStatus.completed)) {
+      status = TransferStatus.completed;
+    }
+
+    final isSuccess = status == TransferStatus.completed;
+    final isFailure = status == TransferStatus.failed || status == TransferStatus.canceled;
+
+    final statusColor = isSuccess
+        ? Colors.green
+        : isFailure
+            ? colorScheme.error
+            : colorScheme.primary;
+
+    return Card(
+      elevation: 0,
+      color: colorScheme.surfaceContainerLow,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(24),
+        side: BorderSide(
+          color: isSuccess
+              ? Colors.green.withValues(alpha: 0.25)
+              : isFailure
+                  ? colorScheme.error.withValues(alpha: 0.25)
+                  : colorScheme.outlineVariant.withValues(alpha: 0.35),
+          width: 1.5,
+        ),
+      ),
+      child: Column(
+        children: [
+          InkWell(
+            onTap: () => setState(() => _expanded = !_expanded),
+            borderRadius: BorderRadius.circular(24),
+            child: Padding(
+              padding: const EdgeInsets.all(18),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: statusColor.withValues(alpha: 0.12),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      status == TransferStatus.completed
+                          ? Icons.devices_rounded
+                          : status == TransferStatus.transferring
+                              ? Icons.sync_rounded
+                              : status == TransferStatus.connecting
+                                  ? Icons.hourglass_empty_rounded
+                                  : Icons.error_outline_rounded,
+                      color: statusColor,
+                      size: 24,
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          widget.deviceName,
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            Text(
+                              '$completedCount / $totalCount files completed',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            if (speed > 0) ...[
+                              Text(
+                                '•',
+                                style: TextStyle(color: colorScheme.outline),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                FileUtils.formatSpeed(speed),
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: colorScheme.primary,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        WavyLinearProgressIndicator(
+                          value: progress,
+                          strokeWidth: 6.0,
+                          waveHeight: 3.0,
+                          isTerminal: isSuccess || isFailure,
+                          color: statusColor,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Icon(
+                    _expanded ? Icons.expand_less_rounded : Icons.expand_more_rounded,
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (_expanded) ...[
+            const Divider(height: 1, thickness: 0.5),
+            Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: ListView.separated(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: items.length,
+                separatorBuilder: (context, index) => const SizedBox(height: 8),
+                itemBuilder: (context, index) {
+                  final item = items[index];
+                  final accent = TransferVisuals.accentColor(context, item.fileName);
+                  final isItemSuccess = item.status == TransferStatus.completed;
+                  final isItemFailure = item.status == TransferStatus.failed || item.status == TransferStatus.canceled;
+
+                  return _AnimatedFileItemTile(
+                    key: ValueKey(item.id),
+                    item: item,
+                    accent: accent,
+                    isSuccess: isItemSuccess,
+                    isFailure: isItemFailure,
+                    colorScheme: colorScheme,
+                    theme: theme,
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ],
+      ),
+    );
+  }
 }
 
 class _SummaryChip extends StatelessWidget {

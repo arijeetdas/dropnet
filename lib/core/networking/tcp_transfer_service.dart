@@ -4,6 +4,8 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
+
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 import 'package:uuid/uuid.dart';
@@ -41,16 +43,109 @@ class TcpTransferService {
       StreamController<List<IncomingPairingRequest>>.broadcast();
     final _remoteUnpairNoticesController =
       StreamController<List<RemoteUnpairNotice>>.broadcast();
+    final _remoteManualDisconnectNoticesController =
+      StreamController<List<RemoteManualDisconnectNotice>>.broadcast();
+  final _incomingManualConnectRequestsController =
+      StreamController<List<IncomingManualConnectRequest>>.broadcast();
   final Map<String, TransferModel> _active = {};
   final List<TransferHistoryEntry> _history = [];
   final Map<String, IncomingTransferRequest> _incomingRequests = {};
   final Map<String, Completer<bool>> _incomingDecisions = {};
     final Map<String, IncomingPairingRequest> _incomingPairingRequests = {};
     final Map<String, Completer<bool>> _incomingPairingDecisions = {};
+  final Map<String, IncomingManualConnectRequest> _incomingManualConnectRequests = {};
+  final Map<String, Completer<bool>> _incomingManualConnectDecisions = {};
     final List<RemoteUnpairNotice> _remoteUnpairNotices = [];
+    final List<RemoteManualDisconnectNotice> _remoteManualDisconnectNotices = [];
     final Map<String, SecureSocket> _activePairingSockets = {};
   final Map<String, ({bool accepted, DateTime at})> _sessionDecisions = {};
   final Set<String> _canceled = {};
+  final Set<String> _canceledSessions = {};
+  final Map<String, Socket> _activeReceiverSockets = {};
+  final Set<String> _canceledByReceiver = {};
+
+  String _localDeviceName = '';
+  String _localDeviceId = '';
+  String _localDevicePlatform = '';
+  String _customDeviceIconName = '';
+  String _localTlsCertificateSha256 = '';
+
+  void setIdentity({
+    required String name,
+    required String id,
+    required String platform,
+    required String type,
+    required String tls,
+  }) {
+    _localDeviceName = name;
+    _localDeviceId = id;
+    _localDevicePlatform = platform;
+    _customDeviceIconName = type;
+    _localTlsCertificateSha256 = tls;
+  }
+
+  Future<DeviceModel> checkDirectDevice(String ip, int port) async {
+    SecureSocket? socket;
+    StreamIterator<String>? lineIterator;
+    try {
+      final rawSocket = await Socket.connect(
+        ip,
+        port,
+        timeout: const Duration(seconds: 8),
+      );
+      rawSocket.setOption(SocketOption.tcpNoDelay, true);
+      socket = await SecureSocket.secure(
+        rawSocket,
+        host: ip,
+        onBadCertificate: (certificate) => true,
+      );
+
+      final peerFingerprint = _fingerprintFromCertificate(
+        socket.peerCertificate,
+      );
+
+      lineIterator = StreamIterator<String>(
+        utf8.decoder.bind(socket).transform(const LineSplitter()),
+      );
+
+      final header = {
+        'kind': 'dropnet_info_request',
+      };
+      socket.add(utf8.encode('${jsonEncode(header)}\n'));
+      await socket.flush();
+
+      // Read response
+      final response = await _readJsonLineFromIterator(
+        lineIterator,
+        timeout: const Duration(seconds: 8),
+      );
+
+      if (response['ok'] == true) {
+        final typeStr = response['type']?.toString() ?? 'other';
+        final deviceType = DeviceType.values.firstWhere(
+          (e) => e.name == typeStr,
+          orElse: () => DeviceType.other,
+        );
+        return DeviceModel(
+          deviceId: response['id']?.toString() ?? 'manual_${DateTime.now().millisecondsSinceEpoch}',
+          deviceName: response['name']?.toString() ?? 'Manual Peer',
+          manufacturer: 'Direct IP Connection',
+          platform: response['platform']?.toString() ?? 'other',
+          ipAddress: ip,
+          deviceType: deviceType,
+          isOnline: true,
+          lastSeen: DateTime.now(),
+          tlsCertificateSha256: response['tls']?.toString() ?? peerFingerprint,
+          port: port,
+        );
+      }
+      throw Exception('Invalid response from target device.');
+    } finally {
+      await lineIterator?.cancel();
+      await socket?.close();
+    }
+  }
+
   ServerSocket? _server;
   String? _saveDirectory;
   int _chunkSize = defaultChunkSize;
@@ -68,6 +163,10 @@ class TcpTransferService {
       _incomingPairingRequestsController.stream;
     Stream<List<RemoteUnpairNotice>> get remoteUnpairNoticesStream =>
       _remoteUnpairNoticesController.stream;
+    Stream<List<RemoteManualDisconnectNotice>> get remoteManualDisconnectNoticesStream =>
+      _remoteManualDisconnectNoticesController.stream;
+  Stream<List<IncomingManualConnectRequest>> get incomingManualConnectRequestsStream =>
+      _incomingManualConnectRequestsController.stream;
   bool get isReceiverRunning => _server != null;
 
   void configure({int? chunkSize, int? speedLimitBytesPerSec}) {
@@ -83,7 +182,13 @@ class TcpTransferService {
     required String saveDirectory,
     int port = defaultPort,
   }) async {
+    if (kDebugMode) {
+      print('[TcpTransferService] startReceiver called on port $port');
+    }
     if (_server != null) {
+      if (kDebugMode) {
+        print('[TcpTransferService] startReceiver aborted: server already active on ${_server!.port}');
+      }
       return;
     }
     _saveDirectory = saveDirectory;
@@ -92,11 +197,31 @@ class TcpTransferService {
         commonName: _tlsCertCommonName,
         subjectAlternativeNames: _tlsCertSans,
       );
-      _server = await ServerSocket.bind(
-        InternetAddress.anyIPv4,
-        port,
-        shared: true,
-      );
+      if (kDebugMode) {
+        print('[TcpTransferService] Binding ServerSocket on port $port');
+      }
+      ServerSocket? boundServer;
+      int attempts = 0;
+      while (attempts < 5) {
+        try {
+          boundServer = await ServerSocket.bind(
+            InternetAddress.anyIPv4,
+            port,
+            shared: true,
+          );
+          break;
+        } on SocketException catch (_) {
+          attempts++;
+          if (attempts >= 5) {
+            rethrow;
+          }
+          await Future<void>.delayed(Duration(milliseconds: 200 * attempts));
+        }
+      }
+      _server = boundServer;
+      if (kDebugMode) {
+        print('[TcpTransferService] TCP ServerSocket successfully bound on port ${_server!.port}');
+      }
       _server!.listen((rawSocket) async {
         rawSocket.setOption(SocketOption.tcpNoDelay, true);
         try {
@@ -109,15 +234,24 @@ class TcpTransferService {
           await rawSocket.close();
         }
       });
-    } on SocketException {
+    } on SocketException catch (e) {
       _server = null;
+      if (kDebugMode) {
+        print('[TcpTransferService] SocketException in startReceiver on port $port: $e');
+      }
       return;
     }
   }
 
   Future<void> stopReceiver() async {
+    if (kDebugMode) {
+      print('[TcpTransferService] stopReceiver called (server active: ${_server != null})');
+    }
     await _server?.close();
     _server = null;
+    if (kDebugMode) {
+      print('[TcpTransferService] TCP ServerSocket closed');
+    }
   }
 
   Future<void> sendFiles({
@@ -145,6 +279,10 @@ class TcpTransferService {
 
     final sessionId = _uuid.v4();
     for (var index = 0; index < candidates.length; index++) {
+      // Stop sending remaining files if the session was cancelled
+      if (_canceledSessions.contains(sessionId)) {
+        break;
+      }
       final path = candidates[index];
       await _sendSingleFileWithRetry(
         target: target,
@@ -160,6 +298,7 @@ class TcpTransferService {
         pairingCode: pairingCode,
       );
     }
+    _canceledSessions.remove(sessionId);
   }
 
   Future<({bool accepted, String peerFingerprint})> requestPairing({
@@ -243,6 +382,122 @@ class TcpTransferService {
     } finally {
       _activePairingSockets.remove(target.deviceId);
       await lineIterator?.cancel();
+      await socket?.close();
+    }
+  }
+
+  Future<bool> requestManualConnect({
+    required DeviceModel target,
+    required String senderDeviceName,
+    required String senderDeviceId,
+    required String senderTlsCertificateSha256,
+    required String senderDevicePlatform,
+    required String senderDeviceType,
+    required int senderPort,
+    int port = defaultPort,
+  }) async {
+    final expectedPeerFingerprint = (target.tlsCertificateSha256 ?? '')
+        .trim()
+        .toLowerCase();
+    SecureSocket? socket;
+    StreamIterator<String>? lineIterator;
+    try {
+      final rawSocket = await Socket.connect(
+        target.ipAddress,
+        port,
+        timeout: const Duration(seconds: 12),
+      );
+      rawSocket.setOption(SocketOption.tcpNoDelay, true);
+      socket = await SecureSocket.secure(
+        rawSocket,
+        host: target.ipAddress,
+        onBadCertificate: (certificate) {
+          if (expectedPeerFingerprint.isEmpty) {
+            return true;
+          }
+          return _matchesExpectedCertificateFingerprint(
+            certificate,
+            expectedPeerFingerprint,
+          );
+        },
+      );
+
+      lineIterator = StreamIterator<String>(
+        utf8.decoder.bind(socket).transform(const LineSplitter()),
+      );
+
+      final header = {
+        'kind': 'dropnet_manual_connect_request',
+        'requestId': _uuid.v4(),
+        'fromDeviceName': senderDeviceName,
+        'fromDeviceId': senderDeviceId.trim(),
+        'fromTlsCertificateSha256':
+            senderTlsCertificateSha256.trim().toLowerCase(),
+        'fromDevicePlatform': senderDevicePlatform,
+        'fromDeviceType': senderDeviceType,
+        'fromPort': senderPort,
+      };
+      socket.add(utf8.encode('${jsonEncode(header)}\n'));
+      await socket.flush();
+
+      final response = await _readJsonLineFromIterator(
+        lineIterator,
+        timeout: const Duration(minutes: 2),
+      );
+      return response['accepted'] as bool? ?? false;
+    } finally {
+      await lineIterator?.cancel();
+      await socket?.close();
+    }
+  }
+
+  Future<void> requestManualDisconnect({
+    required DeviceModel target,
+    required String senderDeviceName,
+    required String senderDeviceId,
+    required String senderTlsCertificateSha256,
+    int port = defaultPort,
+  }) async {
+    final expectedPeerFingerprint = (target.tlsCertificateSha256 ?? '')
+        .trim()
+        .toLowerCase();
+    SecureSocket? socket;
+    try {
+      final rawSocket = await Socket.connect(
+        target.ipAddress,
+        port,
+        timeout: const Duration(seconds: 5),
+      );
+      rawSocket.setOption(SocketOption.tcpNoDelay, true);
+      if (expectedPeerFingerprint.isEmpty) {
+        socket = await SecureSocket.secure(
+          rawSocket,
+          host: target.ipAddress,
+          onBadCertificate: (cert) => true,
+        );
+      } else {
+        socket = await SecureSocket.secure(
+          rawSocket,
+          host: target.ipAddress,
+          onBadCertificate: (certificate) => _matchesExpectedCertificateFingerprint(
+            certificate,
+            expectedPeerFingerprint,
+          ),
+        );
+      }
+
+      final header = {
+        'kind': 'dropnet_manual_disconnect_request',
+        'requestId': _uuid.v4(),
+        'fromDeviceName': senderDeviceName,
+        'fromDeviceId': senderDeviceId.trim(),
+        'fromTlsCertificateSha256': senderTlsCertificateSha256.trim().toLowerCase(),
+      };
+      socket.add(utf8.encode('${jsonEncode(header)}\n'));
+      await socket.flush();
+    } catch (_) {
+      // Ignored since we are disconnecting anyway
+    } finally {
       await socket?.close();
     }
   }
@@ -485,6 +740,21 @@ class TcpTransferService {
         return false;
       }
 
+      final receiverResponse = Completer<Map<String, dynamic>>();
+      unawaited(Future(() async {
+        try {
+          if (await lineIterator!.moveNext()) {
+            final line = lineIterator.current;
+            final map = jsonDecode(line) as Map<String, dynamic>;
+            receiverResponse.complete(map);
+          } else {
+            receiverResponse.complete({'ok': false, 'error': 'Connection closed by peer.'});
+          }
+        } catch (e) {
+          receiverResponse.complete({'ok': false, 'error': e.toString()});
+        }
+      }));
+
       int sentBytes = 0;
       var sentSinceLastSample = 0;
       var speedSampleTime = DateTime.now();
@@ -495,6 +765,12 @@ class TcpTransferService {
       );
 
       while (sentBytes < totalSize && !_canceled.contains(transferId)) {
+        if (receiverResponse.isCompleted) {
+          final res = await receiverResponse.future;
+          final err = res['error']?.toString() ?? 'cancelled_by_recipient';
+          throw SocketException(err);
+        }
+
         final remain = totalSize - sentBytes;
         final toRead = min(remain, _chunkSize);
         final plain = await reader.read(toRead);
@@ -565,26 +841,25 @@ class TcpTransferService {
           ),
         );
       } else {
-        final completion = await _readJsonLineFromIterator(
-          lineIterator,
-          timeout: const Duration(seconds: 30),
+        final completion = await receiverResponse.future.timeout(
+          const Duration(seconds: 30),
+          onTimeout: () => {'ok': false, 'error': 'Timeout waiting for receiver confirmation.'},
         );
         final ok = completion['ok'] == true;
         if (!ok) {
-          final reason =
-              (completion['error']?.toString().trim() ??
-              'Receiver reported transfer failure.');
+          final reason = (completion['error']?.toString().trim() ?? 'Receiver reported transfer failure.');
+          final isCancelled = reason.contains('cancelled_by_recipient') || completion['error'] == 'cancelled_by_recipient';
           _updateTransfer(
             transferId,
             (t) => t.copyWith(
-              status: TransferStatus.failed,
-              errorMessage: maxAttempts > attempt
-                  ? '$reason Retrying...'
-                  : reason,
+              status: isCancelled ? TransferStatus.canceled : TransferStatus.failed,
+              errorMessage: isCancelled
+                  ? 'Cancelled by recipient.'
+                  : (maxAttempts > attempt ? '$reason Retrying...' : reason),
             ),
           );
           _archiveTransfer(transferId);
-          return maxAttempts > attempt;
+          return !isCancelled && maxAttempts > attempt;
         }
         _updateTransfer(
           transferId,
@@ -601,19 +876,23 @@ class TcpTransferService {
       return false;
     } catch (error) {
       final reason = _humanizeTransferError(error);
+      final isCancelled = error.toString().contains('cancelled_by_recipient');
       _updateTransfer(
         transferId,
         (t) => t.copyWith(
-          status: TransferStatus.failed,
-          errorMessage: maxAttempts > attempt ? '$reason Retrying...' : reason,
+          status: isCancelled ? TransferStatus.canceled : TransferStatus.failed,
+          errorMessage: isCancelled
+              ? 'Cancelled by recipient.'
+              : (maxAttempts > attempt ? '$reason Retrying...' : reason),
         ),
       );
       _archiveTransfer(transferId);
       final retryable =
-          error is SocketException ||
+          !isCancelled &&
+          (error is SocketException ||
           error is TimeoutException ||
           (error is FileSystemException &&
-              error.message.contains('Unexpected EOF'));
+              error.message.contains('Unexpected EOF')));
       return retryable && maxAttempts > attempt;
     } finally {
       await lineIterator?.cancel();
@@ -624,6 +903,24 @@ class TcpTransferService {
 
   void cancelTransfer(String transferId) {
     _canceled.add(transferId);
+  }
+
+  void cancelTransferSession(String sessionId) {
+    _canceledSessions.add(sessionId);
+  }
+
+  Future<void> cancelTransferByReceiver(String transferId) async {
+    _canceledByReceiver.add(transferId);
+    final socket = _activeReceiverSockets.remove(transferId);
+    if (socket != null) {
+      try {
+        socket.add(utf8.encode('${jsonEncode({'ok': false, 'error': 'cancelled_by_recipient'})}\n'));
+        await socket.flush();
+      } catch (_) {}
+      try {
+        socket.destroy();
+      } catch (_) {}
+    }
   }
 
   void _handleIncomingSocket(Socket socket) {
@@ -667,6 +964,25 @@ class TcpTransferService {
                 return;
               }
               final kind = (header['kind']?.toString() ?? '').trim();
+              if (kind == 'dropnet_info_request') {
+                transferFinalized = true;
+                final response = {
+                  'ok': true,
+                  'name': _localDeviceName,
+                  'id': _localDeviceId,
+                  'platform': _localDevicePlatform,
+                  'type': _customDeviceIconName,
+                  'tls': _localTlsCertificateSha256,
+                };
+                try {
+                  socket.add(utf8.encode('${jsonEncode(response)}\n'));
+                  await socket.flush();
+                } catch (_) {}
+                try {
+                  await socket.close();
+                } catch (_) {}
+                return;
+              }
               if (kind == 'dropnet_pairing_request') {
                 transferFinalized = true;
                 await _handleIncomingPairingRequest(
@@ -679,6 +995,20 @@ class TcpTransferService {
               if (kind == 'dropnet_unpair_request') {
                 transferFinalized = true;
                 await _handleIncomingUnpairRequest(socket: socket, header: header);
+                return;
+              }
+              if (kind == 'dropnet_manual_disconnect_request') {
+                transferFinalized = true;
+                await _handleIncomingManualDisconnectRequest(socket: socket, header: header);
+                return;
+              }
+              if (kind == 'dropnet_manual_connect_request') {
+                transferFinalized = true;
+                await _handleIncomingManualConnectRequest(
+                  socket: socket,
+                  header: header,
+                  subscription: subscription,
+                );
                 return;
               }
               if (kind != 'dropnet_transfer') {
@@ -789,6 +1119,7 @@ class TcpTransferService {
                 await socket.close();
                 return;
               }
+              _activeReceiverSockets[transferId] = socket;
 
               final saveDir = _saveDirectory;
               if (saveDir == null || saveDir.isEmpty) {
@@ -855,6 +1186,12 @@ class TcpTransferService {
 
               if (payload.length < (16 + _chunkHashBytes + 1)) {
                 if (transfer != null) {
+                  try {
+                    await transfer!.close();
+                    if (await transfer!.file.exists()) {
+                      await transfer!.file.delete();
+                    }
+                  } catch (_) {}
                   _updateTransfer(
                     transfer!.id,
                     (t) => t.copyWith(
@@ -886,13 +1223,21 @@ class TcpTransferService {
                 sha256.convert(plain).bytes,
               );
               if (!_bytesEqual(expectedPlainHash, actualPlainHash)) {
-                _updateTransfer(
-                  transfer!.id,
-                  (t) => t.copyWith(
-                    status: TransferStatus.failed,
-                    errorMessage: 'Corrupted chunk detected during transfer.',
-                  ),
-                );
+                if (transfer != null) {
+                  try {
+                    await transfer!.close();
+                    if (await transfer!.file.exists()) {
+                      await transfer!.file.delete();
+                    }
+                  } catch (_) {}
+                  _updateTransfer(
+                    transfer!.id,
+                    (t) => t.copyWith(
+                      status: TransferStatus.failed,
+                      errorMessage: 'Corrupted chunk detected during transfer.',
+                    ),
+                  );
+                }
                 socket.add(
                   utf8.encode(
                     '${jsonEncode({'ok': false, 'error': 'Corrupted chunk detected by receiver.'})}\n',
@@ -900,7 +1245,9 @@ class TcpTransferService {
                 );
                 await socket.flush();
                 transferFinalized = true;
-                _archiveTransfer(transfer!.id);
+                if (transfer != null) {
+                  _archiveTransfer(transfer!.id);
+                }
                 await socket.close();
                 break;
               }
@@ -975,14 +1322,21 @@ class TcpTransferService {
         if (!headerParsed && requestId != null) {
           _rejectPendingDecision(requestId!);
         }
-        if (transfer != null &&
-            transfer!.writtenBytes < transfer!.expectedSize) {
+        if (transfer != null) {
           await transfer!.close();
+          try {
+            if (await transfer!.file.exists()) {
+              await transfer!.file.delete();
+            }
+          } catch (_) {}
+          final isByReceiver = _canceledByReceiver.remove(transfer!.id);
           _updateTransfer(
             transfer!.id,
             (t) => t.copyWith(
-              status: TransferStatus.failed,
-              errorMessage: 'Connection closed before transfer completed.',
+              status: isByReceiver ? TransferStatus.canceled : TransferStatus.failed,
+              errorMessage: isByReceiver
+                  ? 'Cancelled by recipient.'
+                  : 'Connection closed before transfer completed.',
             ),
           );
           transferFinalized = true;
@@ -998,11 +1352,19 @@ class TcpTransferService {
         }
         if (transfer != null) {
           await transfer!.close();
+          try {
+            if (await transfer!.file.exists()) {
+              await transfer!.file.delete();
+            }
+          } catch (_) {}
+          final isByReceiver = _canceledByReceiver.remove(transfer!.id);
           _updateTransfer(
             transfer!.id,
             (t) => t.copyWith(
-              status: TransferStatus.failed,
-              errorMessage: _humanizeTransferError(error),
+              status: isByReceiver ? TransferStatus.canceled : TransferStatus.failed,
+              errorMessage: isByReceiver
+                  ? 'Cancelled by recipient.'
+                  : _humanizeTransferError(error),
             ),
           );
           transferFinalized = true;
@@ -1184,6 +1546,53 @@ class TcpTransferService {
     await socket.close();
   }
 
+  Future<void> _handleIncomingManualDisconnectRequest({
+    required Socket socket,
+    required Map<String, dynamic> header,
+  }) async {
+    final requestId = (header['requestId']?.toString() ?? '').trim().isEmpty
+        ? _uuid.v4()
+        : (header['requestId']?.toString() ?? '').trim();
+    final fromDeviceName = (header['fromDeviceName']?.toString() ?? '').trim().isEmpty
+        ? socket.remoteAddress.address
+        : (header['fromDeviceName']?.toString() ?? '').trim();
+    final fromDeviceId = (header['fromDeviceId']?.toString() ?? '').trim();
+    final advertisedSenderFingerprint = (header['fromTlsCertificateSha256']?.toString() ?? '').trim().toLowerCase();
+    final peerCertificateFingerprint = socket is SecureSocket ? _fingerprintFromCertificate(socket.peerCertificate) : '';
+
+    final effectiveSenderFingerprint = advertisedSenderFingerprint.isNotEmpty
+        ? advertisedSenderFingerprint
+        : peerCertificateFingerprint;
+
+    _remoteManualDisconnectNotices.insert(
+      0,
+      RemoteManualDisconnectNotice(
+        id: requestId,
+        fromAddress: socket.remoteAddress.address,
+        fromDeviceName: fromDeviceName,
+        fromDeviceId: fromDeviceId,
+        fromTlsCertificateSha256: effectiveSenderFingerprint,
+        notifiedAt: DateTime.now(),
+      ),
+    );
+    if (_remoteManualDisconnectNotices.length > 64) {
+      _remoteManualDisconnectNotices.removeRange(64, _remoteManualDisconnectNotices.length);
+    }
+    _emitRemoteManualDisconnectNotices();
+
+    try {
+      socket.add(utf8.encode('${jsonEncode({'accepted': true})}\n'));
+      await socket.flush();
+      await socket.close();
+    } catch (_) {}
+  }
+
+  void _emitRemoteManualDisconnectNotices() {
+    _remoteManualDisconnectNoticesController.add(
+      List<RemoteManualDisconnectNotice>.unmodifiable(_remoteManualDisconnectNotices),
+    );
+  }
+
   void _rejectPendingDecision(String id) {
     final transferDecision = _incomingDecisions[id];
     if (transferDecision != null && !transferDecision.isCompleted) {
@@ -1328,6 +1737,7 @@ class TcpTransferService {
   }
 
   void _archiveTransfer(String id) {
+    _activeReceiverSockets.remove(id);
     final transfer = _active.remove(id);
     if (transfer == null) {
       return;
@@ -1458,6 +1868,11 @@ class TcpTransferService {
         completer.complete(false);
       }
     }
+    for (final completer in _incomingManualConnectDecisions.values) {
+      if (!completer.isCompleted) {
+        completer.complete(false);
+      }
+    }
     await stopReceiver();
     await _activeController.close();
     await _completedController.close();
@@ -1465,6 +1880,122 @@ class TcpTransferService {
     await _incomingRequestsController.close();
     await _incomingPairingRequestsController.close();
     await _remoteUnpairNoticesController.close();
+    await _remoteManualDisconnectNoticesController.close();
+    await _incomingManualConnectRequestsController.close();
+  }
+
+  Future<void> _handleIncomingManualConnectRequest({
+    required Socket socket,
+    required Map<String, dynamic> header,
+    required StreamSubscription<List<int>> subscription,
+  }) async {
+    final requestId = (header['requestId']?.toString() ?? '').trim().isEmpty
+        ? _uuid.v4()
+        : (header['requestId']?.toString() ?? '').trim();
+    final fromDeviceName =
+        (header['fromDeviceName']?.toString() ?? '').trim().isEmpty
+        ? socket.remoteAddress.address
+        : (header['fromDeviceName']?.toString() ?? '').trim();
+    final fromDeviceId = (header['fromDeviceId']?.toString() ?? '').trim();
+    final advertisedSenderFingerprint =
+        (header['fromTlsCertificateSha256']?.toString() ?? '')
+            .trim()
+            .toLowerCase();
+    final peerCertificateFingerprint = socket is SecureSocket
+        ? _fingerprintFromCertificate(socket.peerCertificate)
+        : '';
+
+    final effectiveSenderFingerprint = advertisedSenderFingerprint.isNotEmpty
+        ? advertisedSenderFingerprint
+        : peerCertificateFingerprint;
+
+    final fromDevicePlatform = header['fromDevicePlatform']?.toString() ?? 'other';
+    final fromDeviceType = header['fromDeviceType']?.toString() ?? 'other';
+    final fromPort = (header['fromPort'] as num?)?.toInt();
+
+    if (fromDeviceId.isEmpty || effectiveSenderFingerprint.isEmpty) {
+      try {
+        socket.add(utf8.encode('${jsonEncode({'accepted': false})}\n'));
+        await socket.flush();
+        await socket.close();
+      } catch (_) {}
+      return;
+    }
+
+    // Deduplicate: if a request from the same device is already pending, reject the new one
+    final alreadyPending = _incomingManualConnectRequests.values
+        .any((r) => r.fromDeviceId == fromDeviceId);
+    if (alreadyPending) {
+      try {
+        socket.add(utf8.encode('${jsonEncode({'accepted': false})}\n'));
+        await socket.flush();
+        await socket.close();
+      } catch (_) {}
+      return;
+    }
+
+    final request = IncomingManualConnectRequest(
+      id: requestId,
+      fromAddress: socket.remoteAddress.address,
+      fromDeviceName: fromDeviceName,
+      fromDeviceId: fromDeviceId,
+      fromTlsCertificateSha256: effectiveSenderFingerprint,
+      fromDevicePlatform: fromDevicePlatform,
+      fromDeviceType: fromDeviceType,
+      requestedAt: DateTime.now(),
+      fromPort: fromPort,
+    );
+    _incomingManualConnectRequests[requestId] = request;
+    final decisionCompleter = Completer<bool>();
+    _incomingManualConnectDecisions[requestId] = decisionCompleter;
+    _emitIncomingManualConnectRequests();
+
+    // Listen for socket closure (cancellation) or error
+    subscription.onData((_) {});
+    subscription.onDone(() {
+      if (!decisionCompleter.isCompleted) {
+        decisionCompleter.complete(false);
+      }
+    });
+    subscription.onError((_) {
+      if (!decisionCompleter.isCompleted) {
+        decisionCompleter.complete(false);
+      }
+    });
+    subscription.resume();
+
+    final approved = await decisionCompleter.future;
+    _incomingManualConnectRequests.remove(requestId);
+    _incomingManualConnectDecisions.remove(requestId);
+    _emitIncomingManualConnectRequests();
+
+    try {
+      socket.add(utf8.encode('${jsonEncode({'accepted': approved})}\n'));
+      await socket.flush();
+    } catch (_) {}
+    try {
+      await socket.close();
+    } catch (_) {}
+  }
+
+  void _emitIncomingManualConnectRequests() {
+    _incomingManualConnectRequestsController.add(
+      _incomingManualConnectRequests.values.toList(),
+    );
+  }
+
+  void approveIncomingManualConnectRequest(String requestId) {
+    final completer = _incomingManualConnectDecisions[requestId];
+    if (completer != null && !completer.isCompleted) {
+      completer.complete(true);
+    }
+  }
+
+  void rejectIncomingManualConnectRequest(String requestId) {
+    final completer = _incomingManualConnectDecisions[requestId];
+    if (completer != null && !completer.isCompleted) {
+      completer.complete(false);
+    }
   }
 }
 

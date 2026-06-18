@@ -13,6 +13,7 @@ class DeviceModel {
     required this.isOnline,
     required this.lastSeen,
     this.tlsCertificateSha256,
+    this.port,
   });
 
   final String deviceId;
@@ -24,6 +25,7 @@ class DeviceModel {
   final bool isOnline;
   final DateTime lastSeen;
   final String? tlsCertificateSha256;
+  final int? port;
 
   static String _canonicalPlatform(String raw) {
     final value = raw.trim();
@@ -103,6 +105,7 @@ class DeviceModel {
     'isOnline': isOnline,
     'lastSeen': lastSeen.toIso8601String(),
     'tlsCertificateSha256': tlsCertificateSha256,
+    'port': port,
   };
 
   String toWire() => jsonEncode(toJson());
@@ -126,6 +129,7 @@ class DeviceModel {
           (json['tlsCertificateSha256']?.toString().trim().isNotEmpty ?? false)
           ? json['tlsCertificateSha256'].toString().trim().toLowerCase()
           : null,
+      port: json['port'] != null ? (json['port'] as num).toInt() : null,
     );
   }
 
@@ -142,6 +146,7 @@ class DeviceModel {
     bool? isOnline,
     DateTime? lastSeen,
     String? tlsCertificateSha256,
+    int? port,
   }) {
     return DeviceModel(
       deviceId: deviceId ?? this.deviceId,
@@ -153,6 +158,7 @@ class DeviceModel {
       isOnline: isOnline ?? this.isOnline,
       lastSeen: lastSeen ?? this.lastSeen,
       tlsCertificateSha256: tlsCertificateSha256 ?? this.tlsCertificateSha256,
+      port: port ?? this.port,
     );
   }
 }

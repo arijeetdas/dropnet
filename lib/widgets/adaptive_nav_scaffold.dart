@@ -8,7 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter_dynamic_icon_plus/flutter_dynamic_icon_plus.dart';
 
-import '../core/networking/tcp_transfer_service.dart';
+
 import '../core/state/app_state.dart';
 
 class AdaptiveNavScaffold extends ConsumerWidget {
@@ -497,7 +497,11 @@ class AdaptiveNavScaffold extends ConsumerWidget {
                                   context,
                                   icon: Icons.lan_rounded,
                                   label: 'Service Port',
-                                  value: TcpTransferService.defaultPort.toString(),
+                                  value: (state.fullPrivateModeEnabled
+                                          ? (state.activePrivateProfile?.listeningPort ??
+                                              state.privateListeningPort)
+                                          : state.customListeningPort)
+                                      .toString(),
                                 ),
                               ],
                             ),

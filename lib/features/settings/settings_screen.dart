@@ -215,7 +215,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                             ? 'Only paired devices can transfer files.'
                             : 'Direct transfers are open to discovered devices.',
                         value: state.requirePairingCodeForDirectTransfers,
-                        onChanged: (v) => ref.read(appControllerProvider.notifier).setRequirePairingCodeForDirectTransfers(v),
+                        onChanged: _onRequirePairingCodeChanged,
                         accentColor: Colors.deepOrange,
                       ),
                       const SizedBox(height: 12),
@@ -654,6 +654,61 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         onChanged: (v) => ref.read(appControllerProvider.notifier).setSaveMediaToGallery(v),
                         accentColor: Colors.teal,
                       ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 20),
+
+                // ───── Section: Advanced Features ─────
+                _SectionHeader(
+                  icon: Icons.construction_rounded,
+                  label: 'Advanced Features',
+                  color: Colors.blueGrey,
+                ),
+                const SizedBox(height: 12),
+                _SettingsCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _PremiumSwitchTile(
+                        icon: Icons.science_rounded,
+                        title: 'Advanced Features (Experimental)',
+                        subtitle: 'Enable extra capabilities designed for advanced network setups and power users.',
+                        value: state.advancedFeaturesEnabled,
+                        onChanged: (v) => ref.read(appControllerProvider.notifier).setAdvancedFeaturesEnabled(v),
+                        accentColor: Colors.blueGrey,
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        'Tweaking advanced settings unknowingly may impact discovery or transfer stability. Use with caution.',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                      if (state.advancedFeaturesEnabled) ...[
+                        const SizedBox(height: 16),
+                        _SettingsDivider(),
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          width: double.infinity,
+                          child: FilledButton.tonalIcon(
+                            onPressed: () => context.push('/settings/advanced'),
+                            icon: const Icon(Icons.settings_suggest_rounded),
+                            label: const Text('Go to Advanced Settings'),
+                          ),
+                        ),
+                        if (state.fullPrivateModeEnabled) ...[
+                          const SizedBox(height: 12),
+                          SizedBox(
+                            width: double.infinity,
+                            child: FilledButton.tonalIcon(
+                              onPressed: () => context.push('/settings/private-networks'),
+                              icon: const Icon(Icons.lan_rounded),
+                              label: const Text('Manage Private Networks'),
+                            ),
+                          ),
+                        ],
+                      ],
                     ],
                   ),
                 ),
@@ -1583,6 +1638,147 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
   }
 
+  void _onRequirePairingCodeChanged(bool value) async {
+    if (!value) {
+      ref.read(appControllerProvider.notifier).setRequirePairingCodeForDirectTransfers(false);
+      return;
+    }
+
+    final state = ref.read(appControllerProvider);
+    final hasConflictingFeatures = state.manualConnectEnabled ||
+        state.semiPrivateModeEnabled ||
+        state.fullPrivateModeEnabled;
+
+    if (hasConflictingFeatures) {
+      final theme = Theme.of(context);
+      final colorScheme = theme.colorScheme;
+      final confirmed = await showDropNetDialog<bool>(
+        context: context,
+        builder: (context) {
+          return AlertDialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(32),
+            ),
+            backgroundColor: colorScheme.surface,
+            elevation: 6,
+            titlePadding: const EdgeInsets.fromLTRB(24, 28, 24, 16),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 24),
+            actionsPadding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+            icon: Container(
+              width: 68,
+              height: 68,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    colorScheme.errorContainer,
+                    colorScheme.errorContainer.withValues(alpha: 0.5),
+                  ],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: colorScheme.error.withValues(alpha: 0.15),
+                    blurRadius: 16,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Icon(
+                Icons.gpp_maybe_rounded,
+                color: colorScheme.onErrorContainer,
+                size: 32,
+              ),
+            ),
+            title: Text(
+              'Pairing Mode Conflict',
+              style: theme.textTheme.headlineSmall?.copyWith(
+                fontWeight: FontWeight.w800,
+                color: colorScheme.onSurface,
+                letterSpacing: -0.5,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            content: SizedBox(
+              width: 320,
+              child: Card(
+                elevation: 0,
+                color: colorScheme.surfaceContainerLow,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(24),
+                  side: BorderSide(
+                    color: colorScheme.outlineVariant.withValues(
+                      alpha: 0.25,
+                    ),
+                  ),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Text(
+                    'Enabling Require Pairing Code will disable advanced connection features (Manual Connect, Semi-Private, Full Private Mode).\n\nDo you want to proceed?',
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                      height: 1.4,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            actions: [
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.of(context).pop(false),
+                      style: OutlinedButton.styleFrom(
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                      ),
+                      child: const Text(
+                        'Cancel',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: FilledButton(
+                      onPressed: () => Navigator.of(context).pop(true),
+                      style: FilledButton.styleFrom(
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                      ),
+                      child: const Text(
+                        'Proceed',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          );
+        },
+      );
+
+      if (confirmed == true) {
+        final notifier = ref.read(appControllerProvider.notifier);
+        notifier.setManualConnectEnabled(false);
+        notifier.setSemiPrivateModeEnabled(false);
+        notifier.setFullPrivateModeEnabled(false);
+        notifier.setRequirePairingCodeForDirectTransfers(true);
+      }
+    } else {
+      ref.read(appControllerProvider.notifier).setRequirePairingCodeForDirectTransfers(true);
+    }
+  }
+
   String _formatPairedAt(DateTime dateTime) {
     final local = dateTime.toLocal();
     final day = local.day.toString().padLeft(2, '0');
@@ -1836,15 +2032,35 @@ class _NumberInputRow extends StatelessWidget {
           child: Text(label, style: theme.textTheme.bodyMedium),
         ),
         SizedBox(
-          width: 80,
+          width: 96,
           child: TextField(
             controller: controller,
             focusNode: focusNode,
+            textAlign: TextAlign.center,
             decoration: InputDecoration(
               isDense: true,
               filled: true,
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+              fillColor: colorScheme.surfaceContainerHigh,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(16),
+                borderSide: BorderSide(
+                  color: colorScheme.outlineVariant.withValues(alpha: 0.4),
+                ),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(16),
+                borderSide: BorderSide(
+                  color: colorScheme.outlineVariant.withValues(alpha: 0.4),
+                ),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(16),
+                borderSide: BorderSide(
+                  color: colorScheme.primary,
+                  width: 2,
+                ),
+              ),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             ),
             keyboardType: TextInputType.number,
             onChanged: onChanged,

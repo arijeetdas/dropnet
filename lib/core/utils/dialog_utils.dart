@@ -10,6 +10,7 @@ Future<T?> showDropNetDialog<T>({
   required WidgetBuilder builder,
   bool barrierDismissible = false,
   String barrierLabel = 'Dialog',
+  bool useBlur = true,
 }) {
   return showGeneralDialog<T>(
     context: context,
@@ -17,24 +18,35 @@ Future<T?> showDropNetDialog<T>({
     barrierLabel: barrierLabel,
     barrierColor: Colors.black.withValues(alpha: 0.54),
     transitionDuration: const Duration(milliseconds: 320),
-    pageBuilder: (context, anim1, anim2) => const SizedBox.shrink(),
+    pageBuilder: (context, anim1, anim2) => PopScope(
+      canPop: false,
+      child: builder(context),
+    ),
     transitionBuilder: (context, anim1, anim2, child) {
       final curve = CurvedAnimation(parent: anim1, curve: Curves.easeOutBack);
-      return BackdropFilter(
-        filter: ImageFilter.blur(
-          sigmaX: anim1.value * 6,
-          sigmaY: anim1.value * 6,
+      final transitionChild = ScaleTransition(
+        scale: curve,
+        child: FadeTransition(
+          opacity: anim1,
+          child: child,
         ),
-        child: ScaleTransition(
-          scale: curve,
-          child: FadeTransition(
-            opacity: anim1,
-            child: PopScope(
-              canPop: false,
-              child: builder(context),
+      );
+      if (!useBlur) {
+        return transitionChild;
+      }
+      return Stack(
+        children: [
+          Positioned.fill(
+            child: BackdropFilter(
+              filter: ImageFilter.blur(
+                sigmaX: anim1.value * 6,
+                sigmaY: anim1.value * 6,
+              ),
+              child: const SizedBox.expand(),
             ),
           ),
-        ),
+          transitionChild,
+        ],
       );
     },
   );

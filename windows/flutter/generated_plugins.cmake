@@ -7,6 +7,8 @@ list(APPEND FLUTTER_PLUGIN_LIST
   desktop_drop
   dynamic_color
   permission_handler_windows
+  restart_app
+  share_plus
   url_launcher_windows
 )
 
