@@ -120,16 +120,14 @@ class AdaptiveNavScaffold extends ConsumerWidget {
                               final health = ref
                                   .watch(appControllerProvider)
                                   .discoveryHealth;
-                              if (health == DiscoveryHealthStatus.healthy) {
+                              if (health != DiscoveryHealthStatus.noNetwork) {
                                 return const SizedBox.shrink();
                               }
                               return Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
                                   IconButton.filled(
-                                    tooltip: health == DiscoveryHealthStatus.noNetwork
-                                        ? 'No network connection'
-                                        : 'Discovery issue detected',
+                                    tooltip: 'No network connection',
                                     style: IconButton.styleFrom(
                                       backgroundColor: Theme.of(ctx).colorScheme.error,
                                       foregroundColor: Theme.of(ctx).colorScheme.onError,
@@ -203,13 +201,11 @@ class AdaptiveNavScaffold extends ConsumerWidget {
               final health = ref
                   .watch(appControllerProvider)
                   .discoveryHealth;
-              if (health == DiscoveryHealthStatus.healthy) {
+              if (health != DiscoveryHealthStatus.noNetwork) {
                 return const SizedBox.shrink();
               }
               return IconButton.filled(
-                tooltip: health == DiscoveryHealthStatus.noNetwork
-                    ? 'No network connection'
-                    : 'Discovery issue detected',
+                tooltip: 'No network connection',
                 style: IconButton.styleFrom(
                   backgroundColor: Theme.of(ctx).colorScheme.error,
                   foregroundColor: Theme.of(ctx).colorScheme.onError,
@@ -405,8 +401,7 @@ class AdaptiveNavScaffold extends ConsumerWidget {
     context.go(_items[index].route);
   }
 
-  /// Shows the network-health warning dialog.  The content adapts based on
-  /// whether the issue is a missing network or a router-level broadcast block.
+  /// Shows the network-health warning dialog for no network connection.
   Future<void> _showNetworkWarningDialog(
     BuildContext context,
     DiscoveryHealthStatus health,
@@ -414,9 +409,7 @@ class AdaptiveNavScaffold extends ConsumerWidget {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
 
-    final isNoNetwork = health == DiscoveryHealthStatus.noNetwork;
-
-    final title = isNoNetwork ? 'No Network Connection' : 'Discovery Issue Detected';
+    const title = 'No Network Connection';
 
     return showGeneralDialog<void>(
       context: context,
@@ -505,18 +498,14 @@ class AdaptiveNavScaffold extends ConsumerWidget {
                                 Row(
                                   children: [
                                     Icon(
-                                      isNoNetwork
-                                          ? Icons.signal_wifi_off_rounded
-                                          : Icons.router_rounded,
+                                      Icons.signal_wifi_off_rounded,
                                       size: 20,
                                       color: colorScheme.error,
                                     ),
                                     const SizedBox(width: 10),
                                     Expanded(
                                       child: Text(
-                                        isNoNetwork
-                                            ? 'Not connected to a network'
-                                            : 'Router is blocking device broadcasts',
+                                        'Not connected to a network',
                                         style: theme.textTheme.titleSmall?.copyWith(
                                           fontWeight: FontWeight.w700,
                                           color: colorScheme.onErrorContainer,
@@ -527,9 +516,7 @@ class AdaptiveNavScaffold extends ConsumerWidget {
                                 ),
                                 const SizedBox(height: 10),
                                 Text(
-                                  isNoNetwork
-                                      ? 'DropNet requires a local network (Wi-Fi or Ethernet) to discover nearby devices and perform transfers. Please connect this device to the same network as your peers.'
-                                      : 'DropNet is connected to a network and is actively sending discovery signals, but no devices have responded. Your router may have AP Isolation or multicast suppression enabled, which prevents wireless clients from communicating directly with each other.',
+                                  'DropNet requires a local network (Wi-Fi or Ethernet) to discover nearby devices and perform transfers. Please connect this device to the same network as your peers.',
                                   style: theme.textTheme.bodySmall?.copyWith(
                                     color: colorScheme.onErrorContainer
                                         .withValues(alpha: 0.85),
@@ -540,74 +527,6 @@ class AdaptiveNavScaffold extends ConsumerWidget {
                             ),
                           ),
                         ),
-                        if (!isNoNetwork) ...[
-                          const SizedBox(height: 14),
-                          // Tips card for broadcast-blocked scenario.
-                          Card(
-                            elevation: 0,
-                            color: colorScheme.surfaceContainerLow,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(24),
-                              side: BorderSide(
-                                color: colorScheme.outlineVariant.withValues(alpha: 0.25),
-                              ),
-                            ),
-                            child: Padding(
-                              padding: const EdgeInsets.all(20),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Row(
-                                    children: [
-                                      Icon(
-                                        Icons.tips_and_updates_rounded,
-                                        size: 18,
-                                        color: colorScheme.primary,
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Text(
-                                        'How to fix this',
-                                        style: theme.textTheme.labelMedium?.copyWith(
-                                          color: colorScheme.primary,
-                                          fontWeight: FontWeight.w700,
-                                          letterSpacing: 0.4,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 14),
-                                  _buildTipRow(
-                                    context,
-                                    index: '1',
-                                    text:
-                                        'Open your router\'s admin panel (usually 192.168.1.1 or 192.168.0.1) in a browser.',
-                                  ),
-                                  const SizedBox(height: 10),
-                                  _buildTipRow(
-                                    context,
-                                    index: '2',
-                                    text:
-                                        'Look for \'AP Isolation\', \'Client Isolation\', or \'Wireless Isolation\' settings and disable them.',
-                                  ),
-                                  const SizedBox(height: 10),
-                                  _buildTipRow(
-                                    context,
-                                    index: '3',
-                                    text:
-                                        'Ensure all devices are on the same Wi-Fi band (2.4 GHz or 5 GHz) and the same SSID.',
-                                  ),
-                                  const SizedBox(height: 10),
-                                  _buildTipRow(
-                                    context,
-                                    index: '4',
-                                    text:
-                                        'Note: DropNet continues to probe previously-seen devices via unicast. If you have ever discovered a device before, it may still appear shortly.',
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ],
                       ],
                     ),
                   ),
@@ -639,48 +558,6 @@ class AdaptiveNavScaffold extends ConsumerWidget {
           ),
         );
       },
-    );
-  }
-
-  /// Builds a numbered tip row used inside the warning dialog.
-  Widget _buildTipRow(
-    BuildContext context, {
-    required String index,
-    required String text,
-  }) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          width: 22,
-          height: 22,
-          decoration: BoxDecoration(
-            color: colorScheme.primary.withValues(alpha: 0.12),
-            shape: BoxShape.circle,
-          ),
-          child: Center(
-            child: Text(
-              index,
-              style: theme.textTheme.labelSmall?.copyWith(
-                color: colorScheme.primary,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Text(
-            text,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: colorScheme.onSurfaceVariant,
-              height: 1.35,
-            ),
-          ),
-        ),
-      ],
     );
   }
 

@@ -21,11 +21,6 @@ enum DiscoveryHealthStatus {
 
   /// The device has no usable IP address — it is not connected to any network.
   noNetwork,
-
-  /// Broadcasts and mDNS are being sent but zero peers have been seen for long
-  /// enough to suspect the router is blocking them (AP isolation / multicast
-  /// suppression).  This is the JioFiber / similar problem.
-  broadcastBlocked,
 }
 
 class DiscoveryService {
@@ -53,9 +48,6 @@ class DiscoveryService {
   // Fix #1: window for keeping "known peer" IPs to unicast-probe after they
   // disappear from the live list (covers AP-isolation scenarios).
   static const Duration _knownPeerRetention = Duration(minutes: 5);
-  // Health-status detection: if we have a valid IP but have seen zero peers
-  // for this long, we suspect broadcast/multicast is blocked.
-  static const Duration _broadcastBlockedThreshold = Duration(seconds: 18);
 
   String _deviceBaseName;
   int _deviceNumber;
@@ -94,9 +86,6 @@ class DiscoveryService {
   // Health-status tracking.
   final _healthController = StreamController<DiscoveryHealthStatus>.broadcast();
   DiscoveryHealthStatus _currentHealth = DiscoveryHealthStatus.healthy;
-  // Timestamp of the last moment at which at least one peer was visible in the
-  // live list (or start time when no peer has appeared yet).
-  DateTime? _lastPeerSeenAt;
 
   Stream<List<DeviceModel>> get devicesStream => _devicesController.stream;
   /// Emits the current discovery-health status whenever it changes.
@@ -155,7 +144,6 @@ class DiscoveryService {
     }
 
     if (_socket != null) {
-      _lastPeerSeenAt = DateTime.now();
       _announce();
       _announceTimer = Timer.periodic(
         const Duration(seconds: 3),
@@ -785,10 +773,6 @@ class DiscoveryService {
     if (remove.isNotEmpty) {
       _emitDevices();
     }
-    // Update last-seen-peer timestamp only when the list is non-empty.
-    if (_devices.isNotEmpty) {
-      _lastPeerSeenAt = now;
-    }
   }
 
   /// Evaluates current discovery health and emits on the health stream
@@ -796,17 +780,10 @@ class DiscoveryService {
   Future<void> _checkDiscoveryHealth() async {
     DiscoveryHealthStatus next;
 
-    // Check for no-network state first.
+    // Check for no-network state.
     final localIp = await getLocalIp();
     if (localIp.isEmpty) {
       next = DiscoveryHealthStatus.noNetwork;
-    } else if (_socket != null &&
-        _lastPeerSeenAt != null &&
-        _devices.isEmpty &&
-        DateTime.now().difference(_lastPeerSeenAt!) > _broadcastBlockedThreshold) {
-      // We have a network, we are sending, but nobody has replied —
-      // the router is likely blocking broadcast/multicast.
-      next = DiscoveryHealthStatus.broadcastBlocked;
     } else {
       next = DiscoveryHealthStatus.healthy;
     }
