@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter_dynamic_icon_plus/flutter_dynamic_icon_plus.dart';
 
+import '../core/networking/discovery_service.dart';
 import '../core/networking/tcp_transfer_service.dart';
 import '../core/state/app_state.dart';
 
@@ -114,6 +115,36 @@ class AdaptiveNavScaffold extends ConsumerWidget {
                               style: Theme.of(context).textTheme.headlineSmall,
                             ),
                           const Spacer(),
+                          Builder(
+                            builder: (ctx) {
+                              final health = ref
+                                  .watch(appControllerProvider)
+                                  .discoveryHealth;
+                              if (health == DiscoveryHealthStatus.healthy) {
+                                return const SizedBox.shrink();
+                              }
+                              return Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  IconButton.filled(
+                                    tooltip: health == DiscoveryHealthStatus.noNetwork
+                                        ? 'No network connection'
+                                        : 'Discovery issue detected',
+                                    style: IconButton.styleFrom(
+                                      backgroundColor: Theme.of(ctx).colorScheme.error,
+                                      foregroundColor: Theme.of(ctx).colorScheme.onError,
+                                    ),
+                                    onPressed: () => _showNetworkWarningDialog(
+                                      ctx,
+                                      health,
+                                    ),
+                                    icon: const Icon(Icons.warning_amber_rounded),
+                                  ),
+                                  const SizedBox(width: 12),
+                                ],
+                              );
+                            },
+                          ),
                           IconButton.filled(
                             tooltip: 'Info',
                             style: IconButton.styleFrom(
@@ -165,6 +196,30 @@ class AdaptiveNavScaffold extends ConsumerWidget {
       appBar: AppBar(
         title: _hasTitle ? Text(title) : null,
         actions: [
+          // Network-health warning button (Fix #2) — visible only when
+          // discovery is degraded.  Placed to the left of the Info button.
+          Builder(
+            builder: (ctx) {
+              final health = ref
+                  .watch(appControllerProvider)
+                  .discoveryHealth;
+              if (health == DiscoveryHealthStatus.healthy) {
+                return const SizedBox.shrink();
+              }
+              return IconButton.filled(
+                tooltip: health == DiscoveryHealthStatus.noNetwork
+                    ? 'No network connection'
+                    : 'Discovery issue detected',
+                style: IconButton.styleFrom(
+                  backgroundColor: Theme.of(ctx).colorScheme.error,
+                  foregroundColor: Theme.of(ctx).colorScheme.onError,
+                ),
+                onPressed: () => _showNetworkWarningDialog(ctx, health),
+                icon: const Icon(Icons.warning_amber_rounded),
+              );
+            },
+          ),
+          const SizedBox(width: 12),
           IconButton.filled(
             tooltip: 'Info',
             style: IconButton.styleFrom(
@@ -348,6 +403,285 @@ class AdaptiveNavScaffold extends ConsumerWidget {
       return;
     }
     context.go(_items[index].route);
+  }
+
+  /// Shows the network-health warning dialog.  The content adapts based on
+  /// whether the issue is a missing network or a router-level broadcast block.
+  Future<void> _showNetworkWarningDialog(
+    BuildContext context,
+    DiscoveryHealthStatus health,
+  ) async {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
+    final isNoNetwork = health == DiscoveryHealthStatus.noNetwork;
+
+    final title = isNoNetwork ? 'No Network Connection' : 'Discovery Issue Detected';
+
+    return showGeneralDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      barrierLabel: title,
+      barrierColor: Colors.black.withValues(alpha: 0.54),
+      transitionDuration: const Duration(milliseconds: 320),
+      pageBuilder: (context, anim1, anim2) => const SizedBox.shrink(),
+      transitionBuilder: (context, anim1, anim2, child) {
+        final curve = CurvedAnimation(parent: anim1, curve: Curves.easeOutBack);
+        return BackdropFilter(
+          filter: ImageFilter.blur(
+            sigmaX: anim1.value * 6,
+            sigmaY: anim1.value * 6,
+          ),
+          child: ScaleTransition(
+            scale: curve,
+            child: FadeTransition(
+              opacity: anim1,
+              child: PopScope(
+                canPop: false,
+                child: AlertDialog(
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(32),
+                  ),
+                  backgroundColor: colorScheme.surface,
+                  elevation: 6,
+                  titlePadding: const EdgeInsets.fromLTRB(24, 4, 24, 24),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 24),
+                  actionsPadding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+                  icon: Container(
+                    width: 68,
+                    height: 68,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [
+                          colorScheme.error,
+                          colorScheme.error.withValues(alpha: 0.55),
+                        ],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: colorScheme.error.withValues(alpha: 0.22),
+                          blurRadius: 20,
+                          offset: const Offset(0, 5),
+                        ),
+                      ],
+                    ),
+                    child: Icon(
+                      Icons.warning_amber_rounded,
+                      color: colorScheme.onError,
+                      size: 34,
+                    ),
+                  ),
+                  title: Text(
+                    title,
+                    style: theme.textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                      color: colorScheme.onSurface,
+                      letterSpacing: -0.5,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  content: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // Primary explanation card.
+                        Card(
+                          elevation: 0,
+                          color: colorScheme.errorContainer.withValues(alpha: 0.45),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(24),
+                            side: BorderSide(
+                              color: colorScheme.error.withValues(alpha: 0.2),
+                            ),
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.all(20),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Icon(
+                                      isNoNetwork
+                                          ? Icons.signal_wifi_off_rounded
+                                          : Icons.router_rounded,
+                                      size: 20,
+                                      color: colorScheme.error,
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Text(
+                                        isNoNetwork
+                                            ? 'Not connected to a network'
+                                            : 'Router is blocking device broadcasts',
+                                        style: theme.textTheme.titleSmall?.copyWith(
+                                          fontWeight: FontWeight.w700,
+                                          color: colorScheme.onErrorContainer,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 10),
+                                Text(
+                                  isNoNetwork
+                                      ? 'DropNet requires a local network (Wi-Fi or Ethernet) to discover nearby devices and perform transfers. Please connect this device to the same network as your peers.'
+                                      : 'DropNet is connected to a network and is actively sending discovery signals, but no devices have responded. Your router may have AP Isolation or multicast suppression enabled, which prevents wireless clients from communicating directly with each other.',
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: colorScheme.onErrorContainer
+                                        .withValues(alpha: 0.85),
+                                    height: 1.4,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        if (!isNoNetwork) ...[
+                          const SizedBox(height: 14),
+                          // Tips card for broadcast-blocked scenario.
+                          Card(
+                            elevation: 0,
+                            color: colorScheme.surfaceContainerLow,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(24),
+                              side: BorderSide(
+                                color: colorScheme.outlineVariant.withValues(alpha: 0.25),
+                              ),
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.all(20),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Icon(
+                                        Icons.tips_and_updates_rounded,
+                                        size: 18,
+                                        color: colorScheme.primary,
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        'How to fix this',
+                                        style: theme.textTheme.labelMedium?.copyWith(
+                                          color: colorScheme.primary,
+                                          fontWeight: FontWeight.w700,
+                                          letterSpacing: 0.4,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 14),
+                                  _buildTipRow(
+                                    context,
+                                    index: '1',
+                                    text:
+                                        'Open your router\'s admin panel (usually 192.168.1.1 or 192.168.0.1) in a browser.',
+                                  ),
+                                  const SizedBox(height: 10),
+                                  _buildTipRow(
+                                    context,
+                                    index: '2',
+                                    text:
+                                        'Look for \'AP Isolation\', \'Client Isolation\', or \'Wireless Isolation\' settings and disable them.',
+                                  ),
+                                  const SizedBox(height: 10),
+                                  _buildTipRow(
+                                    context,
+                                    index: '3',
+                                    text:
+                                        'Ensure all devices are on the same Wi-Fi band (2.4 GHz or 5 GHz) and the same SSID.',
+                                  ),
+                                  const SizedBox(height: 10),
+                                  _buildTipRow(
+                                    context,
+                                    index: '4',
+                                    text:
+                                        'Note: DropNet continues to probe previously-seen devices via unicast. If you have ever discovered a device before, it may still appear shortly.',
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  actions: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: FilledButton.tonal(
+                            onPressed: () => Navigator.of(context).pop(),
+                            style: FilledButton.styleFrom(
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              padding: const EdgeInsets.symmetric(vertical: 16),
+                              elevation: 0,
+                            ),
+                            child: const Text(
+                              'Got it',
+                              style: TextStyle(fontWeight: FontWeight.w700),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// Builds a numbered tip row used inside the warning dialog.
+  Widget _buildTipRow(
+    BuildContext context, {
+    required String index,
+    required String text,
+  }) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: 22,
+          height: 22,
+          decoration: BoxDecoration(
+            color: colorScheme.primary.withValues(alpha: 0.12),
+            shape: BoxShape.circle,
+          ),
+          child: Center(
+            child: Text(
+              index,
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: colorScheme.primary,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            text,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: colorScheme.onSurfaceVariant,
+              height: 1.35,
+            ),
+          ),
+        ),
+      ],
+    );
   }
 
   Future<void> _showInfoDialog(BuildContext context, AppState state) async {

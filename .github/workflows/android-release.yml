@@ -1,0 +1,79 @@
+name: Build Android Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Flutter Version
+        run: flutter --version
+
+      - name: Get Dependencies
+        run: flutter pub get
+
+      - name: Extract Version
+        run: |
+          VERSION=$(grep '^version:' pubspec.yaml | sed 's/version: //' | cut -d '+' -f 1)
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "Detected version: $VERSION"
+
+      - name: Build Universal APK
+        run: flutter build apk --release
+
+      - name: Copy Universal APK
+        run: |
+          cp build/app/outputs/flutter-apk/app-release.apk DropNet-v${VERSION}-Universal.apk
+
+      - name: Build Split APKs
+        run: flutter build apk --release --split-per-abi
+
+      - name: Copy Split APKs
+        run: |
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk DropNet-v${VERSION}-arm64-v8a.apk
+          cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk DropNet-v${VERSION}-armeabi-v7a.apk
+          cp build/app/outputs/flutter-apk/app-x86_64-release.apk DropNet-v${VERSION}-x86_64.apk
+
+      - name: Upload Universal APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DropNet-v${{ env.VERSION }}-Universal
+          path: DropNet-v${{ env.VERSION }}-Universal.apk
+
+      - name: Upload arm64-v8a APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DropNet-v${{ env.VERSION }}-arm64-v8a
+          path: DropNet-v${{ env.VERSION }}-arm64-v8a.apk
+
+      - name: Upload armeabi-v7a APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DropNet-v${{ env.VERSION }}-armeabi-v7a
+          path: DropNet-v${{ env.VERSION }}-armeabi-v7a.apk
+
+      - name: Upload x86_64 APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DropNet-v${{ env.VERSION }}-x86_64
+          path: DropNet-v${{ env.VERSION }}-x86_64.apk

@@ -12,30 +12,40 @@ import UIKit
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
     GeneratedPluginRegistrant.register(with: self)
-    if let controller = window?.rootViewController as? FlutterViewController {
-      let channel = FlutterMethodChannel(name: "dropnet/share_intent", binaryMessenger: controller.binaryMessenger)
-      channel.setMethodCallHandler { [weak self] call, result in
-        switch call.method {
-        case "consumePendingSharedPayload":
-          let files = self?.pendingSharedFilePaths ?? []
-          let texts = self?.pendingSharedTexts ?? []
-          self?.pendingSharedFilePaths.removeAll()
-          self?.pendingSharedTexts.removeAll()
-          result([
-            "files": files,
-            "texts": texts,
-          ])
-        case "consumePendingSharedFiles":
-          let files = self?.pendingSharedFilePaths ?? []
-          self?.pendingSharedFilePaths.removeAll()
-          result(files)
-        default:
-          result(FlutterMethodNotImplemented)
-        }
-      }
-      shareChannel = channel
-    }
+    setupShareChannelIfNeeded()
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
+
+  @discardableResult
+  private func setupShareChannelIfNeeded() -> Bool {
+    if shareChannel != nil {
+      return true
+    }
+    guard let controller = window?.rootViewController as? FlutterViewController else {
+      return false
+    }
+    let channel = FlutterMethodChannel(name: "dropnet/share_intent", binaryMessenger: controller.binaryMessenger)
+    channel.setMethodCallHandler { [weak self] call, result in
+      switch call.method {
+      case "consumePendingSharedPayload":
+        let files = self?.pendingSharedFilePaths ?? []
+        let texts = self?.pendingSharedTexts ?? []
+        self?.pendingSharedFilePaths.removeAll()
+        self?.pendingSharedTexts.removeAll()
+        result([
+          "files": files,
+          "texts": texts,
+        ])
+      case "consumePendingSharedFiles":
+        let files = self?.pendingSharedFilePaths ?? []
+        self?.pendingSharedFilePaths.removeAll()
+        result(files)
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+    shareChannel = channel
+    return true
   }
 
   override func application(
@@ -95,6 +105,7 @@ import UIKit
     guard !pendingSharedFilePaths.isEmpty || !pendingSharedTexts.isEmpty else {
       return
     }
+    setupShareChannelIfNeeded()
     shareChannel?.invokeMethod(
       "sharedPayloadUpdated",
       arguments: [

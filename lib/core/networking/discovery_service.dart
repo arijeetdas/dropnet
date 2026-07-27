@@ -13,6 +13,21 @@ import 'package:uuid/uuid.dart';
 import '../../models/device_model.dart';
 import '../security/local_tls_certificate_service.dart';
 
+/// Describes the current health of the local-network device-discovery system.
+/// Used by the UI to decide whether to show the network-warning indicator.
+enum DiscoveryHealthStatus {
+  /// Everything is functioning normally.
+  healthy,
+
+  /// The device has no usable IP address — it is not connected to any network.
+  noNetwork,
+
+  /// Broadcasts and mDNS are being sent but zero peers have been seen for long
+  /// enough to suspect the router is blocking them (AP isolation / multicast
+  /// suppression).  This is the JioFiber / similar problem.
+  broadcastBlocked,
+}
+
 class DiscoveryService {
   DiscoveryService({
     String? deviceName,
@@ -24,12 +39,23 @@ class DiscoveryService {
   static const _discoveryPort = 45454;
   static const _broadcastAddress = '255.255.255.255';
   static const _presenceTransportBroadcast = 'broadcast';
+  // Transport tag used by the proactive unicast channel (fix #1).
+  static const _presenceTransportUnicast = 'unicast';
   static const _presenceTransportReply = 'reply';
   static const _identityFileName = 'dropnet_identity.json';
   static const _tlsCertCommonName = 'DropNet Local';
   static const _tlsCertSans = <String>['localhost', '127.0.0.1'];
-  static const Duration _presenceMaxClockSkew = Duration(seconds: 45);
+  // Fix #4: increased from 45 s → 120 s to tolerate clock drift on Android
+  // devices synced to misconfigured NTP servers.
+  static const Duration _presenceMaxClockSkew = Duration(seconds: 120);
   static const Duration _nonceRetentionWindow = Duration(minutes: 3);
+
+  // Fix #1: window for keeping "known peer" IPs to unicast-probe after they
+  // disappear from the live list (covers AP-isolation scenarios).
+  static const Duration _knownPeerRetention = Duration(minutes: 5);
+  // Health-status detection: if we have a valid IP but have seen zero peers
+  // for this long, we suspect broadcast/multicast is blocked.
+  static const Duration _broadcastBlockedThreshold = Duration(seconds: 18);
 
   String _deviceBaseName;
   int _deviceNumber;
@@ -56,10 +82,27 @@ class DiscoveryService {
   Timer? _pruneTimer;
   final Map<String, DeviceModel> _devices = {};
   bool _identityLoaded = false;
+  // Fix #6: reduced from 8 s → 3 s so stale IPs after DHCP renewal are
+  // evicted quickly and correct IPs are advertised in presence packets.
   String? _cachedLocalIp;
   DateTime? _lastIpCacheTime;
 
+  // Fix #1: map of IP → last-seen time for all peers ever discovered; used to
+  // drive the proactive unicast channel.
+  final Map<String, DateTime> _knownPeerIps = {};
+
+  // Health-status tracking.
+  final _healthController = StreamController<DiscoveryHealthStatus>.broadcast();
+  DiscoveryHealthStatus _currentHealth = DiscoveryHealthStatus.healthy;
+  // Timestamp of the last moment at which at least one peer was visible in the
+  // live list (or start time when no peer has appeared yet).
+  DateTime? _lastPeerSeenAt;
+
   Stream<List<DeviceModel>> get devicesStream => _devicesController.stream;
+  /// Emits the current discovery-health status whenever it changes.
+  Stream<DiscoveryHealthStatus> get healthStream => _healthController.stream;
+  /// The most-recently emitted health status (synchronous access for UI).
+  DiscoveryHealthStatus get currentHealth => _currentHealth;
   String get deviceName => '$_deviceBaseName #$_deviceNumber';
   String get manufacturerTag => _manufacturerTag;
   String get cpuArchitectureTag => _cpuArchitectureTag;
@@ -112,6 +155,7 @@ class DiscoveryService {
     }
 
     if (_socket != null) {
+      _lastPeerSeenAt = DateTime.now();
       _announce();
       _announceTimer = Timer.periodic(
         const Duration(seconds: 3),
@@ -119,7 +163,10 @@ class DiscoveryService {
       );
       _pruneTimer = Timer.periodic(
         const Duration(seconds: 3),
-        (_) => _pruneOfflineDevices(),
+        (_) {
+          _pruneOfflineDevices();
+          _checkDiscoveryHealth();
+        },
       );
     }
   }
@@ -254,27 +301,11 @@ class DiscoveryService {
     _lastIpCacheTime = null;
     try {
       if (_socket == null) {
-        await start().timeout(const Duration(seconds: 2));
+        await start().timeout(const Duration(seconds: 3));
         return;
       }
       _normalizeCachedDevices();
-      await _announce().timeout(const Duration(seconds: 1));
-
-      // Refresh Bonsoir discovery by stopping and starting it again
-      if (!Platform.isWindows && _mdnsDiscovery != null) {
-        try {
-          await _mdnsSub?.cancel();
-          _mdnsSub = null;
-          await _mdnsDiscovery?.stop().timeout(const Duration(seconds: 1));
-          _mdnsDiscovery = null;
-
-          // Restart discovery
-          _mdnsDiscovery = BonsoirDiscovery(type: '_dropnet._tcp');
-          await _mdnsDiscovery!.initialize().timeout(const Duration(seconds: 1));
-          _mdnsSub = _mdnsDiscovery!.eventStream?.listen(_onMdnsEvent);
-          await _mdnsDiscovery!.start().timeout(const Duration(seconds: 1));
-        } catch (_) {}
-      }
+      await _announce().timeout(const Duration(seconds: 2));
     } catch (_) {}
     _pruneOfflineDevices();
   }
@@ -363,6 +394,8 @@ class DiscoveryService {
         }
 
         final seenAt = DateTime.now();
+        // Fix #1: record this IP for the proactive unicast channel.
+        _recordKnownPeerIp(datagram.address.address);
         final key = incomingId.isNotEmpty
             ? incomingId
             : datagram.address.address;
@@ -388,16 +421,57 @@ class DiscoveryService {
   }
 
   Future<void> _announce() async {
-    final packet = await _buildPresencePacket(
+    // --- Broadcast channel (existing) ---
+    final broadcastPacket = await _buildPresencePacket(
       transport: _presenceTransportBroadcast,
     );
-    if (packet == null) {
+    if (broadcastPacket != null) {
+      final targets = await _collectBroadcastTargets();
+      for (final target in targets) {
+        _socket?.send(broadcastPacket, target, _discoveryPort);
+      }
+    }
+
+    // --- Fix #1: proactive unicast to recently-seen peer IPs ---
+    // This channel works even when the router has AP isolation enabled,
+    // because unicast packets are routed normally between clients.
+    await _announceUnicastToKnownPeers();
+  }
+
+  /// Sends a unicast presence packet to every IP that was ever discovered
+  /// within the _knownPeerRetention window.  This is the primary workaround
+  /// for routers that block broadcast/multicast between wireless clients.
+  Future<void> _announceUnicastToKnownPeers() async {
+    final now = DateTime.now();
+    // Evict stale entries first.
+    _knownPeerIps.removeWhere(
+      (_, seenAt) => now.difference(seenAt) > _knownPeerRetention,
+    );
+    if (_knownPeerIps.isEmpty) {
       return;
     }
 
-    final targets = await _collectBroadcastTargets();
-    for (final target in targets) {
-      _socket?.send(packet, target, _discoveryPort);
+    // Build the unicast packet once and reuse it.
+    final unicastPacket = await _buildPresencePacket(
+      transport: _presenceTransportUnicast,
+    );
+    if (unicastPacket == null) {
+      return;
+    }
+
+    for (final ip in _knownPeerIps.keys) {
+      if (!_isUsableIpv4(ip)) {
+        continue;
+      }
+      try {
+        _socket?.send(
+          unicastPacket,
+          InternetAddress(ip),
+          _discoveryPort,
+        );
+      } catch (_) {
+        // Ignore individual send failures; the peer may have gone offline.
+      }
     }
   }
 
@@ -410,6 +484,14 @@ class DiscoveryService {
       return;
     }
     _socket?.send(packet, target, _discoveryPort);
+  }
+
+  /// Records the peer IP in the known-peers map so the unicast channel can
+  /// keep probing it even after it disappears from the live list.
+  void _recordKnownPeerIp(String ip) {
+    if (_isUsableIpv4(ip)) {
+      _knownPeerIps[ip] = DateTime.now();
+    }
   }
 
   Future<void> _startMdns() async {
@@ -439,13 +521,13 @@ class DiscoveryService {
       );
 
       _mdnsBroadcast = BonsoirBroadcast(service: service);
-      await _mdnsBroadcast!.initialize();
-      await _mdnsBroadcast!.start();
+      await _mdnsBroadcast!.initialize().timeout(const Duration(seconds: 2));
+      await _mdnsBroadcast!.start().timeout(const Duration(seconds: 2));
 
       _mdnsDiscovery = BonsoirDiscovery(type: '_dropnet._tcp');
-      await _mdnsDiscovery!.initialize();
+      await _mdnsDiscovery!.initialize().timeout(const Duration(seconds: 2));
       _mdnsSub = _mdnsDiscovery!.eventStream?.listen(_onMdnsEvent);
-      await _mdnsDiscovery!.start();
+      await _mdnsDiscovery!.start().timeout(const Duration(seconds: 2));
     } catch (e) {
       if (kDebugMode) {
         print('[DiscoveryService] Error starting mDNS: $e');
@@ -503,8 +585,10 @@ class DiscoveryService {
     if (host.contains('.local') || RegExp(r'[a-zA-Z]').hasMatch(host)) {
       try {
         final cleanHost = host.replaceAll(RegExp(r'\.+$'), '');
+        // Fix #5: increased timeout from 1500 ms → 3500 ms so devices on
+        // congested networks are not silently skipped during mDNS resolution.
         final addresses = await InternetAddress.lookup(cleanHost).timeout(
-          const Duration(milliseconds: 1500),
+          const Duration(milliseconds: 3500),
         );
         for (final addr in addresses) {
           if (addr.type == InternetAddressType.IPv4) {
@@ -543,6 +627,8 @@ class DiscoveryService {
     if (resolvedId == _deviceId) {
       return;
     }
+    // Fix #1: record this peer's IP so the unicast channel can probe it.
+    _recordKnownPeerIp(host);
     _upsertDiscoveredDevice(
       resolvedId,
       DeviceModel(
@@ -582,21 +668,13 @@ class DiscoveryService {
 
   Future<List<InternetAddress>> _collectBroadcastTargets() async {
     final targets = <String>{_broadcastAddress};
-    
+
     String wifiBroadcast = '';
     try {
       wifiBroadcast = (await _networkInfo.getWifiBroadcast())?.trim() ?? '';
     } catch (_) {}
     if (_isUsableIpv4(wifiBroadcast)) {
       targets.add(wifiBroadcast);
-    }
-
-    String wifiIp = '';
-    try {
-      wifiIp = (await _networkInfo.getWifiIP())?.trim() ?? '';
-    } catch (_) {}
-    if (_isUsableIpv4(wifiIp)) {
-      targets.add(_fallbackBroadcastForIp(wifiIp));
     }
 
     String wifiGateway = '';
@@ -609,14 +687,82 @@ class DiscoveryService {
       targets.add(wifiGateway);
     }
 
+    // Fix #3: derive the correct subnet broadcast using the actual subnet mask
+    // obtained from network_info_plus instead of assuming /24 everywhere.
+    // We fetch the mask once and apply it to every eligible interface address.
+    int? wifiPrefixLength;
+    try {
+      final maskStr = (await _networkInfo.getWifiSubmask())?.trim() ?? '';
+      wifiPrefixLength = _maskStringToPrefixLength(maskStr);
+    } catch (_) {}
+
     final interfaces = await _listEligibleIpv4Addresses();
     for (final endpoint in interfaces) {
-      targets.add(_fallbackBroadcastForIp(endpoint.address.address));
+      final broadcast = _subnetBroadcastForEndpoint(
+        endpoint,
+        externalPrefixLength: wifiPrefixLength,
+      );
+      targets.add(broadcast);
     }
 
     return targets.map(InternetAddress.new).toList(growable: false);
   }
 
+  /// Converts a dotted-decimal subnet mask (e.g. "255.255.255.0") to a
+  /// prefix length (e.g. 24).  Returns null for invalid or empty strings.
+  int? _maskStringToPrefixLength(String mask) {
+    final octets = _parseIpv4Octets(mask);
+    if (octets == null) {
+      return null;
+    }
+    final maskInt = (octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3];
+    if (maskInt == 0) {
+      return null;
+    }
+    // Count leading 1-bits.
+    var count = 0;
+    for (var i = 31; i >= 0; i--) {
+      if ((maskInt >> i) & 1 == 1) {
+        count++;
+      } else {
+        break;
+      }
+    }
+    return count > 0 ? count : null;
+  }
+
+  /// Computes the directed broadcast address for a given network interface
+  /// endpoint.  Uses [externalPrefixLength] when supplied (obtained from the
+  /// subnet mask string), otherwise falls back to /24.
+  String _subnetBroadcastForEndpoint(
+    _Ipv4Endpoint endpoint, {
+    int? externalPrefixLength,
+  }) {
+    // Prefer the externally-supplied prefix length (from network_info_plus),
+    // then the one stored on the endpoint, then fall back to /24.
+    final prefix = externalPrefixLength ?? endpoint.prefixLength;
+    final ip = endpoint.address.address;
+    if (prefix == null || prefix <= 0 || prefix >= 32) {
+      // Prefix unknown or host route — use /24 fallback.
+      return _fallbackBroadcastForIp(ip);
+    }
+    final octets = _parseIpv4Octets(ip);
+    if (octets == null) {
+      return _broadcastAddress;
+    }
+    // Convert IP to a 32-bit integer.
+    final ipInt = (octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3];
+    // Build host mask: all bits beyond the prefix are 1.
+    final hostMask = (prefix < 32) ? ((1 << (32 - prefix)) - 1) : 0;
+    final broadcastInt = ipInt | hostMask;
+    final b0 = (broadcastInt >> 24) & 0xFF;
+    final b1 = (broadcastInt >> 16) & 0xFF;
+    final b2 = (broadcastInt >> 8) & 0xFF;
+    final b3 = broadcastInt & 0xFF;
+    return '$b0.$b1.$b2.$b3';
+  }
+
+  /// Legacy /24 fallback — still used when no prefix length is available.
   String _fallbackBroadcastForIp(String ipAddress) {
     final parts = ipAddress.split('.');
     if (parts.length != 4) {
@@ -638,6 +784,38 @@ class DiscoveryService {
     }
     if (remove.isNotEmpty) {
       _emitDevices();
+    }
+    // Update last-seen-peer timestamp only when the list is non-empty.
+    if (_devices.isNotEmpty) {
+      _lastPeerSeenAt = now;
+    }
+  }
+
+  /// Evaluates current discovery health and emits on the health stream
+  /// whenever the status changes.  Called every prune cycle (every 3 s).
+  Future<void> _checkDiscoveryHealth() async {
+    DiscoveryHealthStatus next;
+
+    // Check for no-network state first.
+    final localIp = await getLocalIp();
+    if (localIp.isEmpty) {
+      next = DiscoveryHealthStatus.noNetwork;
+    } else if (_socket != null &&
+        _lastPeerSeenAt != null &&
+        _devices.isEmpty &&
+        DateTime.now().difference(_lastPeerSeenAt!) > _broadcastBlockedThreshold) {
+      // We have a network, we are sending, but nobody has replied —
+      // the router is likely blocking broadcast/multicast.
+      next = DiscoveryHealthStatus.broadcastBlocked;
+    } else {
+      next = DiscoveryHealthStatus.healthy;
+    }
+
+    if (next != _currentHealth) {
+      _currentHealth = next;
+      if (!_healthController.isClosed) {
+        _healthController.add(next);
+      }
     }
   }
 
@@ -666,41 +844,37 @@ class DiscoveryService {
   Future<String> getLocalIp({String? preferredPeerIp}) async {
     final normalizedPeerIp = (preferredPeerIp ?? '').trim();
     if (normalizedPeerIp.isEmpty && _cachedLocalIp != null && _lastIpCacheTime != null) {
-      if (DateTime.now().difference(_lastIpCacheTime!) < const Duration(seconds: 8)) {
+      // Fix #6: reduced from 8 s → 3 s to evict stale IPs quickly after
+      // DHCP lease renewal or interface changes.
+      if (DateTime.now().difference(_lastIpCacheTime!) < const Duration(seconds: 3)) {
         return _cachedLocalIp!;
       }
     }
 
-    String wifiIp = '';
-    try {
-      wifiIp = (await _networkInfo.getWifiIP())?.trim() ?? '';
-    } catch (_) {}
     final interfaces = await _listEligibleIpv4Addresses();
 
     String result = '';
     if (_isUsableIpv4(normalizedPeerIp)) {
+      // Fix #3: use actual subnet mask for subnet matching when possible.
+      // Try to get the Wi-Fi subnet mask once for a more accurate comparison.
+      int? wifiPrefixLength;
+      try {
+        final maskStr = (await _networkInfo.getWifiSubmask())?.trim() ?? '';
+        wifiPrefixLength = _maskStringToPrefixLength(maskStr);
+      } catch (_) {}
+
       final sameSubnet = interfaces
           .where((endpoint) {
-            return _same24Subnet(endpoint.address.address, normalizedPeerIp);
+            return _sameSubnet(
+              endpoint.address.address,
+              normalizedPeerIp,
+              prefixLength: wifiPrefixLength,
+            );
           })
           .toList(growable: false);
       if (sameSubnet.isNotEmpty) {
         sameSubnet.sort(_compareIpv4Endpoints);
         result = sameSubnet.first.address.address;
-      }
-    }
-
-    if (result.isEmpty && _isUsableIpv4(wifiIp)) {
-      bool found = false;
-      for (final endpoint in interfaces) {
-        if (endpoint.address.address == wifiIp) {
-          result = endpoint.address.address;
-          found = true;
-          break;
-        }
-      }
-      if (!found) {
-        result = wifiIp;
       }
     }
 
@@ -893,6 +1067,7 @@ class DiscoveryService {
     await _mdnsBroadcast?.stop();
     _socket?.close();
     await _devicesController.close();
+    await _healthController.close();
   }
 
   Future<void> _loadIdentity() async {
@@ -1094,7 +1269,13 @@ class DiscoveryService {
         if (!_isUsableIpv4(value) || address.isLoopback) {
           continue;
         }
-        results.add(_Ipv4Endpoint(interfaceName: iface.name, address: address));
+        // prefixLength is not available from Dart's InternetAddress;
+        // it is set externally by the caller when a subnet mask can be
+        // obtained via network_info_plus.getWifiSubmask().
+        results.add(_Ipv4Endpoint(
+          interfaceName: iface.name,
+          address: address,
+        ));
       }
     }
     return results;
@@ -1107,7 +1288,9 @@ class DiscoveryService {
     required DateTime seenAt,
   }) {
     final transport = (packet['transport']?.toString() ?? '').trim();
-    if (transport == _presenceTransportReply) {
+    // Do not reply to reply packets or to our own unicast probes.
+    if (transport == _presenceTransportReply ||
+        transport == _presenceTransportUnicast) {
       return false;
     }
     if (!_isUsableIpv4(senderAddress)) {
@@ -1188,6 +1371,27 @@ class DiscoveryService {
     return leftOctets[0] == rightOctets[0] &&
         leftOctets[1] == rightOctets[1] &&
         leftOctets[2] == rightOctets[2];
+  }
+
+  /// Returns true if [left] and [right] are on the same subnet described by
+  /// [prefixLength].  Falls back to /24 comparison when prefixLength is null.
+  bool _sameSubnet(String left, String right, {int? prefixLength}) {
+    if (prefixLength == null || prefixLength <= 0 || prefixLength >= 32) {
+      return _same24Subnet(left, right);
+    }
+    final leftOctets = _parseIpv4Octets(left);
+    final rightOctets = _parseIpv4Octets(right);
+    if (leftOctets == null || rightOctets == null) {
+      return false;
+    }
+    final leftInt = (leftOctets[0] << 24) | (leftOctets[1] << 16) |
+        (leftOctets[2] << 8) | leftOctets[3];
+    final rightInt = (rightOctets[0] << 24) | (rightOctets[1] << 16) |
+        (rightOctets[2] << 8) | rightOctets[3];
+    final mask = prefixLength < 32
+        ? (0xFFFFFFFF << (32 - prefixLength)) & 0xFFFFFFFF
+        : 0xFFFFFFFF;
+    return (leftInt & mask) == (rightInt & mask);
   }
 
   List<int>? _parseIpv4Octets(String value) {
@@ -1377,8 +1581,15 @@ class DiscoveryService {
 }
 
 class _Ipv4Endpoint {
-  const _Ipv4Endpoint({required this.interfaceName, required this.address});
+  const _Ipv4Endpoint({
+    required this.interfaceName,
+    required this.address,
+    this.prefixLength,
+  });
 
   final String interfaceName;
   final InternetAddress address;
+  /// The network prefix length (e.g. 24 for a /24 subnet).  May be null on
+  /// platforms that do not expose subnet mask information.
+  final int? prefixLength;
 }

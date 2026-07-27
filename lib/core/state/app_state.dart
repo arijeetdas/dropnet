@@ -109,6 +109,7 @@ class AppState {
     required this.showIncomingRequestList,
     required this.maxIncomingRequests,
     required this.incomingRequestTimeoutSeconds,
+    required this.discoveryHealth,
   });
 
   final List<DeviceModel> devices;
@@ -156,6 +157,10 @@ class AppState {
   final int maxIncomingRequests;
   final int incomingRequestTimeoutSeconds;
 
+  /// Current health of the device-discovery system.  Drives the red warning
+  /// button in the app header.
+  final DiscoveryHealthStatus discoveryHealth;
+
   static AppState initial() => AppState(
     devices: const [],
     activeTransfers: const [],
@@ -199,6 +204,7 @@ class AppState {
     showIncomingRequestList: false,
     maxIncomingRequests: 5,
     incomingRequestTimeoutSeconds: 60,
+    discoveryHealth: DiscoveryHealthStatus.healthy,
   );
 
   AppState copyWith({
@@ -244,6 +250,7 @@ class AppState {
     bool? showIncomingRequestList,
     int? maxIncomingRequests,
     int? incomingRequestTimeoutSeconds,
+    DiscoveryHealthStatus? discoveryHealth,
   }) {
     return AppState(
       devices: devices ?? this.devices,
@@ -305,6 +312,7 @@ class AppState {
       maxIncomingRequests: maxIncomingRequests ?? this.maxIncomingRequests,
       incomingRequestTimeoutSeconds:
           incomingRequestTimeoutSeconds ?? this.incomingRequestTimeoutSeconds,
+      discoveryHealth: discoveryHealth ?? this.discoveryHealth,
     );
   }
 }
@@ -429,6 +437,7 @@ class AppController extends StateNotifier<AppState> {
   StreamSubscription<TransferModel>? _webCompletedTransferSub;
   StreamSubscription<TemporaryLinkShareState>? _tempShareSub;
   StreamSubscription<SharedIntentPayload>? _sharedPayloadSub;
+  StreamSubscription<DiscoveryHealthStatus>? _healthSub;
 
   List<TransferHistoryEntry> _tcpHistory = const [];
   List<TransferHistoryEntry> _webHistory = const [];
@@ -602,6 +611,13 @@ class AppController extends StateNotifier<AppState> {
   }
 
   void _setupStreamSubscribers() {
+    // Discovery health — drives the warning button in the app header.
+    _healthSub ??= _discovery.healthStream.listen((health) {
+      state = state.copyWith(discoveryHealth: health);
+    });
+    // Seed the initial health value so the button state is correct on startup.
+    state = state.copyWith(discoveryHealth: _discovery.currentHealth);
+
     _devicesSub ??= _discovery.devicesStream.listen((devices) {
       final previousFavorites = state.favoritePeers;
       final syncedFavorites = _syncFavoritePeersWithDevices(
@@ -2123,83 +2139,60 @@ class AppController extends StateNotifier<AppState> {
       return fallback.path;
     }
 
-    if (Platform.isIOS || Platform.isMacOS) {
+    if (Platform.isIOS) {
+      final documentsDir = await getApplicationDocumentsDirectory();
+      final dropNetDir = Directory('${documentsDir.path}${Platform.pathSeparator}DropNet');
+      try {
+        await dropNetDir.create(recursive: true);
+        return dropNetDir.path;
+      } catch (_) {
+        return documentsDir.path;
+      }
+    }
+
+    if (Platform.isMacOS) {
       final documentsDir = await getApplicationDocumentsDirectory();
       final isLegacyOrInsideDocs = preferredPath.isNotEmpty && (
         _isSameNormalizedPath(preferredPath, '${documentsDir.path}${Platform.pathSeparator}DropNet') ||
         preferredPath.toLowerCase().contains(documentsDir.path.toLowerCase()) ||
         preferredPath.toLowerCase().contains('/documents/dropnet')
       );
-      print('[DropNet] documentsDir: ${documentsDir.path}');
-      print('[DropNet] preferredPath: "$preferredPath", isLegacyOrInsideDocs: $isLegacyOrInsideDocs');
 
       if (preferredPath.isNotEmpty && !isLegacyOrInsideDocs) {
         try {
           final preferredDir = Directory(preferredPath);
           await preferredDir.create(recursive: true);
-          print('[DropNet] Using preferred directory: ${preferredDir.path}');
           return preferredDir.path;
-        } catch (e) {
-          print('[DropNet] Error creating preferredDir: $e');
-        }
+        } catch (_) {}
       }
 
       Directory? downloadsDir;
       try {
         downloadsDir = await getDownloadsDirectory();
-        print('[DropNet] getDownloadsDirectory: ${downloadsDir?.path}');
-      } catch (e) {
-        print('[DropNet] Error calling getDownloadsDirectory: $e');
-      }
+      } catch (_) {}
 
       if (downloadsDir != null) {
         final target = Directory('${downloadsDir.path}${Platform.pathSeparator}DropNet');
         try {
           await target.create(recursive: true);
-          print('[DropNet] Successfully created Downloads target: ${target.path}');
           return target.path;
-        } catch (e) {
-          print('[DropNet] Error creating Downloads target: $e');
-          try {
-            final fallbackTarget = Directory('${downloadsDir.parent.path}${Platform.pathSeparator}DropNet');
-            await fallbackTarget.create(recursive: true);
-            print('[DropNet] Successfully created Downloads parent target: ${fallbackTarget.path}');
-            return fallbackTarget.path;
-          } catch (e2) {
-            print('[DropNet] Error creating Downloads parent target: $e2');
-          }
-        }
+        } catch (_) {}
       }
 
       final homePath = Platform.environment['HOME'];
-      print('[DropNet] HOME env: "$homePath"');
       if (homePath != null && homePath.isNotEmpty) {
         final target = Directory('$homePath${Platform.pathSeparator}Downloads${Platform.pathSeparator}DropNet');
         try {
           await target.create(recursive: true);
-          print('[DropNet] Successfully created HOME Downloads target: ${target.path}');
           return target.path;
-        } catch (e) {
-          print('[DropNet] Error creating HOME Downloads target: $e');
-          try {
-            final fallbackTarget = Directory('$homePath${Platform.pathSeparator}DropNet');
-            await fallbackTarget.create(recursive: true);
-            print('[DropNet] Successfully created HOME target: ${fallbackTarget.path}');
-            return fallbackTarget.path;
-          } catch (e2) {
-            print('[DropNet] Error creating HOME target: $e2');
-          }
-        }
+        } catch (_) {}
       }
 
       final fallbackTarget = Directory('${documentsDir.path}${Platform.pathSeparator}DropNet');
       try {
         await fallbackTarget.create(recursive: true);
-        print('[DropNet] Fallback to documents: ${fallbackTarget.path}');
         return fallbackTarget.path;
-      } catch (e) {
-        print('[DropNet] Error creating fallback documents directory: $e');
-      }
+      } catch (_) {}
     }
 
     if (preferredPath.isNotEmpty) {
@@ -2340,6 +2333,7 @@ class AppController extends StateNotifier<AppState> {
     _webCompletedTransferSub?.cancel();
     _tempShareSub?.cancel();
     _sharedPayloadSub?.cancel();
+    _healthSub?.cancel();
     super.dispose();
   }
 }

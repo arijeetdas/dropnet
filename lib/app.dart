@@ -175,7 +175,6 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
   bool _sharedTextOpening = false;
   bool _receivedFilePreviewOpening = false;
   bool _globalDragActive = false;
-  bool _startupRouteReady = false;
   Timer? _permissionPollTimer;
 
   @override
@@ -184,9 +183,6 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
     WidgetsBinding.instance.addObserver(_lifecycleObserver);
     Future<void>(() async {
       await _routeForStartup();
-      if (mounted) {
-        setState(() => _startupRouteReady = true);
-      }
 
       await ref.read(appControllerProvider.notifier).bootstrap();
 
@@ -493,32 +489,6 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
         }
       }
     });
-    if (!_startupRouteReady) {
-      return DynamicColorBuilder(
-        builder: (dynamicLight, dynamicDark) {
-          final dynamicSeed = dynamicLight?.primary ?? dynamicDark?.primary;
-          final effectiveSeed = themeSettings.useSystemAccent
-              ? (dynamicSeed ?? Colors.indigo)
-              : themeSettings.themeSeed;
-          return MaterialApp(
-            title: 'DropNet',
-            debugShowCheckedModeBanner: false,
-            themeMode: themeSettings.themeMode,
-            theme: ThemeData(
-              useMaterial3: true,
-              brightness: Brightness.light,
-              colorSchemeSeed: effectiveSeed,
-            ),
-            darkTheme: ThemeData(
-              useMaterial3: true,
-              brightness: Brightness.dark,
-              colorSchemeSeed: effectiveSeed,
-            ),
-            home: const Scaffold(body: SizedBox.shrink()),
-          );
-        },
-      );
-    }
     return DynamicColorBuilder(
       builder: (dynamicLight, dynamicDark) {
         final dynamicSeed = dynamicLight?.primary ?? dynamicDark?.primary;
