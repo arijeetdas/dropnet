@@ -438,6 +438,7 @@ class AppController extends StateNotifier<AppState> {
   StreamSubscription<TemporaryLinkShareState>? _tempShareSub;
   StreamSubscription<SharedIntentPayload>? _sharedPayloadSub;
   StreamSubscription<DiscoveryHealthStatus>? _healthSub;
+  StreamSubscription<({String localIp, List<String> localIps})>? _localIpSub;
 
   List<TransferHistoryEntry> _tcpHistory = const [];
   List<TransferHistoryEntry> _webHistory = const [];
@@ -617,6 +618,14 @@ class AppController extends StateNotifier<AppState> {
     });
     // Seed the initial health value so the button state is correct on startup.
     state = state.copyWith(discoveryHealth: _discovery.currentHealth);
+
+    // React to local-IP changes (e.g. connecting/disconnecting from Wi-Fi).
+    _localIpSub ??= _discovery.localIpStream.listen((ipInfo) {
+      state = state.copyWith(
+        localIp: ipInfo.localIp,
+        localIps: ipInfo.localIps,
+      );
+    });
 
     _devicesSub ??= _discovery.devicesStream.listen((devices) {
       final previousFavorites = state.favoritePeers;
@@ -2334,6 +2343,7 @@ class AppController extends StateNotifier<AppState> {
     _tempShareSub?.cancel();
     _sharedPayloadSub?.cancel();
     _healthSub?.cancel();
+    _localIpSub?.cancel();
     super.dispose();
   }
 }

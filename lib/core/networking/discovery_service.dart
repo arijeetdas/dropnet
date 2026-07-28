@@ -87,11 +87,19 @@ class DiscoveryService {
   final _healthController = StreamController<DiscoveryHealthStatus>.broadcast();
   DiscoveryHealthStatus _currentHealth = DiscoveryHealthStatus.healthy;
 
+  // Local-IP change tracking.
+  final _localIpController =
+      StreamController<({String localIp, List<String> localIps})>.broadcast();
+  String _lastEmittedLocalIp = '';
+
   Stream<List<DeviceModel>> get devicesStream => _devicesController.stream;
   /// Emits the current discovery-health status whenever it changes.
   Stream<DiscoveryHealthStatus> get healthStream => _healthController.stream;
   /// The most-recently emitted health status (synchronous access for UI).
   DiscoveryHealthStatus get currentHealth => _currentHealth;
+  /// Emits `({localIp, localIps})` whenever the device's local IP changes.
+  Stream<({String localIp, List<String> localIps})> get localIpStream =>
+      _localIpController.stream;
   String get deviceName => '$_deviceBaseName #$_deviceNumber';
   String get manufacturerTag => _manufacturerTag;
   String get cpuArchitectureTag => _cpuArchitectureTag;
@@ -794,6 +802,15 @@ class DiscoveryService {
         _healthController.add(next);
       }
     }
+
+    // Emit updated IP info whenever the local IP has changed.
+    if (localIp != _lastEmittedLocalIp) {
+      _lastEmittedLocalIp = localIp;
+      if (!_localIpController.isClosed) {
+        final allIps = await getAllLocalIps();
+        _localIpController.add((localIp: localIp, localIps: allIps));
+      }
+    }
   }
 
   void _emitDevices() {
@@ -1045,6 +1062,7 @@ class DiscoveryService {
     _socket?.close();
     await _devicesController.close();
     await _healthController.close();
+    await _localIpController.close();
   }
 
   Future<void> _loadIdentity() async {
@@ -1053,10 +1071,26 @@ class DiscoveryService {
     }
     _identityLoaded = true;
     try {
-      final docs = await getApplicationDocumentsDirectory();
+      final support = await getApplicationSupportDirectory();
       final file = File(
-        '${docs.path}${Platform.pathSeparator}$_identityFileName',
+        '${support.path}${Platform.pathSeparator}$_identityFileName',
       );
+
+      // One-time migration: move the identity file from the old Documents
+      // directory (which is user-visible on iOS) to ApplicationSupport.
+      if (!await file.exists()) {
+        try {
+          final docs = await getApplicationDocumentsDirectory();
+          final oldFile = File(
+            '${docs.path}${Platform.pathSeparator}$_identityFileName',
+          );
+          if (await oldFile.exists()) {
+            await oldFile.copy(file.path);
+            await oldFile.delete();
+          }
+        } catch (_) {}
+      }
+
       if (!await file.exists()) {
         _deviceNumber = _randomNumber();
         _manufacturerTag = await _detectManufacturerTag();
@@ -1104,9 +1138,9 @@ class DiscoveryService {
 
   Future<void> _saveIdentity() async {
     try {
-      final docs = await getApplicationDocumentsDirectory();
+      final support = await getApplicationSupportDirectory();
       final file = File(
-        '${docs.path}${Platform.pathSeparator}$_identityFileName',
+        '${support.path}${Platform.pathSeparator}$_identityFileName',
       );
       await file.writeAsString(
         jsonEncode({
