@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:isolate';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -164,38 +165,49 @@ class LocalTlsCertificateService {
       );
     }
 
-    final keyPair = CryptoUtils.generateRSAKeyPair(keySize: 2048);
-    final privateKeyObject = keyPair.privateKey as RSAPrivateKey;
-    final publicKeyObject = keyPair.publicKey as RSAPublicKey;
-
+    // Offload ALL synchronous CPU-intensive crypto work to a background isolate:
+    // key-pair generation, CSR building, self-signed cert creation, and PEM
+    // encoding.  Each of these is pure-Dart CPU work that blocks the main
+    // isolate for several seconds on a physical iPhone, causing UI freezes and
+    // triggering iOS's watchdog process killer on cold launch.
+    final serialNumber = DateTime.now().millisecondsSinceEpoch.toString();
+    final notBefore = DateTime.now().subtract(const Duration(minutes: 5));
     final subject = <String, String>{
       'CN': commonName.trim().isEmpty ? 'DropNet Local' : commonName.trim(),
       'O': 'DropNet',
       'OU': 'Local Transfer',
     };
 
-    final csr = X509Utils.generateRsaCsrPem(
-      subject,
-      privateKeyObject,
-      publicKeyObject,
-      san: normalizedNames,
-    );
+    final generated = await Isolate.run(() {
+      final keyPair = CryptoUtils.generateRSAKeyPair(keySize: 2048);
+      final privateKeyObject = keyPair.privateKey as RSAPrivateKey;
+      final publicKeyObject = keyPair.publicKey as RSAPublicKey;
 
-    final certificatePem = X509Utils.generateSelfSignedCertificate(
-      privateKeyObject,
-      csr,
-      3650,
-      sans: normalizedNames,
-      serialNumber: DateTime.now().millisecondsSinceEpoch.toString(),
-      notBefore: DateTime.now().subtract(const Duration(minutes: 5)),
-    );
+      final csr = X509Utils.generateRsaCsrPem(
+        subject,
+        privateKeyObject,
+        publicKeyObject,
+        san: normalizedNames,
+      );
 
-    final privateKeyPem = CryptoUtils.encodeRSAPrivateKeyToPem(
-      privateKeyObject,
-    );
+      final certificatePem = X509Utils.generateSelfSignedCertificate(
+        privateKeyObject,
+        csr,
+        3650,
+        sans: normalizedNames,
+        serialNumber: serialNumber,
+        notBefore: notBefore,
+      );
 
-    await certificate.writeAsString(certificatePem, flush: true);
-    await privateKey.writeAsString(privateKeyPem, flush: true);
+      final privateKeyPem = CryptoUtils.encodeRSAPrivateKeyToPem(
+        privateKeyObject,
+      );
+
+      return (certificatePem: certificatePem, privateKeyPem: privateKeyPem);
+    });
+
+    await certificate.writeAsString(generated.certificatePem, flush: true);
+    await privateKey.writeAsString(generated.privateKeyPem, flush: true);
     await meta.writeAsString(
       jsonEncode({
         'subjectAlternativeNames': normalizedNames,

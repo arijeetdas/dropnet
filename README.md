@@ -252,8 +252,8 @@ Distributed under the **MIT License**. See `LICENSE` for more information.
 **Arijeet Das**  
 *Computer Science & Engineering Undergrad*  
 
-*   **GitHub:** [@arijeetdas](https://github.com/arijeetdas)
-*   **LinkedIn:** [Arijeet Das](https://linkedin.com/in/arijeetdas)
-*   **DropNet on Vibe Store:** [DropNet](https://vibe-labs.netlify.app/app.html?id=dropnet)
-*   **Portfolio Website:** [Arijeet Das](https://arijeetdas-dev.vercel.app)
-*   **Email:** arijeetdas900@gmail.com
+*   **GitHub:** [@arijeetdas](https://github.arijeet.in/)
+*   **LinkedIn:** [Arijeet Das](https://linkedin.arijeet.in/)
+*   **DropNet on Vibe Store:** [DropNet](https://dropnet.arijeet.in)
+*   **Portfolio Website:** [Arijeet Das](https://arijeetdas.in)
+*   **Email:** contact@arijeet.in | arijeetdas900@gmail.com

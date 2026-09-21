@@ -30,6 +30,10 @@
 	</array>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>DropNet needs photo library access when you choose photos or videos to share.</string>
+	<key>NSAppleMusicUsageDescription</key>
+	<string>DropNet needs access to your music library when you choose audio files to share.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>DropNet needs microphone access when you choose audio files to share.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>DropNet uses your camera to scan a QR code when manually pairing with another device.</string>
 	<key>UIApplicationShortcutItems</key>
