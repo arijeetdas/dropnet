@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:crypto/crypto.dart';
 import 'package:dropnet/core/security/local_tls_certificate_service.dart';
 import 'package:dropnet/core/networking/tcp_transfer_service.dart';
+import 'package:dropnet/core/utils/file_utils.dart';
 import 'package:dropnet/models/device_model.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -51,8 +52,9 @@ void main() {
         port: 45501,
       );
 
-      final receivedFile = File(
-        '${receiverDir.path}${Platform.pathSeparator}${sourceFile.uri.pathSegments.last}',
+      final receivedFile = _receivedFile(
+        receiverDir,
+        sourceFile.uri.pathSegments.last,
       );
       expect(await receivedFile.exists(), isTrue);
       expect(await receivedFile.length(), await sourceFile.length());
@@ -129,9 +131,7 @@ void main() {
 
         for (final file in sourceFiles) {
           final name = file.uri.pathSegments.last;
-          final received = File(
-            '${receiverDir.path}${Platform.pathSeparator}$name',
-          );
+          final received = _receivedFile(receiverDir, name);
           expect(
             await received.exists(),
             isTrue,
@@ -223,8 +223,8 @@ void main() {
 
         for (final file in files) {
           final name = file.uri.pathSegments.last;
-          final outA = File('${dstA.path}${Platform.pathSeparator}$name');
-          final outB = File('${dstB.path}${Platform.pathSeparator}$name');
+          final outA = _receivedFile(dstA, name);
+          final outB = _receivedFile(dstB, name);
           expect(
             await outA.exists(),
             isTrue,
@@ -284,6 +284,18 @@ Future<String> _localFingerprint() {
   return LocalTlsCertificateService().readCertificateSha256Fingerprint(
     commonName: 'DropNet Local',
     subjectAlternativeNames: const ['localhost', '127.0.0.1'],
+  );
+}
+
+/// The receiver categorizes files into subfolders by default, so the
+/// received path isn't simply `<saveDir>/<name>`.
+File _receivedFile(Directory saveDir, String name) {
+  return File(
+    FileUtils.resolveReceivedFileSavePath(
+      saveDir: saveDir.path,
+      fileName: name,
+      categorize: true,
+    ),
   );
 }
 

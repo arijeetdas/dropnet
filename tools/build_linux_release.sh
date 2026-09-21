@@ -28,8 +28,8 @@ version_line="$(grep -E '^version:[[:space:]]*' pubspec.yaml | head -n 1 || true
 VERSION="$(printf '%s\n' "$version_line" | sed -E 's/^version:[[:space:]]*([^+[:space:]]+).*/\1/')"
 [[ "$VERSION" =~ ^[0-9]+(\.[0-9]+){1,3}([~-][A-Za-z0-9.+-]+)?$ ]] || fail "Invalid pubspec version: $VERSION"
 
-DEB_NAME="${APP_NAME}-v${VERSION}-linux-amd64.deb"
-APPIMAGE_NAME="${APP_NAME}-v${VERSION}-x86_64.AppImage"
+DEB_NAME="${APP_NAME}-v${VERSION}-Linux-amd64.deb"
+APPIMAGE_NAME="${APP_NAME}-v${VERSION}-Linux-x86_64.AppImage"
 DEB_PATH="${DEB_OUTPUT_DIR}/${DEB_NAME}"
 APPIMAGE_PATH="${APPIMAGE_OUTPUT_DIR}/${APPIMAGE_NAME}"
 BUILD_BUNDLE="build/linux/x64/release/bundle"

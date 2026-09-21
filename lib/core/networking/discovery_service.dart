@@ -32,6 +32,8 @@ class DiscoveryService {
   static const _tlsCertSans = <String>['localhost', '127.0.0.1'];
   static const Duration _presenceMaxClockSkew = Duration(seconds: 45);
   static const Duration _nonceRetentionWindow = Duration(minutes: 3);
+  static const Duration _announceInterval = Duration(milliseconds: 1500);
+  static const Duration _staleDeviceThreshold = Duration(milliseconds: 4500);
 
   String _deviceBaseName;
   int _deviceNumber;
@@ -111,13 +113,16 @@ class DiscoveryService {
     _normalizeCachedDevices();
 
     if (!Platform.isWindows && _socket != null) {
-      try {
-        await _startMdns();
-      } catch (e) {
-        if (kDebugMode) {
-          print('[DiscoveryService] Error starting mDNS: $e');
-        }
-      }
+      // Fire-and-forget: mDNS setup can take several real seconds (network
+      // lookups, TLS cert refresh, native Bonjour startup), and it must not
+      // delay the fast, simple UDP announce below, which doesn't need it.
+      unawaited(
+        _startMdns().catchError((e) {
+          if (kDebugMode) {
+            print('[DiscoveryService] Error starting mDNS: $e');
+          }
+        }),
+      );
     }
 
     if (_socket != null && _running) {
@@ -131,13 +136,13 @@ class DiscoveryService {
       }));
 
       _announceTimer = Timer.periodic(
-        const Duration(seconds: 2),
+        _announceInterval,
         (_) {
           if (_running) _announce();
         },
       );
       _pruneTimer = Timer.periodic(
-        const Duration(seconds: 2),
+        _announceInterval,
         (_) {
           if (_running) _pruneOfflineDevices();
         },
@@ -174,9 +179,9 @@ class DiscoveryService {
         final packet = await _buildPresencePacket(
           transport: _presenceTransportBroadcast,
           isOnline: false,
-        );
+        ).timeout(const Duration(seconds: 1));
         if (packet != null) {
-          final targets = await _collectBroadcastTargets();
+          final targets = await _collectBroadcastTargets().timeout(const Duration(seconds: 1));
           for (final target in targets) {
             _socket?.send(packet, target, _discoveryPort);
           }
@@ -197,14 +202,18 @@ class DiscoveryService {
         print('[DiscoveryService] Stopping mDNS Discovery browser');
       }
     }
-    await _mdnsDiscovery?.stop();
+    try {
+      await _mdnsDiscovery?.stop().timeout(const Duration(seconds: 2));
+    } catch (_) {}
     _mdnsDiscovery = null;
     if (kDebugMode) {
       if (_mdnsBroadcast != null) {
         print('[DiscoveryService] Stopping mDNS Advertiser');
       }
     }
-    await _mdnsBroadcast?.stop();
+    try {
+      await _mdnsBroadcast?.stop().timeout(const Duration(seconds: 2));
+    } catch (_) {}
     _mdnsBroadcast = null;
     _socket?.close();
     _socket = null;
@@ -365,8 +374,12 @@ class DiscoveryService {
       _normalizeCachedDevices();
       await _announce().timeout(const Duration(seconds: 1));
 
-      // Refresh Bonsoir discovery by stopping and starting it again
-      if (!Platform.isWindows && _mdnsDiscovery != null) {
+      // Refresh Bonsoir discovery by stopping and starting it again.
+      // Skipped on iOS: tearing down NWBrowser while a DNSServiceResolve
+      // callback is in flight races with bonsoir_darwin's native resolver
+      // teardown and can wedge the app. The periodic mDNS browser and the
+      // UDP re-announce below are enough to surface devices on refresh.
+      if (!Platform.isWindows && !Platform.isIOS && _mdnsDiscovery != null) {
         try {
           await _mdnsSub?.cancel();
           _mdnsSub = null;
@@ -646,12 +659,12 @@ class DiscoveryService {
       print('[DiscoveryService] Starting mDNS Advertiser & Discovery on port $_listeningPort');
     }
     try {
-      final ipAddress = await getLocalIp();
+      final ipAddress = await getLocalIp().timeout(const Duration(seconds: 3));
       if (ipAddress.isEmpty) {
         return;
       }
 
-      await _refreshTlsFingerprintAndCertificate();
+      await _refreshTlsFingerprintAndCertificate().timeout(const Duration(seconds: 5));
       if (_tlsCertificateFingerprint.isEmpty) {
         return;
       }
@@ -673,16 +686,16 @@ class DiscoveryService {
       );
 
       _mdnsBroadcast = BonsoirBroadcast(service: service);
-      await _mdnsBroadcast!.initialize();
-      await _mdnsBroadcast!.start();
+      await _mdnsBroadcast!.initialize().timeout(const Duration(seconds: 3));
+      await _mdnsBroadcast!.start().timeout(const Duration(seconds: 3));
       if (kDebugMode) {
         print('[DiscoveryService] mDNS Advertiser started for $deviceName (_dropnet._tcp)');
       }
 
       _mdnsDiscovery = BonsoirDiscovery(type: '_dropnet._tcp');
-      await _mdnsDiscovery!.initialize();
+      await _mdnsDiscovery!.initialize().timeout(const Duration(seconds: 3));
       _mdnsSub = _mdnsDiscovery!.eventStream?.listen(_onMdnsEvent);
-      await _mdnsDiscovery!.start();
+      await _mdnsDiscovery!.start().timeout(const Duration(seconds: 3));
       if (kDebugMode) {
         print('[DiscoveryService] mDNS Discovery browser started');
       }
@@ -845,34 +858,32 @@ class DiscoveryService {
 
   Future<List<InternetAddress>> _collectBroadcastTargets() async {
     final targets = <String>{_broadcastAddress};
-    
-    String wifiBroadcast = '';
-    try {
-      wifiBroadcast = (await _networkInfo.getWifiBroadcast())?.trim() ?? '';
-    } catch (_) {}
+
+    final results = await Future.wait<Object?>([
+      _networkInfo.getWifiBroadcast().catchError((_) => null),
+      _networkInfo.getWifiIP().catchError((_) => null),
+      _networkInfo.getWifiGatewayIP().catchError((_) => null),
+      _listEligibleIpv4Addresses(),
+    ]);
+
+    final wifiBroadcast = (results[0] as String?)?.trim() ?? '';
     if (_isUsableIpv4(wifiBroadcast)) {
       targets.add(wifiBroadcast);
     }
 
-    String wifiIp = '';
-    try {
-      wifiIp = (await _networkInfo.getWifiIP())?.trim() ?? '';
-    } catch (_) {}
+    final wifiIp = (results[1] as String?)?.trim() ?? '';
     if (_isUsableIpv4(wifiIp)) {
       targets.add(_fallbackBroadcastForIp(wifiIp));
     }
 
-    String wifiGateway = '';
-    try {
-      wifiGateway = (await _networkInfo.getWifiGatewayIP())?.trim() ?? '';
-    } catch (_) {}
+    final wifiGateway = (results[2] as String?)?.trim() ?? '';
     if (_isUsableIpv4(wifiGateway)) {
       // Some Android hotspot/client combinations suppress L2 broadcast but still
       // pass unicast via the gateway/host.
       targets.add(wifiGateway);
     }
 
-    final interfaces = await _listEligibleIpv4Addresses();
+    final interfaces = results[3] as List<_Ipv4Endpoint>;
     for (final endpoint in interfaces) {
       targets.add(_fallbackBroadcastForIp(endpoint.address.address));
     }
@@ -897,7 +908,7 @@ class DiscoveryService {
       if (_manualDeviceIds.contains(entry.key)) {
         continue;
       }
-      if (now.difference(entry.value.lastSeen) > const Duration(seconds: 6)) {
+      if (now.difference(entry.value.lastSeen) > _staleDeviceThreshold) {
         remove.add(entry.key);
       }
     }
@@ -1402,7 +1413,7 @@ class DiscoveryService {
     if (previous.ipAddress != senderAddress) {
       return true;
     }
-    return seenAt.difference(previous.lastSeen) > const Duration(seconds: 6);
+    return seenAt.difference(previous.lastSeen) > _staleDeviceThreshold;
   }
 
   int _compareIpv4Endpoints(_Ipv4Endpoint left, _Ipv4Endpoint right) {

@@ -298,22 +298,26 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
                                       : _clearTargets,
                                   icon: const Icon(Icons.clear_all_rounded),
                                 ),
-                                IconButton(
-                                  iconSize: 20,
-                                  tooltip: 'Refresh',
-                                  padding: const EdgeInsets.all(6),
-                                  constraints: const BoxConstraints(),
-                                  onPressed: _sending || _refreshingNearby
-                                      ? null
-                                      : _refreshNearbyDevices,
-                                  icon: _refreshingNearby
-                                      ? const SizedBox(
-                                          width: 18,
-                                          height: 18,
-                                          child: ExpressiveLoader(),
-                                        )
-                                      : const Icon(Icons.refresh_rounded),
-                                ),
+                                // Hidden on iOS/iPadOS: restarting mDNS
+                                // discovery on refresh can wedge the app on
+                                // Apple platforms (see DiscoveryService.refreshNow).
+                                if (!Platform.isIOS)
+                                  IconButton(
+                                    iconSize: 20,
+                                    tooltip: 'Refresh',
+                                    padding: const EdgeInsets.all(6),
+                                    constraints: const BoxConstraints(),
+                                    onPressed: _sending || _refreshingNearby
+                                        ? null
+                                        : _refreshNearbyDevices,
+                                    icon: _refreshingNearby
+                                        ? const SizedBox(
+                                            width: 18,
+                                            height: 18,
+                                            child: ExpressiveLoader(),
+                                          )
+                                        : const Icon(Icons.refresh_rounded),
+                                  ),
                               ],
                             ),
                           ),
@@ -2802,7 +2806,8 @@ class _ManualConnectDialog extends ConsumerStatefulWidget {
   ConsumerState<_ManualConnectDialog> createState() => _ManualConnectDialogState();
 }
 
-class _ManualConnectDialogState extends ConsumerState<_ManualConnectDialog> {
+class _ManualConnectDialogState extends ConsumerState<_ManualConnectDialog>
+    with WidgetsBindingObserver {
   int _activeTab = 0; // 0 = Scan QR, 1 = Direct IP (Mobile). On Desktop: 0 = Direct IP
   final _ipController = TextEditingController();
   final _portController = TextEditingController(text: '45455');
@@ -2820,11 +2825,14 @@ class _ManualConnectDialogState extends ConsumerState<_ManualConnectDialog> {
   bool _isAlreadyDiscoveredState = false;
   bool _isAwaitingApproval = false;
 
+  bool get _isMobilePlatform =>
+      defaultTargetPlatform == TargetPlatform.iOS || defaultTargetPlatform == TargetPlatform.android;
+
   @override
   void initState() {
     super.initState();
-    final bool isMobile = defaultTargetPlatform == TargetPlatform.iOS || defaultTargetPlatform == TargetPlatform.android;
-    if (isMobile) {
+    WidgetsBinding.instance.addObserver(this);
+    if (_isMobilePlatform) {
       _checkCameraPermission();
     } else {
       _isCheckingPermission = false;
@@ -2833,10 +2841,23 @@ class _ManualConnectDialogState extends ConsumerState<_ManualConnectDialog> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _ipController.dispose();
     _portController.dispose();
     _scannerController?.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Re-check permission when returning from the OS Settings app, so
+    // granting camera access there reflects here without reopening the dialog.
+    // Only mobile ever requests camera permission in this dialog.
+    if (_isMobilePlatform &&
+        state == AppLifecycleState.resumed &&
+        !_cameraPermissionStatus.isGranted) {
+      _checkCameraPermission();
+    }
   }
 
   Future<void> _checkCameraPermission() async {
@@ -2852,13 +2873,25 @@ class _ManualConnectDialogState extends ConsumerState<_ManualConnectDialog> {
   }
 
   Future<void> _requestCameraPermission() async {
+    // Once denied, iOS never re-shows the system prompt — the only way
+    // forward is Settings > Privacy & Security > Camera, where DropNet is
+    // listed once it has requested camera access at least once.
+    if (_cameraPermissionStatus.isPermanentlyDenied || _cameraPermissionStatus.isRestricted) {
+      await openAppSettings();
+      return;
+    }
     final status = await Permission.camera.request();
     setState(() {
       _cameraPermissionStatus = status;
     });
-    if (status.isPermanentlyDenied) {
-      await openAppSettings();
-    } else {
+    // Don't auto-chain into Settings here: iOS maps every decline (even the
+    // very first one) to permanentlyDenied, and jumping to Settings in the
+    // same tick as the alert closing races iOS's own bookkeeping — the app
+    // hasn't finished registering the Camera entry yet, so it shows up
+    // missing from both the per-app page and Privacy & Security > Camera.
+    // Just update the UI (the button becomes "Open Settings"); a second,
+    // deliberate tap goes through the guard above once iOS has settled.
+    if (status.isGranted) {
       _initScanner();
     }
   }
@@ -3437,7 +3470,8 @@ class _ManualConnectDialogState extends ConsumerState<_ManualConnectDialog> {
     }
 
     if (_cameraPermissionStatus != PermissionStatus.granted) {
-      final isPermDenied = _cameraPermissionStatus == PermissionStatus.permanentlyDenied;
+      final needsSettings = _cameraPermissionStatus == PermissionStatus.permanentlyDenied;
+      final isRestricted = _cameraPermissionStatus == PermissionStatus.restricted;
       return Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -3464,18 +3498,24 @@ class _ManualConnectDialogState extends ConsumerState<_ManualConnectDialog> {
           ),
           const SizedBox(height: 8),
           Text(
-            'Camera permission is needed to scan connection QR codes from other devices.',
+            isRestricted
+                ? 'Camera access is restricted on this device, likely by a parental control or management profile. Ask your device administrator to allow it.'
+                : needsSettings
+                ? 'Camera permission was denied. Enable it for DropNet in Settings > Privacy & Security > Camera.'
+                : 'Camera permission is needed to scan connection QR codes from other devices.',
             style: theme.textTheme.bodySmall?.copyWith(
               color: colorScheme.onSurfaceVariant,
             ),
             textAlign: TextAlign.center,
           ),
-          const SizedBox(height: 16),
-          FilledButton.icon(
-            onPressed: _requestCameraPermission,
-            icon: Icon(isPermDenied ? Icons.settings_rounded : Icons.camera_alt_rounded),
-            label: Text(isPermDenied ? 'Open App Settings' : 'Grant Camera Access'),
-          ),
+          if (!isRestricted) ...[
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              onPressed: _requestCameraPermission,
+              icon: Icon(needsSettings ? Icons.settings_rounded : Icons.camera_alt_rounded),
+              label: Text(needsSettings ? 'Open Settings' : 'Grant Camera Access'),
+            ),
+          ],
         ],
       );
     }

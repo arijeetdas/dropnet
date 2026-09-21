@@ -1,4 +1,4 @@
-platform :ios, '13.0'
+platform :ios, '15.0'
 
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
 
@@ -37,5 +37,22 @@ end
 post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
+    target.build_configurations.each do |config|
+      # NOTE: permission_handler_apple is resolved via Swift Package Manager
+      # now (see ios/Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage),
+      # not CocoaPods, so this no longer reaches it — these macros only
+      # affect actual CocoaPods targets. permission_handler_apple's own
+      # Package.swift resolves PERMISSION_CAMERA/PERMISSION_PHOTOS from (in
+      # order) the PERMISSION_CAMERA/PERMISSION_PHOTOS launchd env vars, then
+      # the app's Info.plist usage-description keys, then defaults to off.
+      # It cannot auto-detect the app root when built from Xcode.app (working
+      # directory is "/"), so `launchctl setenv PERMISSION_CAMERA 1` (and
+      # PERMISSION_PHOTOS) on the dev machine is what makes Xcode-driven
+      # builds pick these up — CLI builds (`flutter run`/`flutter build ios`)
+      # auto-detect correctly via Info.plist without needing this at all.
+      config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] ||= ['$(inherited)']
+      config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] << 'PERMISSION_CAMERA=1'
+      config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] << 'PERMISSION_PHOTOS=1'
+    end
   end
 end

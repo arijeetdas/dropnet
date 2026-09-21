@@ -190,6 +190,7 @@ class WebServerService {
   WebShareState _state = WebShareState.initial();
   HttpServer? _server;
   String _rootDirectory = '';
+  bool _categorizeFiles = true;
   String _hostDeviceName = 'DropNet Device';
   String _webPin = '';
   final Set<String> _validPinSessions = {};
@@ -224,9 +225,11 @@ class WebServerService {
     required String hostDeviceName,
     int port = 8080,
     String pin = '',
+    bool categorizeFiles = true,
   }) async {
     await stop();
     _rootDirectory = rootDirectory;
+    _categorizeFiles = categorizeFiles;
     _hostDeviceName = hostDeviceName.trim().isEmpty ? 'DropNet Device' : hostDeviceName.trim();
     _webPin = pin.trim();
     _validPinSessions.clear();
@@ -908,8 +911,13 @@ class WebServerService {
     }
 
     final targetDir = await _resolveWritableIncomingDirectory();
-    final targetPath = FileUtils.safeJoin(targetDir.path, safeBase);
+    final targetPath = FileUtils.resolveReceivedFileSavePath(
+      saveDir: targetDir.path,
+      fileName: safeBase,
+      categorize: _categorizeFiles,
+    );
     final targetFile = File(targetPath);
+    await targetFile.parent.create(recursive: true);
     if (await targetFile.exists()) {
       await targetFile.delete();
     }

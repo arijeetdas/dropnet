@@ -1,10 +1,9 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:restart_app/restart_app.dart';
 import '../../core/state/app_state.dart';
 import '../../core/utils/dialog_utils.dart';
+import '../../core/utils/file_utils.dart';
 import '../../models/private_network_profile.dart';
 
 class AdvancedSettingsScreen extends ConsumerStatefulWidget {
@@ -442,11 +441,25 @@ class _AdvancedSettingsScreenState extends ConsumerState<AdvancedSettingsScreen>
                   child: Column(
                     children: [
                       _PremiumActionTile(
-                        icon: Icons.restart_alt_rounded,
-                        title: 'Force Restart App',
-                        subtitle: 'Clear all sockets and restart the application cleanly.',
+                        icon: Icons.delete_sweep_rounded,
+                        title: 'Clear DropNet Folder',
+                        subtitle: FileUtils.isDropNetFolder(state.downloadDirectory)
+                            ? 'Delete all received files from the DropNet folder and its category subfolders.'
+                            : 'Only available when your save location is a folder named "DropNet".',
                         accentColor: Colors.teal,
-                        onTap: () => _showRestartConfirmationDialog(context),
+                        onTap: FileUtils.isDropNetFolder(state.downloadDirectory)
+                            ? () => _showClearDropNetFolderDialog(context)
+                            : null,
+                      ),
+                      const SizedBox(height: 14),
+                      const _SettingsDivider(),
+                      const SizedBox(height: 14),
+                      _PremiumActionTile(
+                        icon: Icons.cleaning_services_rounded,
+                        title: 'Clear App Cache',
+                        subtitle: 'Remove temporary files DropNet no longer needs. Never touches your received files.',
+                        accentColor: Colors.teal,
+                        onTap: () => _showClearAppCacheDialog(context),
                       ),
                     ],
                   ),
@@ -601,7 +614,137 @@ class _AdvancedSettingsScreenState extends ConsumerState<AdvancedSettingsScreen>
     );
   }
 
-  Future<void> _showRestartConfirmationDialog(BuildContext context) async {
+  Future<void> _showClearDropNetFolderDialog(BuildContext context) async {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
+    final confirm = await showDropNetDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(32),
+        ),
+        backgroundColor: colorScheme.surface,
+        elevation: 6,
+        titlePadding: const EdgeInsets.fromLTRB(24, 28, 24, 12),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 24),
+        actionsPadding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+        icon: Container(
+          width: 68,
+          height: 68,
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                colorScheme.errorContainer,
+                colorScheme.errorContainer.withValues(alpha: 0.5),
+              ],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            shape: BoxShape.circle,
+            boxShadow: [
+              BoxShadow(
+                color: colorScheme.error.withValues(alpha: 0.15),
+                blurRadius: 16,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Icon(
+            Icons.delete_sweep_rounded,
+            color: colorScheme.onErrorContainer,
+            size: 32,
+          ),
+        ),
+        title: Text(
+          'Clear DropNet Folder?',
+          style: theme.textTheme.headlineSmall?.copyWith(
+            fontWeight: FontWeight.w800,
+            color: colorScheme.onSurface,
+            letterSpacing: -0.5,
+          ),
+          textAlign: TextAlign.center,
+        ),
+        content: SizedBox(
+          width: 320,
+          child: Card(
+            elevation: 0,
+            color: colorScheme.surfaceContainerLow,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(24),
+              side: BorderSide(
+                color: colorScheme.outlineVariant.withValues(alpha: 0.25),
+              ),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Text(
+                'This permanently deletes every file in your DropNet folder and in its category subfolders (Documents, Image, Audio, Video, Programs, Code, Text, Compressed, Others). '
+                'Those subfolders are kept, but any other folder inside DropNet that the app did not create will be removed entirely. This cannot be undone.',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                  fontWeight: FontWeight.w500,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ),
+        ),
+        actions: [
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  style: OutlinedButton.styleFrom(
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                  ),
+                  child: const Text(
+                    'Cancel',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: FilledButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: colorScheme.error,
+                    foregroundColor: colorScheme.onError,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                  ),
+                  child: const Text(
+                    'Proceed',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) {
+      return;
+    }
+
+    final downloadDirectory = ref.read(appControllerProvider).downloadDirectory;
+    await FileUtils.clearDropNetFolder(downloadDirectory);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('DropNet folder cleared.')),
+    );
+  }
+
+  Future<void> _showClearAppCacheDialog(BuildContext context) async {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
 
@@ -638,13 +781,13 @@ class _AdvancedSettingsScreenState extends ConsumerState<AdvancedSettingsScreen>
             ],
           ),
           child: Icon(
-            Icons.restart_alt_rounded,
+            Icons.cleaning_services_rounded,
             color: colorScheme.onPrimaryContainer,
             size: 32,
           ),
         ),
         title: Text(
-          'Force Restart App?',
+          'Clear App Cache?',
           style: theme.textTheme.headlineSmall?.copyWith(
             fontWeight: FontWeight.w800,
             color: colorScheme.onSurface,
@@ -653,57 +796,28 @@ class _AdvancedSettingsScreenState extends ConsumerState<AdvancedSettingsScreen>
           textAlign: TextAlign.center,
         ),
         content: SizedBox(
-          width: 520,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Card(
-                elevation: 0,
-                color: colorScheme.surfaceContainerLow,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(24),
-                  side: BorderSide(
-                    color: colorScheme.outlineVariant.withValues(alpha: 0.25),
-                  ),
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'What does this do?',
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'This option cleanly terminates all active connection sockets, stops the local web share server, stops device discovery, and fully re-initializes the application from scratch.',
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          color: colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                      const Divider(height: 24, thickness: 0.5),
-                      Text(
-                        'When to use it?',
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Use this if devices are not being discovered after switching networks, or if transfer ports remain blocked. It resolves most transient networking glitches by forcing the OS to release all bound sockets.',
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          color: colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+          width: 320,
+          child: Card(
+            elevation: 0,
+            color: colorScheme.surfaceContainerLow,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(24),
+              side: BorderSide(
+                color: colorScheme.outlineVariant.withValues(alpha: 0.25),
               ),
-            ],
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Text(
+                'This removes temporary files DropNet created for sharing and web transfers that it no longer needs — '
+                'never anything in your DropNet folder or your received files. DropNet already clears these automatically from time to time; this does it right now.',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                  fontWeight: FontWeight.w500,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ),
           ),
         ),
         actions: [
@@ -735,7 +849,7 @@ class _AdvancedSettingsScreenState extends ConsumerState<AdvancedSettingsScreen>
                     padding: const EdgeInsets.symmetric(vertical: 16),
                   ),
                   child: const Text(
-                    'Restart',
+                    'Proceed',
                     style: TextStyle(fontWeight: FontWeight.bold),
                   ),
                 ),
@@ -746,22 +860,15 @@ class _AdvancedSettingsScreenState extends ConsumerState<AdvancedSettingsScreen>
       ),
     );
 
-    if (confirm == true) {
-      try {
-        await ref.read(appControllerProvider.notifier).shutdownNetworkServices();
-      } catch (_) {}
-
-      if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
-        await Process.start(
-          Platform.resolvedExecutable,
-          [],
-          mode: ProcessStartMode.detached,
-        );
-        exit(0);
-      } else {
-        await Restart.restartApp();
-      }
+    if (confirm != true) {
+      return;
     }
+
+    await ref.read(appControllerProvider.notifier).clearAppCacheNow();
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('App cache cleared.')),
+    );
   }
 
   Widget _buildConflictWrapper({required bool disabled, required Widget child}) {

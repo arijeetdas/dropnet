@@ -16,10 +16,10 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 2.5.0-beta.1+23
+version: 2.5.0+24
 
 environment:
-  sdk: ^3.10.8
+  sdk: '>=3.13.2 <4.0.0'
 
 # Dependencies specify other packages that your package needs in order to work.
 # To automatically upgrade your package dependencies to the latest versions
@@ -31,40 +31,41 @@ dependencies:
   flutter:
     sdk: flutter
   flutter_riverpod: ^2.6.1
-  go_router: ^16.2.1
-  bonsoir: ^6.0.1
-  network_info_plus: ^6.1.0
+  go_router: ^16.3.0
+  bonsoir: ^6.1.0
+  network_info_plus: ^6.1.4
   device_info_plus: ^11.5.0
   package_info_plus: ^8.3.1
-  file_picker: ^10.3.3
-  desktop_drop: ^0.7.0
-  path_provider: ^2.1.5
-  shared_preferences: ^2.5.3
+  file_picker: ^10.3.10
+  desktop_drop: ^0.7.1
+  path_provider: ^2.1.6
+  shared_preferences: ^2.5.5
   basic_utils: ^5.7.0
-  permission_handler: ^12.0.1
+  permission_handler: ^12.0.3
   crypto: ^3.0.7
   shelf: ^1.4.2
   shelf_router: ^1.1.4
   qr_flutter: ^4.1.0
-  uuid: ^4.5.1
+  uuid: ^4.6.0
   encrypt: ^5.0.3
   path: ^1.9.1
   url_launcher: ^6.3.2
   open_filex: ^4.7.0
-  dynamic_color: ^1.7.0
-  cupertino_icons: ^1.0.8
+  dynamic_color: ^1.9.0
+  cupertino_icons: ^1.0.9
   flutter_dynamic_icon_plus:
     path: packages/flutter_dynamic_icon_plus
   loading_indicator_m3e: ^0.1.1
   flutter_svg: ^2.0.7
-  mobile_scanner: ^7.2.0
+  mobile_scanner: ^7.4.2
   share_plus: ^12.0.2
-  restart_app: ^1.8.3
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_launcher_icons: ^0.14.3
+  path_provider_platform_interface: ^2.1.2
+  plugin_platform_interface: ^2.1.8
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is
@@ -72,6 +73,11 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
+
+# Force bonsoir_darwin to 6.0.1 — 6.1.0 has a Swift compiler error:
+# missing `import Foundation` in BonsoirService.swift (uses JSONSerialization without it)
+dependency_overrides:
+  bonsoir_darwin: 6.0.1
 
 flutter_launcher_icons:
   image_path: assets/icon/app_icon.png

@@ -23,6 +23,8 @@ import '../platform/android_storage_service.dart';
 import '../networking/discovery_service.dart';
 import '../networking/temporary_link_share_service.dart';
 import '../networking/tcp_transfer_service.dart';
+import '../utils/cache_cleanup_service.dart';
+import '../utils/file_utils.dart';
 import '../utils/transfer_visuals.dart';
 import '../networking/web_server_service.dart';
 
@@ -43,6 +45,26 @@ bool isTransferPreviewEligible(TransferModel transfer) {
 
   return TransferVisuals.isTextPreviewType(localPath) ||
       TransferVisuals.supportsReceivedPreview(localPath);
+}
+
+/// Android-only: a received `.apk` gets its own dedicated preview screen
+/// (package/version/size details, install eligibility), but only when it's
+/// the sole file in its transfer session — a batch of files never triggers
+/// it, matching [isTransferPreviewEligible]'s single-file rule.
+bool isApkPreviewEligible(TransferModel transfer) {
+  if (!Platform.isAndroid) {
+    return false;
+  }
+  if (transfer.direction != TransferDirection.received ||
+      transfer.status != TransferStatus.completed) {
+    return false;
+  }
+  final sessionFileCount = transfer.sessionFileCount ?? 1;
+  if (sessionFileCount != 1) {
+    return false;
+  }
+  final localPath = transfer.localPath?.trim() ?? '';
+  return localPath.toLowerCase().endsWith('.apk');
 }
 
 String trustedPeerKey(String deviceId, String tlsCertificateSha256) {
@@ -110,6 +132,7 @@ class AppState {
     required this.pendingSharedTexts,
     required this.pendingTransferPreviewTexts,
     required this.pendingTransferPreviewFiles,
+    required this.pendingApkPreviewFiles,
     required this.pendingSystemMessages,
     required this.trustedPeers,
     required this.favoritePeers,
@@ -133,6 +156,8 @@ class AppState {
     required this.pendingManualDisconnectNotices,
     required this.privateNetworkProfiles,
     required this.activePrivateProfileId,
+    required this.categorizeReceivedFiles,
+    required this.rememberCategorizeFilesChoice,
   });
 
   final List<DeviceModel> devices;
@@ -170,6 +195,7 @@ class AppState {
   final List<String> pendingSharedTexts;
   final List<String> pendingTransferPreviewTexts;
   final List<TransferModel> pendingTransferPreviewFiles;
+  final List<TransferModel> pendingApkPreviewFiles;
   final List<String> pendingSystemMessages;
   final List<TrustedPeer> trustedPeers;
   final List<FavoritePeer> favoritePeers;
@@ -195,6 +221,15 @@ class AppState {
   /// Profile-based private network configuration.
   final List<PrivateNetworkProfile> privateNetworkProfiles;
   final String? activePrivateProfileId;
+
+  /// Whether incoming files should be sorted into category subfolders
+  /// (Documents, Image, Audio, Video, Programs, Code, Text, Compressed,
+  /// Others) inside the current [downloadDirectory].
+  final bool categorizeReceivedFiles;
+
+  /// Whether the user's categorization choice should be applied silently
+  /// (without prompting) the next time the save location changes.
+  final bool rememberCategorizeFilesChoice;
 
   static AppState initial() => AppState(
     devices: const [],
@@ -229,6 +264,7 @@ class AppState {
     pendingSharedTexts: const [],
     pendingTransferPreviewTexts: const [],
     pendingTransferPreviewFiles: const [],
+    pendingApkPreviewFiles: const [],
     pendingSystemMessages: const [],
     trustedPeers: const [],
     favoritePeers: const [],
@@ -252,6 +288,8 @@ class AppState {
     pendingManualDisconnectNotices: const [],
     privateNetworkProfiles: const [],
     activePrivateProfileId: null,
+    categorizeReceivedFiles: true,
+    rememberCategorizeFilesChoice: false,
   );
 
   AppState copyWith({
@@ -287,6 +325,7 @@ class AppState {
     List<String>? pendingSharedTexts,
     List<String>? pendingTransferPreviewTexts,
     List<TransferModel>? pendingTransferPreviewFiles,
+    List<TransferModel>? pendingApkPreviewFiles,
     List<String>? pendingSystemMessages,
     List<TrustedPeer>? trustedPeers,
     List<FavoritePeer>? favoritePeers,
@@ -310,6 +349,8 @@ class AppState {
     List<RemoteManualDisconnectNotice>? pendingManualDisconnectNotices,
     List<PrivateNetworkProfile>? privateNetworkProfiles,
     Object? activePrivateProfileId = _sentinel,
+    bool? categorizeReceivedFiles,
+    bool? rememberCategorizeFilesChoice,
   }) {
     return AppState(
       devices: devices ?? this.devices,
@@ -355,6 +396,8 @@ class AppState {
           pendingTransferPreviewTexts ?? this.pendingTransferPreviewTexts,
       pendingTransferPreviewFiles:
           pendingTransferPreviewFiles ?? this.pendingTransferPreviewFiles,
+      pendingApkPreviewFiles:
+          pendingApkPreviewFiles ?? this.pendingApkPreviewFiles,
       pendingSystemMessages:
           pendingSystemMessages ?? this.pendingSystemMessages,
       trustedPeers: trustedPeers ?? this.trustedPeers,
@@ -395,6 +438,10 @@ class AppState {
       activePrivateProfileId: identical(activePrivateProfileId, _sentinel)
           ? this.activePrivateProfileId
           : activePrivateProfileId as String?,
+      categorizeReceivedFiles:
+          categorizeReceivedFiles ?? this.categorizeReceivedFiles,
+      rememberCategorizeFilesChoice:
+          rememberCategorizeFilesChoice ?? this.rememberCategorizeFilesChoice,
     );
   }
 
@@ -478,19 +525,13 @@ final appControllerProvider = StateNotifierProvider<AppController, AppState>((
 
 class AppController extends StateNotifier<AppState> {
   AppController({
-    required DiscoveryService discovery,
-    required TcpTransferService transfer,
-    required WebServerService web,
-    required TemporaryLinkShareService tempShare,
-    required ShareIntentService shareIntent,
-    required MediaStoreService mediaStore,
-  }) : _discovery = discovery,
-       _transfer = transfer,
-       _web = web,
-       _tempShare = tempShare,
-       _shareIntent = shareIntent,
-       _mediaStore = mediaStore,
-       super(AppState.initial());
+    required this._discovery,
+    required this._transfer,
+    required this._web,
+    required this._tempShare,
+    required this._shareIntent,
+    required this._mediaStore,
+  }) : super(AppState.initial());
 
   final DiscoveryService _discovery;
   final TcpTransferService _transfer;
@@ -500,6 +541,8 @@ class AppController extends StateNotifier<AppState> {
   final MediaStoreService _mediaStore;
   final PrivateProfileManager _profileManager = PrivateProfileManager();
   SharedPreferences? _prefs;
+  bool _updatingNetworkServices = false;
+  bool _networkServicesUpdatePending = false;
   static const _themeModeKey = 'settings.themeMode';
   static const _themeSeedKey = 'settings.themeSeed';
   static const _useSystemAccentKey = 'settings.useSystemAccent';
@@ -507,6 +550,9 @@ class AppController extends StateNotifier<AppState> {
   static const _customDeviceIconKey = 'settings.customDeviceIcon';
   static const _downloadDirectoryKey = 'settings.downloadDirectory';
   static const _saveMediaToGalleryKey = 'settings.saveMediaToGallery';
+  static const _categorizeReceivedFilesKey = 'receive.categorizeReceivedFiles';
+  static const _rememberCategorizeFilesChoiceKey =
+      'receive.rememberCategorizeFilesChoice';
   static const _trustedPeersKey = 'security.trustedPeers';
   static const _favoritePeersKey = 'peers.favoritePeers';
   static const _historyKey = 'history.entries';
@@ -580,6 +626,10 @@ class AppController extends StateNotifier<AppState> {
         _prefs!.getInt(_themeSeedKey) ?? Colors.indigo.toARGB32();
     final restoredSaveMediaToGallery =
         _prefs!.getBool(_saveMediaToGalleryKey) ?? true;
+    final restoredCategorizeReceivedFiles =
+        _prefs!.getBool(_categorizeReceivedFilesKey) ?? true;
+    final restoredRememberCategorizeFilesChoice =
+        _prefs!.getBool(_rememberCategorizeFilesChoiceKey) ?? false;
     final restoredTrustedPeers = _restoreTrustedPeers(
       _prefs!.getStringList(_trustedPeersKey) ?? const <String>[],
     );
@@ -627,12 +677,19 @@ class AppController extends StateNotifier<AppState> {
     });
 
     final downloadDir = await downloadDirFuture;
+    if (restoredCategorizeReceivedFiles) {
+      unawaited(FileUtils.ensureCategoryFoldersExist(downloadDir));
+    }
     final installedApkType = await Future<String>(() async {
       if (kIsWeb || !Platform.isAndroid) return '';
       return AndroidStorageService().getInstalledApkType();
     });
     await shareIntentFuture;
     final initialShared = await _shareIntent.consumePendingSharedPayload();
+    // Only safe now, after any share-intent file has been claimed above —
+    // this wipes the OS temp/cache directory, which on Android is the same
+    // directory a cold "share to DropNet" launch just staged a file into.
+    unawaited(CacheCleanupService.sweepColdStart(excludePaths: initialShared.filePaths));
 
     await _discovery.updatePairingModeEnabled(restoredRequirePairingCode);
     if (!restoredUseDefaultDeviceIcon) {
@@ -676,7 +733,11 @@ class AppController extends StateNotifier<AppState> {
     try {
       await Future.wait<void>([
         _discovery.start(),
-        _transfer.startReceiver(saveDirectory: downloadDir, port: listeningPort),
+        _transfer.startReceiver(
+          saveDirectory: downloadDir,
+          port: listeningPort,
+          categorizeFiles: restoredCategorizeReceivedFiles,
+        ),
       ]);
     } catch (e) {
       if (kDebugMode) {
@@ -705,6 +766,8 @@ class AppController extends StateNotifier<AppState> {
       localIps: localIps,
       history: _persistedHistory,
       saveMediaToGallery: restoredSaveMediaToGallery,
+      categorizeReceivedFiles: restoredCategorizeReceivedFiles,
+      rememberCategorizeFilesChoice: restoredRememberCategorizeFilesChoice,
       pendingSharedFilePaths: initialShared.filePaths,
       pendingSharedTexts: initialShared.texts,
       trustedPeers: restoredTrustedPeers,
@@ -758,6 +821,19 @@ class AppController extends StateNotifier<AppState> {
         ); // Yield to allow UI to render
         _setupStreamSubscribers();
         unawaited(_updateTransferIdentity());
+      }),
+    );
+
+    // Fallback for networks that block UDP broadcast/mDNS between clients
+    // (e.g. some ISP routers' "client isolation") but still route normal
+    // unicast TCP: if broadcast/mDNS discovery hasn't found anyone after a
+    // few announce cycles, try a one-time subnet probe in the background.
+    unawaited(
+      Future<void>(() async {
+        await Future<void>.delayed(const Duration(seconds: 6));
+        if (state.devices.isEmpty) {
+          await scanLocalSubnetForDevices();
+        }
       }),
     );
   }
@@ -1095,6 +1171,69 @@ class AppController extends StateNotifier<AppState> {
 
   Future<DeviceModel> checkDirectDevice(String ip, int port) async {
     return _transfer.checkDirectDevice(ip, port);
+  }
+
+  /// Fallback discovery for networks that block UDP broadcast/mDNS
+  /// multicast between clients (e.g. some ISP routers' "client isolation")
+  /// but still route ordinary unicast TCP between devices — the same reason
+  /// Web Mode and Manual Connect already work on such networks. Probes every
+  /// host address on the local /24 for DropNet's default port and merges any
+  /// that respond into the visible device list, exactly like a manually
+  /// added device. A no-op while Full Private Mode is on, since that mode's
+  /// entire point is to not be discoverable by anything standard.
+  Future<void> scanLocalSubnetForDevices() async {
+    if (state.fullPrivateModeEnabled) {
+      return;
+    }
+    try {
+      final localIp = await _discovery.getLocalIp();
+      final parts = localIp.split('.');
+      if (parts.length != 4) {
+        return;
+      }
+      final selfLastOctet = int.tryParse(parts[3]);
+      final prefix = '${parts[0]}.${parts[1]}.${parts[2]}';
+
+      const perProbeTimeout = Duration(milliseconds: 500);
+      const batchSize = 32;
+      final candidates = [
+        for (var i = 1; i <= 254; i++)
+          if (i != selfLastOctet) '$prefix.$i',
+      ];
+
+      for (var i = 0; i < candidates.length; i += batchSize) {
+        if (state.fullPrivateModeEnabled) {
+          return;
+        }
+        final batch = candidates.skip(i).take(batchSize);
+        final results = await Future.wait(
+          batch.map((ip) async {
+            try {
+              return await _transfer.checkDirectDevice(
+                ip,
+                TcpTransferService.defaultPort,
+                connectTimeout: perProbeTimeout,
+                responseTimeout: perProbeTimeout,
+              );
+            } catch (_) {
+              return null;
+            }
+          }),
+        );
+        for (final device in results) {
+          if (device == null || device.deviceId == _discovery.deviceId) {
+            continue;
+          }
+          final alreadyKnown = state.devices.any(
+            (d) => d.deviceId == device.deviceId || d.ipAddress == device.ipAddress,
+          );
+          if (alreadyKnown) {
+            continue;
+          }
+          _discovery.addManualDevice(device);
+        }
+      }
+    } catch (_) {}
   }
 
   int getActiveListeningPort() {
@@ -1520,7 +1659,16 @@ class AppController extends StateNotifier<AppState> {
     return true;
   }
 
-  Future<void> refreshNearbyDevices() => _discovery.refreshNow();
+  Future<void> refreshNearbyDevices() async {
+    await _discovery.refreshNow();
+    // The normal broadcast/mDNS refresh is fast; only fall back to the
+    // slower subnet probe if it genuinely found nobody, e.g. on a network
+    // that blocks broadcast/multicast between clients but still routes
+    // ordinary unicast (see scanLocalSubnetForDevices).
+    if (state.devices.isEmpty) {
+      await scanLocalSubnetForDevices();
+    }
+  }
 
   Future<int> stageFilesForWebPeers({
     required List<String> filePaths,
@@ -1705,6 +1853,7 @@ class AppController extends StateNotifier<AppState> {
       hostDeviceName: _taggedLocalName(),
       port: effectivePort,
       pin: pin,
+      categorizeFiles: state.categorizeReceivedFiles,
     );
     state = state.copyWith(webState: _web.currentState);
   }
@@ -1811,17 +1960,63 @@ class AppController extends StateNotifier<AppState> {
     unawaited(_updateTransferIdentity());
   }
 
-  Future<void> setDownloadDirectory(String path) async {
+  Future<void> setDownloadDirectory(
+    String path, {
+    bool? categorizeReceivedFiles,
+    bool? rememberCategorizeChoice,
+  }) async {
     final target = Directory(path);
     await target.create(recursive: true);
-    _transfer.updateSaveDirectory(target.path);
-    state = state.copyWith(downloadDirectory: target.path);
+    final categorize = categorizeReceivedFiles ?? state.categorizeReceivedFiles;
+    if (categorize) {
+      await FileUtils.ensureCategoryFoldersExist(target.path);
+    }
+    _transfer.updateSaveDirectory(target.path, categorizeFiles: categorize);
+    state = state.copyWith(
+      downloadDirectory: target.path,
+      categorizeReceivedFiles: categorize,
+      rememberCategorizeFilesChoice:
+          rememberCategorizeChoice ?? state.rememberCategorizeFilesChoice,
+    );
     await _saveDownloadDirectory(target.path);
+    unawaited(_saveCategorizeReceivedFiles(categorize));
+    if (rememberCategorizeChoice != null) {
+      unawaited(_saveRememberCategorizeFilesChoice(rememberCategorizeChoice));
+    }
   }
 
   void setSaveMediaToGallery(bool value) {
     state = state.copyWith(saveMediaToGallery: value);
     unawaited(_saveSaveMediaToGallery(value));
+  }
+
+  /// Lets the user change their folder-categorization preference at any
+  /// time, independent of the one-time prompt shown when picking a new save
+  /// location (see [setDownloadDirectory]).
+  Future<void> setCategorizeReceivedFiles(bool value) async {
+    if (value && state.downloadDirectory.isNotEmpty) {
+      await FileUtils.ensureCategoryFoldersExist(state.downloadDirectory);
+    }
+    _transfer.updateSaveDirectory(state.downloadDirectory, categorizeFiles: value);
+    state = state.copyWith(categorizeReceivedFiles: value);
+    unawaited(_saveCategorizeReceivedFiles(value));
+  }
+
+  /// Rate-limited background sweep of self-cleaning temp/staging locations
+  /// (safe to call on every app resume; internally a no-op unless enough
+  /// time has passed since the last run). Never touches received files.
+  Future<void> runAutomaticCacheCleanupIfDue() async {
+    await CacheCleanupService.sweepOnResumeIfDue(
+      dropNetRootDirectory: state.downloadDirectory,
+    );
+  }
+
+  /// User-triggered "Clear App Cache" action from Advanced Settings: an
+  /// immediate, unconditional sweep since the user explicitly confirmed it.
+  Future<void> clearAppCacheNow() async {
+    await CacheCleanupService.clearAllNow(
+      dropNetRootDirectory: state.downloadDirectory,
+    );
   }
 
   void setRequirePairingCodeForDirectTransfers(bool value) {
@@ -1953,6 +2148,19 @@ class AppController extends StateNotifier<AppState> {
         ? const <TransferModel>[]
         : pending.sublist(1);
     state = state.copyWith(pendingTransferPreviewFiles: remaining);
+    return next;
+  }
+
+  TransferModel? consumeNextPendingApkPreviewFile() {
+    final pending = state.pendingApkPreviewFiles;
+    if (pending.isEmpty) {
+      return null;
+    }
+    final next = pending.first;
+    final remaining = pending.length == 1
+        ? const <TransferModel>[]
+        : pending.sublist(1);
+    state = state.copyWith(pendingApkPreviewFiles: remaining);
     return next;
   }
 
@@ -2127,40 +2335,57 @@ class AppController extends StateNotifier<AppState> {
   }
 
   Future<void> _updateNetworkServices() async {
+    // Guard against overlapping stop/start cycles: rapidly toggling settings
+    // (e.g. Full Private Mode) can otherwise race two concurrent teardown +
+    // recreate cycles against the same native discovery objects, which is
+    // especially unsafe on iOS/macOS's Bonjour implementation.
+    if (_updatingNetworkServices) {
+      _networkServicesUpdatePending = true;
+      return;
+    }
+    _updatingNetworkServices = true;
     try {
-      await _discovery.stop();
-      await _transfer.stopReceiver();
+      do {
+        _networkServicesUpdatePending = false;
+        try {
+          await _discovery.stop().timeout(const Duration(seconds: 5));
+          await _transfer.stopReceiver().timeout(const Duration(seconds: 5));
 
-      // When Full Private Mode is active, derive ports from the active profile.
-      final activeProfile = _profileManager.activeProfile;
-      final listeningPort = state.fullPrivateModeEnabled
-          ? (activeProfile?.listeningPort ?? state.privateListeningPort)
-          : state.customListeningPort;
+          // When Full Private Mode is active, derive ports from the active profile.
+          final activeProfile = _profileManager.activeProfile;
+          final listeningPort = state.fullPrivateModeEnabled
+              ? (activeProfile?.listeningPort ?? state.privateListeningPort)
+              : state.customListeningPort;
 
-      final discoveryPort = state.fullPrivateModeEnabled
-          ? (activeProfile?.discoveryPort ?? state.privateDiscoveryPort)
-          : 45454;
+          final discoveryPort = state.fullPrivateModeEnabled
+              ? (activeProfile?.discoveryPort ?? state.privateDiscoveryPort)
+              : 45454;
 
-      final broadcastingEnabled = !state.semiPrivateModeEnabled;
+          final broadcastingEnabled = !state.semiPrivateModeEnabled;
 
-      _discovery.configure(
-        discoveryPort: discoveryPort,
-        listeningPort: listeningPort,
-        broadcastingEnabled: broadcastingEnabled,
-        fullPrivateMode: state.fullPrivateModeEnabled,
-      );
+          _discovery.configure(
+            discoveryPort: discoveryPort,
+            listeningPort: listeningPort,
+            broadcastingEnabled: broadcastingEnabled,
+            fullPrivateMode: state.fullPrivateModeEnabled,
+          );
 
-      await Future.wait<void>([
-        _discovery.start(),
-        _transfer.startReceiver(
-          saveDirectory: state.downloadDirectory,
-          port: listeningPort,
-        ),
-      ]);
-    } catch (e) {
-      if (kDebugMode) {
-        print('Error updating network services: $e');
-      }
+          await Future.wait<void>([
+            _discovery.start(),
+            _transfer.startReceiver(
+              saveDirectory: state.downloadDirectory,
+              port: listeningPort,
+              categorizeFiles: state.categorizeReceivedFiles,
+            ),
+          ]).timeout(const Duration(seconds: 10));
+        } catch (e) {
+          if (kDebugMode) {
+            print('Error updating network services: $e');
+          }
+        }
+      } while (_networkServicesUpdatePending);
+    } finally {
+      _updatingNetworkServices = false;
     }
   }
 
@@ -2358,6 +2583,16 @@ class AppController extends StateNotifier<AppState> {
   }
 
   Future<void> _enqueueTransferPreviewIfEligible(TransferModel transfer) async {
+    if (isApkPreviewEligible(transfer)) {
+      final apkPath = transfer.localPath!.trim();
+      if (await File(apkPath).exists()) {
+        final queued = List<TransferModel>.from(state.pendingApkPreviewFiles)
+          ..add(transfer);
+        state = state.copyWith(pendingApkPreviewFiles: queued);
+      }
+      return;
+    }
+
     if (!isTransferPreviewEligible(transfer)) {
       return;
     }
@@ -2720,6 +2955,16 @@ class AppController extends StateNotifier<AppState> {
   Future<void> _saveSaveMediaToGallery(bool value) async {
     _prefs ??= await SharedPreferences.getInstance();
     await _prefs!.setBool(_saveMediaToGalleryKey, value);
+  }
+
+  Future<void> _saveCategorizeReceivedFiles(bool value) async {
+    _prefs ??= await SharedPreferences.getInstance();
+    await _prefs!.setBool(_categorizeReceivedFilesKey, value);
+  }
+
+  Future<void> _saveRememberCategorizeFilesChoice(bool value) async {
+    _prefs ??= await SharedPreferences.getInstance();
+    await _prefs!.setBool(_rememberCategorizeFilesChoiceKey, value);
   }
 
   Future<void> _saveRequirePairingCode(bool value) async {

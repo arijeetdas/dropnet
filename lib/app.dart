@@ -10,6 +10,7 @@ import 'package:dynamic_color/dynamic_color.dart';
 import 'core/state/app_state.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'core/platform/app_shortcut_service.dart';
 import 'core/utils/file_utils.dart';
 import 'core/utils/dialog_utils.dart';
 import 'core/networking/web_server_service.dart';
@@ -18,6 +19,7 @@ import 'features/analytics/analytics_screen.dart';
 import 'features/history/history_screen.dart';
 import 'features/home/home_screen.dart';
 import 'features/receive/receive_screen.dart';
+import 'features/receive/apk_preview_screen.dart';
 import 'features/receive/received_file_screen.dart';
 import 'features/receive/shared_text_screen.dart';
 import 'features/receive/incoming_requests_screen.dart';
@@ -142,6 +144,20 @@ final _router = GoRouter(
         return ReceivedFileScreen(transfer: transfer);
       },
     ),
+    GoRoute(
+      path: '/apk-preview',
+      builder: (context, state) {
+        final transfer = state.extra is TransferModel
+            ? state.extra as TransferModel
+            : null;
+        if (transfer == null) {
+          return const Scaffold(
+            body: Center(child: Text('No received app to preview.')),
+          );
+        }
+        return ApkPreviewScreen(transfer: transfer);
+      },
+    ),
   ],
 );
 
@@ -187,18 +203,37 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
   bool _transferSessionOpen = false;
   bool _sharedTextOpening = false;
   bool _receivedFilePreviewOpening = false;
+  bool _apkPreviewOpening = false;
   bool _globalDragActive = false;
   bool _startupRouteReady = false;
   Timer? _permissionPollTimer;
+  final AppShortcutService _appShortcuts = AppShortcutService();
+  StreamSubscription<AppShortcutAction>? _shortcutSub;
+
+  bool get _supportsAppShortcuts =>
+      !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.iOS);
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(_lifecycleObserver);
+    if (_supportsAppShortcuts) {
+      unawaited(_appShortcuts.initialize());
+      _shortcutSub = _appShortcuts.shortcutStream.listen(_handleAppShortcut);
+    }
     Future<void>(() async {
       await _routeForStartup();
       if (mounted) {
         setState(() => _startupRouteReady = true);
+      }
+
+      if (_supportsAppShortcuts) {
+        final pending = await _appShortcuts.consumePendingShortcut();
+        if (pending != null) {
+          _handleAppShortcut(pending);
+        }
       }
 
       await ref.read(appControllerProvider.notifier).bootstrap();
@@ -234,7 +269,12 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
               .read(appControllerProvider.notifier)
               .shutdownNetworkServices();
         },
-        onResume: _checkAndroidPermissionAndRedirect,
+        onResume: () {
+          _checkAndroidPermissionAndRedirect();
+          unawaited(
+            ref.read(appControllerProvider.notifier).runAutomaticCacheCleanupIfDue(),
+          );
+        },
       );
 
   Future<void> _checkAndroidPermissionAndRedirect() async {
@@ -255,10 +295,22 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
     }
   }
 
+  void _handleAppShortcut(AppShortcutAction action) {
+    if (!mounted) return;
+    switch (action) {
+      case AppShortcutAction.settings:
+        _router.push('/settings');
+      case AppShortcutAction.history:
+        _router.push('/history');
+    }
+  }
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(_lifecycleObserver);
     _permissionPollTimer?.cancel();
+    unawaited(_shortcutSub?.cancel());
+    unawaited(_appShortcuts.dispose());
     super.dispose();
   }
 
@@ -333,6 +385,25 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
             }
           } finally {
             _receivedFilePreviewOpening = false;
+          }
+        });
+      }
+
+      if (!_apkPreviewOpening && next.pendingApkPreviewFiles.isNotEmpty) {
+        _apkPreviewOpening = true;
+        Future<void>(() async {
+          try {
+            while (mounted) {
+              final transfer = ref
+                  .read(appControllerProvider.notifier)
+                  .consumeNextPendingApkPreviewFile();
+              if (transfer == null) {
+                break;
+              }
+              await _router.push('/apk-preview', extra: transfer);
+            }
+          } finally {
+            _apkPreviewOpening = false;
           }
         });
       }

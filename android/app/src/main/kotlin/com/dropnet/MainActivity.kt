@@ -40,14 +40,17 @@ class MainActivity : FlutterFragmentActivity() {
 	private val mediaStoreChannelName = "dropnet/media_store"
 	private val androidStorageChannelName = "dropnet/android_storage"
 	private val androidSafChannelName = "dropnet/android_saf"
+	private val shortcutsChannelName = "dropnet/app_shortcuts"
 
 	private var appsChannel: MethodChannel? = null
 	private var shareChannel: MethodChannel? = null
 	private var mediaStoreChannel: MethodChannel? = null
 	private var androidStorageChannel: MethodChannel? = null
 	private var androidSafChannel: MethodChannel? = null
+	private var shortcutsChannel: MethodChannel? = null
 	private val pendingSharedFilePaths = mutableListOf<String>()
 	private val pendingSharedTexts = mutableListOf<String>()
+	private var pendingShortcut: String? = null
 	private var pendingSafPickResult: MethodChannel.Result? = null
 	private var pendingFilePickResult: MethodChannel.Result? = null
 	private lateinit var openDocumentTreeLauncher: ActivityResultLauncher<Intent>
@@ -123,6 +126,7 @@ class MainActivity : FlutterFragmentActivity() {
 		super.onNewIntent(intent)
 		setIntent(intent)
 		handleShareIntent(intent, emitToFlutter = true)
+		handleShortcutIntent(intent, emitToFlutter = true)
 	}
 
 	override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -151,6 +155,26 @@ class MainActivity : FlutterFragmentActivity() {
 								}
 							}
 						}
+					}
+
+					"inspectApk" -> {
+						val path = call.argument<String>("path")?.trim().orEmpty()
+						if (path.isEmpty()) {
+							result.success(null)
+						} else {
+							appsExecutor.execute {
+								val info = runCatching { inspectApkFile(path) }.getOrNull()
+								mainThreadHandler.post {
+									result.success(info)
+								}
+							}
+						}
+					}
+
+					"installApk" -> {
+						val path = call.argument<String>("path")?.trim().orEmpty()
+						val installed = if (path.isEmpty()) false else runCatching { installApkFile(path) }.getOrDefault(false)
+						result.success(installed)
 					}
 
 					else -> result.notImplemented()
@@ -428,7 +452,22 @@ class MainActivity : FlutterFragmentActivity() {
 				}
 			}
 
+		val shortcutsMethodChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, shortcutsChannelName)
+		shortcutsChannel = shortcutsMethodChannel
+		shortcutsMethodChannel
+			.setMethodCallHandler { call, result ->
+				when (call.method) {
+					"consumePendingShortcut" -> {
+						val shortcut = pendingShortcut
+						pendingShortcut = null
+						result.success(shortcut)
+					}
+					else -> result.notImplemented()
+				}
+			}
+
 		handleShareIntent(intent, emitToFlutter = false)
+		handleShortcutIntent(intent, emitToFlutter = false)
 	}
 
 	override fun onDestroy() {
@@ -606,6 +645,19 @@ class MainActivity : FlutterFragmentActivity() {
 		}
 
 		return null
+	}
+
+	private fun handleShortcutIntent(intent: Intent?, emitToFlutter: Boolean) {
+		if (intent == null) {
+			return
+		}
+		val shortcut = intent.getStringExtra("shortcut") ?: return
+		intent.removeExtra("shortcut")
+		if (emitToFlutter) {
+			shortcutsChannel?.invokeMethod("shortcutTapped", shortcut)
+		} else {
+			pendingShortcut = shortcut
+		}
 	}
 
 	private fun handleShareIntent(intent: Intent?, emitToFlutter: Boolean) {
@@ -862,6 +914,111 @@ class MainActivity : FlutterFragmentActivity() {
 
 		output.sortBy { (it["name"] as? String ?: "").lowercase() }
 		return output
+	}
+
+	private fun inspectApkFile(path: String): Map<String, Any?>? {
+		val apkFile = File(path)
+		if (!apkFile.exists()) {
+			return null
+		}
+
+		val packageManager = applicationContext.packageManager
+		val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+			PackageManager.PackageInfoFlags.of(PackageManager.GET_META_DATA.toLong())
+		} else null
+		@Suppress("DEPRECATION")
+		val packageInfo = if (flags != null) {
+			packageManager.getPackageArchiveInfo(path, flags)
+		} else {
+			packageManager.getPackageArchiveInfo(path, PackageManager.GET_META_DATA)
+		} ?: return null
+
+		val appInfo = packageInfo.applicationInfo ?: return null
+		// getPackageArchiveInfo doesn't populate sourceDir/publicSourceDir, so
+		// the icon/label loaders below would otherwise fail or return a
+		// generic placeholder.
+		appInfo.sourceDir = path
+		appInfo.publicSourceDir = path
+
+		val appName = runCatching {
+			packageManager.getApplicationLabel(appInfo)?.toString()?.trim()
+		}.getOrNull()?.takeIf { it.isNotEmpty() } ?: packageInfo.packageName
+
+		val iconBytes = runCatching {
+			drawableToPngBytes(packageManager.getApplicationIcon(appInfo))
+		}.getOrNull()
+
+		val versionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+			packageInfo.longVersionCode
+		} else {
+			@Suppress("DEPRECATION")
+			packageInfo.versionCode.toLong()
+		}
+
+		val minSdkVersion = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+			appInfo.minSdkVersion
+		} else {
+			-1
+		}
+
+		val installed = runCatching { packageManager.getPackageInfo(packageInfo.packageName, 0) }.getOrNull()
+		val installedVersionCode = installed?.let {
+			if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+				it.longVersionCode
+			} else {
+				@Suppress("DEPRECATION")
+				it.versionCode.toLong()
+			}
+		}
+
+		return mapOf(
+			"packageName" to packageInfo.packageName,
+			"appName" to appName,
+			"versionName" to (packageInfo.versionName ?: ""),
+			"versionCode" to versionCode,
+			"apkSize" to apkFile.length(),
+			"minSdkVersion" to minSdkVersion,
+			"deviceSdkVersion" to Build.VERSION.SDK_INT,
+			"iconBytes" to iconBytes,
+			"isInstalled" to (installed != null),
+			"installedVersionName" to installed?.versionName,
+			"installedVersionCode" to installedVersionCode,
+			"isOwnPackage" to (packageInfo.packageName == applicationContext.packageName),
+		)
+	}
+
+	private fun installApkFile(path: String): Boolean {
+		val source = File(path)
+		if (!source.exists() || !source.isFile) {
+			return false
+		}
+
+		val authority = "${applicationContext.packageName}.fileprovider"
+		val contentUri = runCatching {
+			FileProvider.getUriForFile(applicationContext, authority, source)
+		}.getOrNull() ?: return false
+
+		val intent = Intent(Intent.ACTION_VIEW).apply {
+			setDataAndType(contentUri, "application/vnd.android.package-archive")
+			addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+			addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+		}
+
+		val resolved = packageManager.queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY)
+		if (resolved.isEmpty()) {
+			return false
+		}
+		for (info in resolved) {
+			val packageName = info.activityInfo?.packageName ?: continue
+			runCatching {
+				grantUriPermission(packageName, contentUri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+			}
+		}
+
+		return runCatching {
+			startActivity(intent)
+			true
+		}.getOrDefault(false)
 	}
 
 	private fun drawableToPngBytes(drawable: Drawable): ByteArray {

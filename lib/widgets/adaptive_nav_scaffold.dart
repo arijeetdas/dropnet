@@ -355,6 +355,10 @@ class AdaptiveNavScaffold extends ConsumerWidget {
     final colorScheme = theme.colorScheme;
     final name = state.localDeviceName.trim().isEmpty ? 'DropNet Device' : state.localDeviceName;
     final manufacturer = state.localDeviceManufacturer.trim();
+    // No meaningful manufacturer concept on iOS/iPadOS (Apple only) or
+    // Windows (no equivalent field) — keep it out of this popup there too.
+    final hideManufacturerTag =
+        !kIsWeb && (defaultTargetPlatform == TargetPlatform.iOS || defaultTargetPlatform == TargetPlatform.windows);
 
     String activeIconAsset = 'assets/icon/app_icon.png';
     if (!kIsWeb && Platform.isAndroid) {
@@ -474,7 +478,7 @@ class AdaptiveNavScaffold extends ConsumerWidget {
                                   label: 'Device Name',
                                   value: name,
                                 ),
-                                if (manufacturer.isNotEmpty) ...[
+                                if (manufacturer.isNotEmpty && !hideManufacturerTag) ...[
                                   const Divider(height: 24, thickness: 0.5),
                                   _buildInfoRow(
                                     context,

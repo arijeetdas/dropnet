@@ -1,0 +1,254 @@
+name: Release Builds
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.extract.outputs.version }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Extract Version
+        id: extract
+        run: |
+          VERSION=$(grep '^version:' pubspec.yaml | sed 's/version: //' | cut -d '+' -f 1)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Detected version: $VERSION"
+
+  build-android:
+    needs: version
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Get Dependencies
+        run: flutter pub get
+
+      - name: Build Universal APK
+        run: flutter build apk --release
+
+      - name: Build Split-per-ABI APKs
+        run: flutter build apk --release --split-per-abi
+
+      - name: Rename APKs
+        run: |
+          cd build/app/outputs/flutter-apk
+          cp app-release.apk DropNet-v${VERSION}-Universal.apk
+          cp app-arm64-v8a-release.apk DropNet-v${VERSION}-arm64-v8a.apk
+          cp app-armeabi-v7a-release.apk DropNet-v${VERSION}-armeabi-v7a.apk
+          cp app-x86_64-release.apk DropNet-v${VERSION}-x86_64.apk
+
+      - name: Upload Universal APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: DropNet-v${{ env.VERSION }}-Universal
+          path: build/app/outputs/flutter-apk/DropNet-v${{ env.VERSION }}-Universal.apk
+
+      - name: Upload arm64-v8a APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: DropNet-v${{ env.VERSION }}-arm64-v8a
+          path: build/app/outputs/flutter-apk/DropNet-v${{ env.VERSION }}-arm64-v8a.apk
+
+      - name: Upload armeabi-v7a APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: DropNet-v${{ env.VERSION }}-armeabi-v7a
+          path: build/app/outputs/flutter-apk/DropNet-v${{ env.VERSION }}-armeabi-v7a.apk
+
+      - name: Upload x86_64 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: DropNet-v${{ env.VERSION }}-x86_64
+          path: build/app/outputs/flutter-apk/DropNet-v${{ env.VERSION }}-x86_64.apk
+
+  build-ios:
+    needs: version
+    runs-on: macos-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Get Dependencies
+        run: flutter pub get
+
+      # Deliberately unsigned: this app isn't distributed via the App Store,
+      # so the IPA is packaged straight from the unsigned build output.
+      # Anyone installing it resigns it themselves with a sideloading tool
+      # (e.g. Sideloadly) using their own Apple ID.
+      - name: Build Unsigned iOS App
+        run: flutter build ios --release --no-codesign
+
+      - name: Package IPA
+        run: |
+          cd build/ios/iphoneos
+          mkdir -p Payload
+          cp -r Runner.app Payload/
+          zip -r "DropNet-v${VERSION}-iOS.ipa" Payload
+
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DropNet-v${{ env.VERSION }}-iOS
+          path: build/ios/iphoneos/DropNet-v${{ env.VERSION }}-iOS.ipa
+
+  build-linux:
+    needs: version
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      APPIMAGE_EXTRACT_AND_RUN: '1'
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install Linux Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libfuse2
+
+      - name: Build Linux Packages
+        run: bash tools/build_linux_release.sh
+
+      - name: Upload DEB Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DropNet-v${{ env.VERSION }}-Linux-amd64-deb
+          path: deb_build/DropNet-v${{ env.VERSION }}-Linux-amd64.deb
+
+      - name: Upload AppImage Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DropNet-v${{ env.VERSION }}-Linux-x86_64-AppImage
+          path: DropNet-v${{ env.VERSION }}-Linux-x86_64.AppImage
+
+  build-windows:
+    needs: version
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Get Dependencies
+        run: flutter pub get
+
+      - name: Build Windows Release
+        run: flutter build windows --release
+
+      - name: Create ZIP Package
+        shell: pwsh
+        run: |
+          $releaseDir = Get-ChildItem -Path build/windows -Recurse -Directory -Filter "Release" | Select-Object -First 1
+          Compress-Archive -Path "$($releaseDir.FullName)/*" -DestinationPath "DropNet-v${env:VERSION}-Windows.zip"
+
+      - name: Upload ZIP Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DropNet-v${{ env.VERSION }}-Windows
+          path: DropNet-v${{ env.VERSION }}-Windows.zip
+
+  build-macos:
+    needs: version
+    runs-on: macos-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Get Dependencies
+        run: flutter pub get
+
+      - name: Build macOS Release
+        run: flutter build macos --release
+
+      - name: Create ZIP Package
+        run: |
+          cd build/macos/Build/Products/Release
+
+          ditto -c -k --sequesterRsrc --keepParent \
+            DropNet.app \
+            DropNet-v${VERSION}-macOS.zip
+
+      - name: Install create-dmg
+        run: brew install create-dmg
+
+      - name: Create DMG Package
+        run: |
+          cd build/macos/Build/Products/Release
+          rm -f DropNet-v${VERSION}-macOS.dmg
+
+          create-dmg \
+            --volname "DropNet" \
+            --window-size 800 500 \
+            --icon-size 128 \
+            --app-drop-link 600 200 \
+            DropNet-v${VERSION}-macOS.dmg \
+            DropNet.app
+
+      - name: Upload ZIP Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DropNet-v${{ env.VERSION }}-macOS-zip
+          path: build/macos/Build/Products/Release/DropNet-v${{ env.VERSION }}-macOS.zip
+
+      - name: Upload DMG Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DropNet-v${{ env.VERSION }}-macOS-dmg
+          path: build/macos/Build/Products/Release/DropNet-v${{ env.VERSION }}-macOS.dmg

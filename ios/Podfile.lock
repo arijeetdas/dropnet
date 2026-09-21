@@ -8,8 +8,6 @@ PODS:
     - SwiftTryCatch
   - open_filex (0.0.2):
     - Flutter
-  - permission_handler_apple (9.3.0):
-    - Flutter
   - SwiftTryCatch (1.0.0)
 
 DEPENDENCIES:
@@ -17,7 +15,6 @@ DEPENDENCIES:
   - Flutter (from `Flutter`)
   - flutter_dynamic_icon_plus (from `.symlinks/plugins/flutter_dynamic_icon_plus/ios`)
   - open_filex (from `.symlinks/plugins/open_filex/ios`)
-  - permission_handler_apple (from `.symlinks/plugins/permission_handler_apple/ios`)
   - SwiftTryCatch (from `https://github.com/williamFalcon/SwiftTryCatch.git`)
 
 EXTERNAL SOURCES:
@@ -29,8 +26,6 @@ EXTERNAL SOURCES:
     :path: ".symlinks/plugins/flutter_dynamic_icon_plus/ios"
   open_filex:
     :path: ".symlinks/plugins/open_filex/ios"
-  permission_handler_apple:
-    :path: ".symlinks/plugins/permission_handler_apple/ios"
   SwiftTryCatch:
     :git: https://github.com/williamFalcon/SwiftTryCatch.git
 
@@ -41,12 +36,11 @@ CHECKOUT OPTIONS:
 
 SPEC CHECKSUMS:
   bonsoir_darwin: 29c7ccf356646118844721f36e1de4b61f6cbd0e
-  Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
+  Flutter: 71a624a5bc0c04062bf19101d501e466baf2fb47
   flutter_dynamic_icon_plus: 3ddd12bc2316b98ffdd4048e9cdd3cf51e02095d
   open_filex: 432f3cd11432da3e39f47fcc0df2b1603854eff1
-  permission_handler_apple: 4ed2196e43d0651e8ff7ca3483a069d469701f2d
   SwiftTryCatch: 778ec7251f490ecbdc595ba32e245e5fcb8ea5f6
 
-PODFILE CHECKSUM: 2239da198ea986fcd1975303da5ec50a8b13f81f
+PODFILE CHECKSUM: e4f4b198592bc838d21f2cc2d9fbaad009664870
 
 COCOAPODS: 1.16.2

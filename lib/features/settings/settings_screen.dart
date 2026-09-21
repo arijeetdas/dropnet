@@ -8,11 +8,13 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter_dynamic_icon_plus/flutter_dynamic_icon_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../models/trusted_peer_model.dart';
 import '../../models/device_model.dart';
 import '../../core/state/app_state.dart';
 import '../../core/utils/dialog_utils.dart';
+import '../../core/utils/file_utils.dart';
 import '../../widgets/macos_smiling_logo.dart';
 import 'package:flutter/cupertino.dart' show CupertinoIcons;
 
@@ -60,6 +62,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final canEditManufacturer = !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+    // The manufacturer tag is meaningless here: iOS/iPadOS device models are
+    // reported directly by the OS, and Windows has no equivalent concept —
+    // showing a greyed-out, always-auto-detected field only confuses users
+    // on these platforms, so it's hidden entirely instead.
+    final hideManufacturerTag =
+        !kIsWeb && (defaultTargetPlatform == TargetPlatform.iOS || defaultTargetPlatform == TargetPlatform.windows);
     if (_nameController.text.isEmpty && state.localDeviceBaseName.isNotEmpty) {
       _nameController.text = state.localDeviceBaseName;
     }
@@ -149,28 +157,30 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         icon: const Icon(Icons.casino_rounded, size: 18),
                         label: const Text('Randomize'),
                       ),
-                      const SizedBox(height: 14),
-                      TextField(
-                        controller: _manufacturerController,
-                        enabled: canEditManufacturer,
-                        onChanged: canEditManufacturer ? _scheduleManufacturerUpdate : null,
-                        decoration: _fieldDecoration(
-                          context,
-                          labelText: 'Manufacturer tag',
-                          hintText: 'Samsung Galaxy / iPhone / Nothing',
-                          prefixIcon: Icons.precision_manufacturing_rounded,
-                        ),
-                      ),
-                      if (!canEditManufacturer)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 6),
-                          child: Text(
-                            'Auto-detected for this platform (read-only).',
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: colorScheme.onSurfaceVariant,
-                            ),
+                      if (!hideManufacturerTag) ...[
+                        const SizedBox(height: 14),
+                        TextField(
+                          controller: _manufacturerController,
+                          enabled: canEditManufacturer,
+                          onChanged: canEditManufacturer ? _scheduleManufacturerUpdate : null,
+                          decoration: _fieldDecoration(
+                            context,
+                            labelText: 'Manufacturer tag',
+                            hintText: 'Samsung Galaxy / iPhone / Nothing',
+                            prefixIcon: Icons.precision_manufacturing_rounded,
                           ),
                         ),
+                        if (!canEditManufacturer)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 6),
+                            child: Text(
+                              'Auto-detected for this platform (read-only).',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ),
+                      ],
                       const SizedBox(height: 10),
                       _InfoRow(
                         icon: Icons.devices_rounded,
@@ -654,6 +664,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         onChanged: (v) => ref.read(appControllerProvider.notifier).setSaveMediaToGallery(v),
                         accentColor: Colors.teal,
                       ),
+                      const SizedBox(height: 8),
+                      _PremiumSwitchTile(
+                        icon: Icons.folder_copy_rounded,
+                        title: 'Organize into folders',
+                        subtitle: 'Sort received files into Documents, Image, Audio, Video and other category folders.',
+                        value: state.categorizeReceivedFiles,
+                        onChanged: (v) => ref.read(appControllerProvider.notifier).setCategorizeReceivedFiles(v),
+                        accentColor: Colors.teal,
+                      ),
                     ],
                   ),
                 ),
@@ -719,9 +738,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   Center(
                     child: Column(
                       children: [
-                        () {
-                          final isAndroid = !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
-                          final versionWidget = Container(
+                        InkWell(
+                          onTap: () => _showBuildTypeDetailsDialog(context),
+                          borderRadius: BorderRadius.circular(20),
+                          child: Container(
                             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
                             decoration: BoxDecoration(
                               color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
@@ -739,17 +759,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                                 ),
                               ],
                             ),
-                          );
-
-                          if (isAndroid) {
-                            return InkWell(
-                              onTap: () => _showBuildTypeDetailsDialog(context),
-                              borderRadius: BorderRadius.circular(20),
-                              child: versionWidget,
-                            );
-                          }
-                          return versionWidget;
-                        }(),
+                          ),
+                        ),
                         const SizedBox(height: 6),
                         Text(
                           'Developed by Arijeet Das',
@@ -767,71 +778,96 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
+  String _platformDisplayName() {
+    if (!kIsWeb && Platform.isAndroid) return 'Android';
+    if (!kIsWeb && Platform.isIOS) return 'iOS';
+    if (!kIsWeb && Platform.isMacOS) return 'macOS';
+    if (!kIsWeb && Platform.isWindows) return 'Windows';
+    if (!kIsWeb && Platform.isLinux) return 'Linux';
+    return 'Web';
+  }
+
+  Future<void> _launchUpdatesWebsite() async {
+    final uri = Uri.parse('https://dropnet.arijeet.in');
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
   Future<void> _showBuildTypeDetailsDialog(BuildContext context) async {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final state = ref.read(appControllerProvider);
+    final isAndroid = !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+    final platformName = _platformDisplayName();
 
-    // Fetch current app icon alias
-    String? currentAlias;
-    try {
-      currentAlias = await FlutterDynamicIconPlus.alternateIconName.timeout(
-        const Duration(milliseconds: 500),
-        onTimeout: () => null,
-      );
-    } catch (_) {}
-    currentAlias ??= 'com.dropnet.MainActivityIcon1';
+    // The dialog icon: on Android, the currently active launcher icon;
+    // everywhere else, the app's default icon.
+    var iconAsset = 'assets/icon/app_icon.png';
 
-    const iconsData = [
-      (name: 'Default', asset: 'assets/icon/app_icons/foreground_1.png', alias: 'com.dropnet.MainActivityIcon1'),
-      (name: 'Yellow', asset: 'assets/icon/app_icons/foreground_2.png', alias: 'com.dropnet.MainActivityIcon2'),
-      (name: 'Glass G', asset: 'assets/icon/app_icons/foreground_3.png', alias: 'com.dropnet.MainActivityIcon3'),
-      (name: 'Glass Y', asset: 'assets/icon/app_icons/foreground_4.png', alias: 'com.dropnet.MainActivityIcon4'),
-    ];
+    // Android-only build type / CPU architecture details.
+    var installedType = 'Universal';
+    var recommendedType = 'Universal';
+    var bestAbi = 'unknown';
+    var isUsingRecommended = false;
 
-    int activeIndex = iconsData.indexWhere((e) => e.alias == currentAlias);
-    if (activeIndex == -1) activeIndex = 0;
-    final activeIconAsset = iconsData[activeIndex].asset;
+    if (isAndroid) {
+      String? currentAlias;
+      try {
+        currentAlias = await FlutterDynamicIconPlus.alternateIconName.timeout(
+          const Duration(milliseconds: 500),
+          onTimeout: () => null,
+        );
+      } catch (_) {}
+      currentAlias ??= 'com.dropnet.MainActivityIcon1';
 
-    final abis = state.localDeviceCpuArchitecture
-        .split(',')
-        .map((e) => e.trim())
-        .where((e) => e.isNotEmpty)
-        .toList();
-    final bestAbi = abis.isNotEmpty ? abis.first : 'unknown';
-    final rawInstalledType = state.installedApkType.isNotEmpty ? state.installedApkType : 'universal';
+      const iconsData = [
+        (name: 'Default', asset: 'assets/icon/app_icons/foreground_1.png', alias: 'com.dropnet.MainActivityIcon1'),
+        (name: 'Yellow', asset: 'assets/icon/app_icons/foreground_2.png', alias: 'com.dropnet.MainActivityIcon2'),
+        (name: 'Glass G', asset: 'assets/icon/app_icons/foreground_3.png', alias: 'com.dropnet.MainActivityIcon3'),
+        (name: 'Glass Y', asset: 'assets/icon/app_icons/foreground_4.png', alias: 'com.dropnet.MainActivityIcon4'),
+      ];
 
-    // Normalize installedType typography
-    String installedType = 'Universal';
-    if (rawInstalledType == 'arm-v8a' || rawInstalledType == 'arm64-v8a') {
-      installedType = 'arm64-v8a';
-    } else if (rawInstalledType == 'arm-v7a' || rawInstalledType == 'armeabi-v7a') {
-      installedType = 'armeabi-v7a';
-    } else if (rawInstalledType == 'x86_64') {
-      installedType = 'x86_64';
-    } else if (rawInstalledType == 'x86') {
-      installedType = 'x86';
-    } else if (rawInstalledType == 'universal') {
-      installedType = 'Universal';
-    } else {
-      installedType = rawInstalledType.isNotEmpty
-          ? rawInstalledType[0].toUpperCase() + rawInstalledType.substring(1)
-          : 'Universal';
+      int activeIndex = iconsData.indexWhere((e) => e.alias == currentAlias);
+      if (activeIndex == -1) activeIndex = 0;
+      iconAsset = iconsData[activeIndex].asset;
+
+      final abis = state.localDeviceCpuArchitecture
+          .split(',')
+          .map((e) => e.trim())
+          .where((e) => e.isNotEmpty)
+          .toList();
+      bestAbi = abis.isNotEmpty ? abis.first : 'unknown';
+      final rawInstalledType = state.installedApkType.isNotEmpty ? state.installedApkType : 'universal';
+
+      // Normalize installedType typography
+      if (rawInstalledType == 'arm-v8a' || rawInstalledType == 'arm64-v8a') {
+        installedType = 'arm64-v8a';
+      } else if (rawInstalledType == 'arm-v7a' || rawInstalledType == 'armeabi-v7a') {
+        installedType = 'armeabi-v7a';
+      } else if (rawInstalledType == 'x86_64') {
+        installedType = 'x86_64';
+      } else if (rawInstalledType == 'x86') {
+        installedType = 'x86';
+      } else if (rawInstalledType == 'universal') {
+        installedType = 'Universal';
+      } else {
+        installedType = rawInstalledType.isNotEmpty
+            ? rawInstalledType[0].toUpperCase() + rawInstalledType.substring(1)
+            : 'Universal';
+      }
+
+      // Map bestAbi to recommended type string
+      if (bestAbi == 'arm64-v8a') {
+        recommendedType = 'arm64-v8a';
+      } else if (bestAbi == 'armeabi-v7a') {
+        recommendedType = 'armeabi-v7a';
+      } else if (bestAbi == 'x86_64') {
+        recommendedType = 'x86_64';
+      } else if (bestAbi == 'x86') {
+        recommendedType = 'x86';
+      }
+
+      isUsingRecommended = installedType == recommendedType && installedType != 'Universal';
     }
-
-    // Map bestAbi to recommended type string
-    String recommendedType = 'Universal';
-    if (bestAbi == 'arm64-v8a') {
-      recommendedType = 'arm64-v8a';
-    } else if (bestAbi == 'armeabi-v7a') {
-      recommendedType = 'armeabi-v7a';
-    } else if (bestAbi == 'x86_64') {
-      recommendedType = 'x86_64';
-    } else if (bestAbi == 'x86') {
-      recommendedType = 'x86';
-    }
-
-    final isUsingRecommended = installedType == recommendedType && installedType != 'Universal';
 
     if (!context.mounted) return;
 
@@ -844,7 +880,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           backgroundColor: colorScheme.surface,
           elevation: 6,
-          titlePadding: const EdgeInsets.fromLTRB(24, 4, 24, 24),
+          titlePadding: const EdgeInsets.fromLTRB(24, 8, 24, 12),
           contentPadding: const EdgeInsets.symmetric(horizontal: 24),
           actionsPadding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
           icon: Container(
@@ -872,149 +908,160 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(12),
                 child: Image.asset(
-                  activeIconAsset,
+                  iconAsset,
                   width: 44,
                   height: 44,
                 ),
               ),
             ),
           ),
-          title: Text(
-            'DropNet v$_appVersion',
-            style: theme.textTheme.headlineSmall?.copyWith(
-              fontWeight: FontWeight.w800,
-              color: colorScheme.onSurface,
-              letterSpacing: -0.5,
-            ),
-            textAlign: TextAlign.center,
+          title: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'DropNet',
+                style: theme.textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w800,
+                  color: colorScheme.onSurface,
+                  letterSpacing: -0.5,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                isAndroid ? 'Version $_appVersion' : 'Installed version $_appVersion',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ],
           ),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Container(
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          color: colorScheme.surfaceContainerLow,
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(
-                            color: colorScheme.outlineVariant.withValues(alpha: 0.3),
+                if (isAndroid) ...[
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Container(
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: colorScheme.surfaceContainerLow,
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
+                              color: colorScheme.outlineVariant.withValues(alpha: 0.3),
+                            ),
                           ),
-                        ),
-                        child: Column(
-                          children: [
-                            Text(
-                              'Installed Type',
-                              style: theme.textTheme.labelMedium?.copyWith(
-                                color: colorScheme.onSurfaceVariant,
+                          child: Column(
+                            children: [
+                              Text(
+                                'Installed Type',
+                                style: theme.textTheme.labelMedium?.copyWith(
+                                  color: colorScheme.onSurfaceVariant,
+                                ),
                               ),
-                            ),
-                            const SizedBox(height: 6),
-                            Text(
-                              installedType,
-                              style: theme.textTheme.titleMedium?.copyWith(
-                                fontWeight: FontWeight.bold,
-                                color: colorScheme.onSurface,
+                              const SizedBox(height: 6),
+                              Text(
+                                installedType,
+                                style: theme.textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                  color: colorScheme.onSurface,
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Container(
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          color: isUsingRecommended
-                              ? colorScheme.primaryContainer.withValues(alpha: 0.3)
-                              : colorScheme.surfaceContainerLow,
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Container(
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
                             color: isUsingRecommended
-                                ? colorScheme.primary.withValues(alpha: 0.5)
-                                : colorScheme.outlineVariant.withValues(alpha: 0.3),
-                            width: isUsingRecommended ? 1.5 : 1,
+                                ? colorScheme.primaryContainer.withValues(alpha: 0.3)
+                                : colorScheme.surfaceContainerLow,
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
+                              color: isUsingRecommended
+                                  ? colorScheme.primary.withValues(alpha: 0.5)
+                                  : colorScheme.outlineVariant.withValues(alpha: 0.3),
+                              width: isUsingRecommended ? 1.5 : 1,
+                            ),
+                          ),
+                          child: Column(
+                            children: [
+                              Text(
+                                'Recommended',
+                                style: theme.textTheme.labelMedium?.copyWith(
+                                  color: isUsingRecommended
+                                      ? colorScheme.primary
+                                      : colorScheme.onSurfaceVariant,
+                                  fontWeight: isUsingRecommended ? FontWeight.bold : FontWeight.normal,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              Text(
+                                recommendedType,
+                                style: theme.textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                  color: isUsingRecommended
+                                      ? colorScheme.primary
+                                      : colorScheme.onSurface,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                        child: Column(
-                          children: [
-                            Text(
-                              'Recommended',
-                              style: theme.textTheme.labelMedium?.copyWith(
-                                color: isUsingRecommended
-                                    ? colorScheme.primary
-                                    : colorScheme.onSurfaceVariant,
-                                fontWeight: isUsingRecommended ? FontWeight.bold : FontWeight.normal,
-                              ),
+                      ),
+                    ],
+                  ),
+                  if (!isUsingRecommended) ...[
+                    const SizedBox(height: 12),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: colorScheme.primaryContainer.withValues(alpha: 0.25),
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.info_outline_rounded, size: 16, color: colorScheme.primary),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Switch to $recommendedType for a smaller, faster build.',
+                              style: theme.textTheme.bodySmall?.copyWith(color: colorScheme.onSurface),
                             ),
-                            const SizedBox(height: 6),
-                            Text(
-                              recommendedType,
-                              style: theme.textTheme.titleMedium?.copyWith(
-                                fontWeight: FontWeight.bold,
-                                color: isUsingRecommended
-                                    ? colorScheme.primary
-                                    : colorScheme.onSurface,
-                              ),
-                            ),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
-                ),
-                const SizedBox(height: 20),
+                  const SizedBox(height: 16),
+                ],
                 Container(
-                  padding: const EdgeInsets.all(20),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                   decoration: BoxDecoration(
-                    color: isUsingRecommended
-                        ? const Color(0xFF10B981).withValues(alpha: 0.08)
-                        : colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
-                    borderRadius: BorderRadius.circular(24),
-                    border: Border.all(
-                      color: isUsingRecommended
-                          ? const Color(0xFF10B981).withValues(alpha: 0.2)
-                          : colorScheme.outlineVariant.withValues(alpha: 0.2),
-                    ),
+                    color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+                    borderRadius: BorderRadius.circular(999),
                   ),
-                  child: Column(
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      if (isUsingRecommended) ...[
-                        const Icon(Icons.stars_rounded, color: Color(0xFF10B981), size: 28),
-                        const SizedBox(height: 10),
-                        Text(
-                          'Congratulations! You are using the build optimized specifically for your device\'s architecture ($bestAbi). This ensures the smallest download size, minimal storage usage, and maximum performance.',
+                      const Icon(Icons.favorite_rounded, color: Colors.redAccent, size: 16),
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Text(
+                          'Thank you for using DropNet for $platformName',
                           textAlign: TextAlign.center,
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            color: colorScheme.onSurface,
-                            height: 1.4,
+                          style: theme.textTheme.labelMedium?.copyWith(
+                            fontWeight: FontWeight.w600,
+                            color: colorScheme.onSurfaceVariant,
                           ),
-                        ),
-                      ] else ...[
-                        Icon(Icons.info_outline_rounded, color: colorScheme.primary, size: 28),
-                        const SizedBox(height: 10),
-                        Text(
-                          'We recommend switching to the $recommendedType build because it is optimized for your device\'s $bestAbi architecture. The Universal build contains library support for multiple processor types, making it much larger in download and install size.',
-                          textAlign: TextAlign.center,
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            color: colorScheme.onSurface,
-                            height: 1.4,
-                          ),
-                        ),
-                      ],
-                      const SizedBox(height: 16),
-                      Divider(color: colorScheme.outlineVariant.withValues(alpha: 0.3)),
-                      const SizedBox(height: 12),
-                      Text(
-                        'Thank you for using DropNet!',
-                        textAlign: TextAlign.center,
-                        style: theme.textTheme.labelMedium?.copyWith(
-                          fontWeight: FontWeight.bold,
-                          color: colorScheme.onSurfaceVariant,
                         ),
                       ),
                     ],
@@ -1024,21 +1071,44 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
           ),
           actions: [
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton(
-                onPressed: () => Navigator.of(context).pop(),
-                style: FilledButton.styleFrom(
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(20),
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: _launchUpdatesWebsite,
+                    style: FilledButton.styleFrom(
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                    ),
+                    icon: const Icon(Icons.system_update_rounded),
+                    label: const Text(
+                      'Check for Updates',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
                   ),
-                  padding: const EdgeInsets.symmetric(vertical: 16),
                 ),
-                child: const Text(
-                  'Close',
-                  style: TextStyle(fontWeight: FontWeight.w700),
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    style: OutlinedButton.styleFrom(
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                    ),
+                    child: const Text(
+                      'Close',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ),
                 ),
-              ),
+              ],
             ),
           ],
         );
@@ -1325,9 +1395,194 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   Future<void> _pickSaveLocation() async {
     final path = await FilePicker.platform.getDirectoryPath();
     if (path == null || path.isEmpty) return;
-    await ref.read(appControllerProvider.notifier).setDownloadDirectory(path);
+    if (!mounted) return;
+
+    final notifier = ref.read(appControllerProvider.notifier);
+    final state = ref.read(appControllerProvider);
+
+    if (state.rememberCategorizeFilesChoice) {
+      await notifier.setDownloadDirectory(
+        path,
+        categorizeReceivedFiles: state.categorizeReceivedFiles,
+      );
+    } else {
+      final existingFolders = await FileUtils.existingCategoryFolders(path);
+      if (!mounted) return;
+      final result = await _showCategorizeFoldersDialog(
+        context,
+        alreadyPresentCount: existingFolders.length,
+      );
+      if (result == null) return;
+      await notifier.setDownloadDirectory(
+        path,
+        categorizeReceivedFiles: result.categorize,
+        rememberCategorizeChoice: result.remember,
+      );
+    }
+
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Save location updated.')));
+  }
+
+  Future<({bool categorize, bool remember})?> _showCategorizeFoldersDialog(
+    BuildContext context, {
+    required int alreadyPresentCount,
+  }) async {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    var remember = false;
+
+    return showDropNetDialog<({bool categorize, bool remember})>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setLocalState) {
+            return AlertDialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(32),
+              ),
+              backgroundColor: colorScheme.surface,
+              elevation: 6,
+              titlePadding: const EdgeInsets.fromLTRB(24, 28, 24, 16),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 24),
+              actionsPadding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+              icon: Container(
+                width: 68,
+                height: 68,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      colorScheme.primaryContainer,
+                      colorScheme.primaryContainer.withValues(alpha: 0.5),
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: colorScheme.primary.withValues(alpha: 0.15),
+                      blurRadius: 16,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: Icon(
+                  Icons.create_new_folder_rounded,
+                  color: colorScheme.onPrimaryContainer,
+                  size: 32,
+                ),
+              ),
+              title: Text(
+                'Organize Files into Folders?',
+                style: theme.textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w800,
+                  color: colorScheme.onSurface,
+                  letterSpacing: -0.5,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Card(
+                      elevation: 0,
+                      color: colorScheme.surfaceContainerLow,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(24),
+                        side: BorderSide(
+                          color: colorScheme.outlineVariant.withValues(alpha: 0.25),
+                        ),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(20),
+                        child: Text(
+                          alreadyPresentCount > 0
+                              ? 'This location already has ${alreadyPresentCount == FileUtils.categoryFolderNames.length ? '' : 'some of '}the category folders (Documents, Image, Audio, Video, Programs, Code, Text, Compressed, Others). '
+                                  'Should DropNet keep sorting received files into them?'
+                              : 'DropNet can create folders here for Documents, Image, Audio, Video, Programs, Code, Text, Compressed and Others, and automatically sort received files into them. '
+                                  'Choose "No" to save files directly in this folder instead.',
+                          textAlign: TextAlign.center,
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: colorScheme.onSurfaceVariant,
+                            height: 1.4,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Theme(
+                      data: theme.copyWith(
+                        splashColor: Colors.transparent,
+                        highlightColor: Colors.transparent,
+                      ),
+                      child: CheckboxListTile(
+                        value: remember,
+                        onChanged: (value) =>
+                            setLocalState(() => remember = value ?? false),
+                        title: Text(
+                          'Remember my choice',
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: colorScheme.onSurface,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+                        controlAffinity: ListTileControlAffinity.leading,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.of(context).pop((
+                          categorize: false,
+                          remember: remember,
+                        )),
+                        style: OutlinedButton.styleFrom(
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                        ),
+                        child: const Text(
+                          'No',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: FilledButton(
+                        onPressed: () => Navigator.of(context).pop((
+                          categorize: true,
+                          remember: remember,
+                        )),
+                        style: FilledButton.styleFrom(
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                        ),
+                        child: const Text(
+                          'Yes',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   IconData _iconForDeviceType(DeviceType type) {
