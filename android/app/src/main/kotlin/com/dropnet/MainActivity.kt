@@ -1068,12 +1068,7 @@ class MainActivity : FlutterFragmentActivity() {
 		// a real failure can actually be told apart from success.
 		val icon = runCatching {
 			val res = packageManager.getResourcesForApplication(appInfo)
-			val iconResId = when {
-				appInfo.icon != 0 -> appInfo.icon
-				appInfo.roundIcon != 0 -> appInfo.roundIcon
-				else -> 0
-			}
-			if (iconResId != 0) res.getDrawable(iconResId, null) else null
+			if (appInfo.icon != 0) res.getDrawable(appInfo.icon, null) else null
 		}.getOrNull() ?: runCatching { packageManager.getApplicationIcon(appInfo) }.getOrNull()
 
 		val iconBytes = icon?.let { runCatching { drawableToPngBytes(it) }.getOrNull() }
