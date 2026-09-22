@@ -1,5 +1,6 @@
 package com.dropnet
 
+import android.content.ContentUris
 import android.content.ContentValues
 import android.content.ActivityNotFoundException
 import android.content.ComponentName
@@ -23,6 +24,7 @@ import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.FileProvider
 import androidx.documentfile.provider.DocumentFile
+import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.media.MediaScannerConnection
@@ -778,8 +780,100 @@ class MainActivity : FlutterFragmentActivity() {
 	private fun resolveShareUriToPath(uri: Uri): String? {
 		return when (uri.scheme?.lowercase()) {
 			"file" -> uri.path
-			"content" -> copyContentUriToCache(uri)
+			"content" -> resolveDirectFilePath(uri) ?: copyContentUriToCache(uri)
 			else -> null
+		}
+	}
+
+	/// Resolves a content:// URI straight to the real file already on disk,
+	/// without duplicating it into the app's own storage — DropNet should read
+	/// the sender's file directly wherever the OS lets it, only falling back to
+	/// a cache copy (below) for genuinely virtual/remote content (e.g. a cloud
+	/// file that isn't fully downloaded) where no real path exists at all.
+	private fun resolveDirectFilePath(uri: Uri): String? {
+		val path = try {
+			when {
+				DocumentsContract.isDocumentUri(applicationContext, uri) -> resolveDocumentUriPath(uri)
+				uri.authority == MediaStore.AUTHORITY -> resolveMediaStoreUriPath(uri)
+				else -> null
+			}
+		} catch (_: Exception) {
+			null
+		}
+		val file = path?.let(::File)
+		return if (file != null && file.isFile && file.canRead()) file.absolutePath else null
+	}
+
+	private fun resolveDocumentUriPath(uri: Uri): String? {
+		val docId = DocumentsContract.getDocumentId(uri)
+
+		when (uri.authority) {
+			"com.android.externalstorage.documents" -> {
+				val parts = docId.split(":", limit = 2)
+				if (parts.size != 2) return null
+				val (volumeId, relativePath) = parts
+				val root = if (volumeId.equals("primary", ignoreCase = true)) {
+					Environment.getExternalStorageDirectory()
+				} else {
+					// Removable/secondary volumes: standard mount point on all
+					// currently supported Android versions.
+					File("/storage/$volumeId")
+				}
+				return File(root, relativePath).path
+			}
+
+			"com.android.providers.downloads.documents" -> {
+				// Modern Android encodes the real path directly ("raw:/storage/...");
+				// older versions need a MediaStore lookup by numeric row id instead.
+				if (docId.startsWith("raw:")) {
+					return docId.removePrefix("raw:")
+				}
+				val id = docId.toLongOrNull() ?: return null
+				val contentUri = ContentUris.withAppendedId(
+					Uri.parse("content://downloads/public_downloads"),
+					id,
+				)
+				return queryDataColumn(contentUri)
+			}
+
+			"com.android.providers.media.documents" -> {
+				val parts = docId.split(":", limit = 2)
+				if (parts.size != 2) return null
+				val (type, id) = parts
+				val contentUri = when (type) {
+					"image" -> MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+					"video" -> MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+					"audio" -> MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+					else -> return null
+				}
+				return queryDataColumn(contentUri, "_id=?", arrayOf(id))
+			}
+
+			else -> return null
+		}
+	}
+
+	private fun resolveMediaStoreUriPath(uri: Uri): String? = queryDataColumn(uri)
+
+	private fun queryDataColumn(
+		uri: Uri,
+		selection: String? = null,
+		selectionArgs: Array<String>? = null,
+	): String? {
+		val column = "_data"
+		return applicationContext.contentResolver.query(
+			uri,
+			arrayOf(column),
+			selection,
+			selectionArgs,
+			null,
+		)?.use { cursor ->
+			if (cursor.moveToFirst()) {
+				val index = cursor.getColumnIndex(column)
+				if (index >= 0) cursor.getString(index) else null
+			} else {
+				null
+			}
 		}
 	}
 
@@ -965,9 +1059,24 @@ class MainActivity : FlutterFragmentActivity() {
 			packageManager.getApplicationLabel(appInfo)?.toString()?.trim()
 		}.getOrNull()?.takeIf { it.isNotEmpty() } ?: packageInfo.packageName
 
-		val iconBytes = runCatching {
-			drawableToPngBytes(packageManager.getApplicationIcon(appInfo))
-		}.getOrNull()
+		// PackageManager.getApplicationIcon()/ApplicationInfo.loadIcon() silently
+		// substitutes the generic Android icon whenever it can't resolve the
+		// real one — which happens more often than expected for an *archived*
+		// (not-yet-installed) APK, especially adaptive icons that need the
+		// foreground/background layers resolved through the APK's own Resources.
+		// Resolving the icon resource explicitly avoids that silent fallback so
+		// a real failure can actually be told apart from success.
+		val icon = runCatching {
+			val res = packageManager.getResourcesForApplication(appInfo)
+			val iconResId = when {
+				appInfo.icon != 0 -> appInfo.icon
+				appInfo.roundIcon != 0 -> appInfo.roundIcon
+				else -> 0
+			}
+			if (iconResId != 0) res.getDrawable(iconResId, null) else null
+		}.getOrNull() ?: runCatching { packageManager.getApplicationIcon(appInfo) }.getOrNull()
+
+		val iconBytes = icon?.let { runCatching { drawableToPngBytes(it) }.getOrNull() }
 
 		val versionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
 			packageInfo.longVersionCode

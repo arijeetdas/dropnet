@@ -1,17 +1,27 @@
 import 'dart:io';
+import 'dart:typed_data';
+import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/platform/apk_inspector_service.dart';
 import '../../core/utils/dialog_utils.dart';
 import '../../core/utils/file_utils.dart';
 import '../../models/apk_info.dart';
 import '../../models/transfer_model.dart';
+import '../../widgets/github_mark.dart';
+import '../../widgets/onboarding_background.dart';
 
 /// Android-only preview shown after receiving a single `.apk` file (never
 /// for a file that arrived as part of a multi-file batch): app icon/name,
 /// a package-details table, and Close/Delete/Install actions.
+///
+/// A received DropNet build itself ([ApkInfo.isOwnPackage]) gets a distinct,
+/// more expressive presentation — the live animated background otherwise
+/// reserved for onboarding, plus quick links to the project. The underlying
+/// data/actions are identical either way.
 class ApkPreviewScreen extends ConsumerStatefulWidget {
   const ApkPreviewScreen({super.key, required this.transfer});
 
@@ -200,46 +210,69 @@ class _ApkPreviewScreenState extends ConsumerState<ApkPreviewScreen> {
     }
   }
 
+  Future<void> _openLink(String url) async {
+    final uri = Uri.parse(url);
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
+    final isEasterEgg = _info?.isOwnPackage ?? false;
 
     return Scaffold(
       backgroundColor: colorScheme.surface,
+      extendBodyBehindAppBar: true,
       appBar: AppBar(
-        title: const Text('Received App'),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        title: isEasterEgg
+            ? Text(
+                'DropNet',
+                style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
+              )
+            : null,
         leading: Padding(
           padding: const EdgeInsets.all(8.0),
-          child: IconButton.filledTonal(
-            icon: const Icon(Icons.arrow_back_rounded),
+          child: _GlassCircleButton(
+            icon: Icons.arrow_back_rounded,
             onPressed: () => Navigator.of(context).maybePop(),
           ),
         ),
       ),
-      body: SafeArea(
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 640),
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: _loading
-                  ? const Center(child: CircularProgressIndicator())
-                  : _buildContent(theme, colorScheme),
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          if (isEasterEgg)
+            const OnboardingBackground()
+          else
+            _AmbientBackground(colorScheme: colorScheme),
+          SafeArea(
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 640),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+                  child: _loading
+                      ? const Center(child: CircularProgressIndicator())
+                      : _buildContent(theme, colorScheme, isEasterEgg),
+                ),
+              ),
             ),
           ),
-        ),
+        ],
       ),
     );
   }
 
-  Widget _buildContent(ThemeData theme, ColorScheme colorScheme) {
+  Widget _buildContent(ThemeData theme, ColorScheme colorScheme, bool isEasterEgg) {
     final info = _info;
     if (info == null) {
       return Column(
         mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const SizedBox(height: 40),
           Icon(Icons.error_outline_rounded, size: 48, color: colorScheme.error),
           const SizedBox(height: 16),
           Text(
@@ -248,10 +281,10 @@ class _ApkPreviewScreenState extends ConsumerState<ApkPreviewScreen> {
             style: theme.textTheme.bodyLarge,
           ),
           const SizedBox(height: 24),
-          OutlinedButton.icon(
+          _GlassButton(
+            icon: Icons.close_rounded,
+            label: 'Close',
             onPressed: () => Navigator.of(context).pop(),
-            icon: const Icon(Icons.close_rounded),
-            label: const Text('Close'),
           ),
         ],
       );
@@ -277,54 +310,46 @@ class _ApkPreviewScreenState extends ConsumerState<ApkPreviewScreen> {
     ];
 
     return SingleChildScrollView(
+      padding: const EdgeInsets.only(top: 96),
       child: Column(
         children: [
-          const SizedBox(height: 12),
-          Container(
-            width: 96,
-            height: 96,
-            clipBehavior: Clip.antiAlias,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(24),
-              color: colorScheme.surfaceContainerHighest,
-            ),
-            child: info.iconBytes != null
-                ? Image.memory(info.iconBytes!, fit: BoxFit.cover)
-                : Icon(Icons.android_rounded, size: 56, color: colorScheme.onSurfaceVariant),
+          _AppIconHalo(
+            iconBytes: info.iconBytes,
+            colorScheme: colorScheme,
+            special: isEasterEgg,
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 20),
           Text(
             info.appName.isEmpty ? widget.transfer.fileName : info.appName,
             textAlign: TextAlign.center,
             style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
           ),
+          if (isEasterEgg) ...[
+            const SizedBox(height: 8),
+            _EasterEggBadge(colorScheme: colorScheme),
+          ],
           const SizedBox(height: 24),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(24),
-            child: Container(
-              decoration: BoxDecoration(
-                color: colorScheme.surfaceContainerLow,
-                border: Border.all(color: colorScheme.outlineVariant.withValues(alpha: 0.4)),
-              ),
-              child: Column(
-                children: [
-                  for (var i = 0; i < rows.length; i++) ...[
-                    if (i > 0) Divider(height: 1, color: colorScheme.outlineVariant.withValues(alpha: 0.3)),
-                    _InfoRow(data: rows[i]),
-                  ],
+          _GlassPanel(
+            colorScheme: colorScheme,
+            child: Column(
+              children: [
+                for (var i = 0; i < rows.length; i++) ...[
+                  if (i > 0) Divider(height: 1, color: colorScheme.outlineVariant.withValues(alpha: 0.25)),
+                  _InfoRow(data: rows[i]),
                 ],
-              ),
+              ],
             ),
           ),
+          if (isEasterEgg) ...[
+            const SizedBox(height: 20),
+            _ProjectLinksRow(colorScheme: colorScheme, onOpenLink: _openLink),
+          ],
           if (!eligibility.canInstall && eligibility.reason != null) ...[
             const SizedBox(height: 16),
-            Container(
-              width: double.infinity,
+            _GlassPanel(
+              colorScheme: colorScheme,
+              tint: colorScheme.errorContainer,
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(
-                color: colorScheme.errorContainer.withValues(alpha: 0.35),
-                borderRadius: BorderRadius.circular(16),
-              ),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -346,25 +371,356 @@ class _ApkPreviewScreenState extends ConsumerState<ApkPreviewScreen> {
             runSpacing: 12,
             alignment: WrapAlignment.end,
             children: [
-              OutlinedButton.icon(
+              _GlassButton(
+                icon: Icons.close_rounded,
+                label: 'Close',
                 onPressed: _working ? null : () => Navigator.of(context).pop(),
-                icon: const Icon(Icons.close_rounded),
-                label: const Text('Close'),
               ),
-              OutlinedButton.icon(
+              _GlassButton(
+                icon: Icons.delete_outline_rounded,
+                label: 'Delete',
                 onPressed: _working ? null : _delete,
-                icon: const Icon(Icons.delete_outline_rounded),
-                label: const Text('Delete'),
               ),
               if (eligibility.canInstall)
                 FilledButton.icon(
                   onPressed: _working ? null : _install,
                   icon: const Icon(Icons.install_mobile_rounded),
                   label: const Text('Install'),
+                  style: FilledButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 16),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                  ),
                 ),
             ],
           ),
         ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Background
+// ---------------------------------------------------------------------------
+
+/// A calmer, static counterpart to [OnboardingBackground] for the ordinary
+/// (non-DropNet) case: two soft blurred washes rather than a live animation.
+class _AmbientBackground extends StatelessWidget {
+  const _AmbientBackground({required this.colorScheme});
+
+  final ColorScheme colorScheme;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Positioned(
+          top: -120,
+          left: -80,
+          child: _blob(colorScheme.primaryContainer, 320),
+        ),
+        Positioned(
+          bottom: -140,
+          right: -100,
+          child: _blob(colorScheme.tertiaryContainer, 340),
+        ),
+        Positioned.fill(
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 90, sigmaY: 90),
+            child: const SizedBox.shrink(),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _blob(Color color, double size) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.35),
+        shape: BoxShape.circle,
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Shared glass building blocks
+// ---------------------------------------------------------------------------
+
+class _GlassPanel extends StatelessWidget {
+  const _GlassPanel({
+    required this.colorScheme,
+    required this.child,
+    this.tint,
+    this.padding,
+  });
+
+  final ColorScheme colorScheme;
+  final Widget child;
+  final Color? tint;
+  final EdgeInsetsGeometry? padding;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(28),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+        child: Container(
+          width: double.infinity,
+          padding: padding,
+          decoration: BoxDecoration(
+            color: (tint ?? colorScheme.surfaceContainerHigh).withValues(alpha: 0.55),
+            borderRadius: BorderRadius.circular(28),
+            border: Border.all(color: colorScheme.outlineVariant.withValues(alpha: 0.3)),
+          ),
+          child: child,
+        ),
+      ),
+    );
+  }
+}
+
+class _GlassCircleButton extends StatelessWidget {
+  const _GlassCircleButton({required this.icon, required this.onPressed});
+
+  final IconData icon;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(20),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+        child: Container(
+          decoration: BoxDecoration(
+            color: colorScheme.surfaceContainerHigh.withValues(alpha: 0.65),
+            shape: BoxShape.circle,
+            border: Border.all(color: colorScheme.outlineVariant.withValues(alpha: 0.3)),
+          ),
+          child: IconButton(icon: Icon(icon), onPressed: onPressed),
+        ),
+      ),
+    );
+  }
+}
+
+class _GlassButton extends StatelessWidget {
+  const _GlassButton({required this.icon, required this.label, required this.onPressed});
+
+  final IconData icon;
+  final String label;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(20),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+        child: Container(
+          decoration: BoxDecoration(
+            color: colorScheme.surfaceContainerHigh.withValues(alpha: 0.55),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: colorScheme.outlineVariant.withValues(alpha: 0.3)),
+          ),
+          child: TextButton.icon(
+            onPressed: onPressed,
+            icon: Icon(icon, color: colorScheme.onSurface),
+            label: Text(label, style: TextStyle(color: colorScheme.onSurface, fontWeight: FontWeight.w600)),
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AppIconHalo extends StatelessWidget {
+  const _AppIconHalo({required this.iconBytes, required this.colorScheme, required this.special});
+
+  final Uint8List? iconBytes;
+  final ColorScheme colorScheme;
+  final bool special;
+
+  @override
+  Widget build(BuildContext context) {
+    final haloColor = special ? colorScheme.tertiary : colorScheme.primary;
+    return SizedBox(
+      width: 140,
+      height: 140,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Container(
+            width: 140,
+            height: 140,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: RadialGradient(
+                colors: [
+                  haloColor.withValues(alpha: special ? 0.45 : 0.28),
+                  haloColor.withValues(alpha: 0.0),
+                ],
+              ),
+            ),
+          ),
+          Container(
+            width: 100,
+            height: 100,
+            clipBehavior: Clip.antiAlias,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(28),
+              color: colorScheme.surfaceContainerHighest,
+              border: Border.all(
+                color: (special ? colorScheme.tertiary : colorScheme.primary).withValues(alpha: 0.35),
+                width: special ? 2 : 1,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: haloColor.withValues(alpha: 0.25),
+                  blurRadius: 24,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: iconBytes != null
+                ? Image.memory(iconBytes!, fit: BoxFit.cover)
+                : Icon(Icons.android_rounded, size: 56, color: colorScheme.onSurfaceVariant),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _EasterEggBadge extends StatelessWidget {
+  const _EasterEggBadge({required this.colorScheme});
+
+  final ColorScheme colorScheme;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [colorScheme.tertiary, colorScheme.primary],
+        ),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.auto_awesome_rounded, size: 14, color: colorScheme.onPrimary),
+          const SizedBox(width: 6),
+          Text(
+            'Official Build',
+            style: TextStyle(
+              color: colorScheme.onPrimary,
+              fontWeight: FontWeight.w700,
+              fontSize: 12,
+              letterSpacing: 0.3,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProjectLinksRow extends StatelessWidget {
+  const _ProjectLinksRow({required this.colorScheme, required this.onOpenLink});
+
+  final ColorScheme colorScheme;
+  final void Function(String url) onOpenLink;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        _LinkButton(
+          tooltip: 'DropNet Website',
+          colorScheme: colorScheme,
+          onPressed: () => onOpenLink('https://dropnet.arijeet.in'),
+          child: ClipOval(
+            child: Image.asset('assets/icon/app_icon.png', width: 26, height: 26, fit: BoxFit.cover),
+          ),
+        ),
+        const SizedBox(width: 16),
+        _LinkButton(
+          tooltip: 'GitHub Repository',
+          colorScheme: colorScheme,
+          onPressed: () => onOpenLink('https://git-dropnet.arijeet.in'),
+          child: GitHubMark(size: 24, color: colorScheme.onPrimary),
+        ),
+        const SizedBox(width: 16),
+        _LinkButton(
+          tooltip: 'Developer',
+          colorScheme: colorScheme,
+          onPressed: () => onOpenLink('https://arijeetdas.in'),
+          child: Icon(Icons.person_rounded, size: 24, color: colorScheme.onPrimary),
+        ),
+      ],
+    );
+  }
+}
+
+class _LinkButton extends StatelessWidget {
+  const _LinkButton({
+    required this.tooltip,
+    required this.colorScheme,
+    required this.onPressed,
+    required this.child,
+  });
+
+  final String tooltip;
+  final ColorScheme colorScheme;
+  final VoidCallback onPressed;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: Colors.transparent,
+        shape: const CircleBorder(),
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: onPressed,
+          child: Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [colorScheme.primary, colorScheme.tertiary],
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: colorScheme.primary.withValues(alpha: 0.35),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Center(child: child),
+          ),
+        ),
       ),
     );
   }

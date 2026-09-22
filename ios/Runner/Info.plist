@@ -90,6 +90,17 @@
 	</dict>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.dropnet.share</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>dropnet</string>
+			</array>
+		</dict>
+	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

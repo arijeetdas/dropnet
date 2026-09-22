@@ -29,11 +29,25 @@ class CacheCleanupService {
   /// any screen could be holding a path into it as a pending selection.
   /// [excludePaths] protects files a share-intent cold launch just staged
   /// into this same directory (consumed moments later by the app).
-  static Future<void> sweepColdStart({List<String> excludePaths = const []}) async {
+  static Future<void> sweepColdStart({
+    List<String> excludePaths = const [],
+    String? shareExtensionInboxPath,
+  }) async {
     try {
       final tempDir = await getTemporaryDirectory();
       await _clearDirectoryContents(tempDir, excludePaths: excludePaths);
     } catch (_) {}
+    // iOS only: the Share Extension's App Group staging directory lives
+    // outside the standard temp/cache tree above, so it needs its own sweep —
+    // otherwise every share leaves a permanent copy behind.
+    if (shareExtensionInboxPath != null && shareExtensionInboxPath.isNotEmpty) {
+      try {
+        await _clearDirectoryContents(
+          Directory(shareExtensionInboxPath),
+          excludePaths: excludePaths,
+        );
+      } catch (_) {}
+    }
   }
 
   /// Age-gated sweep of self-cleaning staging locations, safe to run any

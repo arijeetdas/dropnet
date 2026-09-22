@@ -3,6 +3,9 @@ import UIKit
 
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
+  static let appGroupId = "group.com.dropnet.shared"
+  private static let shareExtensionDefaultsKey = "pendingShareExtensionItems"
+
   private(set) var shareChannel: FlutterMethodChannel?
   private(set) var shortcutsChannel: FlutterMethodChannel?
   private var pendingSharedFilePaths: [String] = []
@@ -20,7 +23,53 @@ import UIKit
       pendingShortcut = shortcutItem.type
     }
 
+    // Defensive: the Share Extension normally hands off via the dropnet://
+    // URL scheme (see SceneDelegate), but a cold launch straight from the
+    // Share Sheet's "Open DropNet" flow can also deliver the App Group data
+    // without ever routing through that URL, so it's checked here too.
+    _ = importFromShareExtension()
+
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
+
+  /// Reads whatever the Share Extension staged in the App Group container
+  /// (see ShareExtension/ShareViewController.swift), merges it into the same
+  /// pending list URL-based sharing uses, and clears it so it isn't imported
+  /// twice. Returns whether anything was found.
+  @discardableResult
+  func importFromShareExtension() -> Bool {
+    guard let defaults = UserDefaults(suiteName: Self.appGroupId) else {
+      return false
+    }
+    guard
+      let payload = defaults.dictionary(forKey: Self.shareExtensionDefaultsKey),
+      !payload.isEmpty
+    else {
+      return false
+    }
+    defaults.removeObject(forKey: Self.shareExtensionDefaultsKey)
+
+    var changed = false
+    for path in (payload["files"] as? [String] ?? []) {
+      if appendSharedFilePath(path) {
+        changed = true
+      }
+    }
+    for text in (payload["texts"] as? [String] ?? []) {
+      appendSharedText(text)
+      changed = true
+    }
+    return changed
+  }
+
+  /// The Share Extension's staging directory inside the App Group container,
+  /// so Dart's cache-cleanup sweep can treat it exactly like any other
+  /// transient temp/cache location instead of it accumulating forever.
+  static func shareExtensionInboxPath() -> String? {
+    FileManager.default
+      .containerURL(forSecurityApplicationGroupIdentifier: appGroupId)?
+      .appendingPathComponent("share_inbox", isDirectory: true)
+      .path
   }
 
   // UIScene lifecycle: the window/rootViewController aren't ready yet in
@@ -48,6 +97,8 @@ import UIKit
         let files = self?.pendingSharedFilePaths ?? []
         self?.pendingSharedFilePaths.removeAll()
         result(files)
+      case "getShareExtensionInboxPath":
+        result(AppDelegate.shareExtensionInboxPath())
       default:
         result(FlutterMethodNotImplemented)
       }
@@ -72,27 +123,30 @@ import UIKit
   // land now that the app has adopted the UIScene lifecycle.
   func appendSharedPayload(url: URL) -> Bool {
     if url.isFileURL {
-      let path = url.path.trimmingCharacters(in: .whitespacesAndNewlines)
-      guard !path.isEmpty else {
-        return false
-      }
-      guard FileManager.default.fileExists(atPath: path) else {
-        return false
-      }
-      if !pendingSharedFilePaths.contains(path) {
-        pendingSharedFilePaths.append(path)
-      }
-      return true
+      return appendSharedFilePath(url.path)
     }
+    appendSharedText(url.absoluteString)
+    return true
+  }
 
-    let text = url.absoluteString.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !text.isEmpty else {
+  @discardableResult
+  private func appendSharedFilePath(_ rawPath: String) -> Bool {
+    let path = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !path.isEmpty, FileManager.default.fileExists(atPath: path) else {
       return false
     }
-    if !pendingSharedTexts.contains(text) {
-      pendingSharedTexts.append(text)
+    if !pendingSharedFilePaths.contains(path) {
+      pendingSharedFilePaths.append(path)
     }
     return true
+  }
+
+  private func appendSharedText(_ rawText: String) {
+    let text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !text.isEmpty, !pendingSharedTexts.contains(text) else {
+      return
+    }
+    pendingSharedTexts.append(text)
   }
 
   func emitSharedPayloadUpdated() {

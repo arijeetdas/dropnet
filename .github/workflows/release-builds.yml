@@ -166,50 +166,6 @@ jobs:
           name: DropNet-v${{ env.VERSION }}-Linux-x86_64-AppImage
           path: DropNet-v${{ env.VERSION }}-Linux-x86_64.AppImage
 
-  build-windows:
-    needs: version
-    runs-on: windows-latest
-    env:
-      VERSION: ${{ needs.version.outputs.version }}
-
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v7
-
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          cache: true
-
-      - name: Get Dependencies
-        run: flutter pub get
-
-      - name: Build Windows Release
-        run: flutter build windows --release
-
-      - name: Create ZIP Package
-        shell: pwsh
-        run: |
-          # Flutter's Windows release output always lands at this exact path
-          # (see flutter_tools' getWindowsBuildDirectory) — a recursive search
-          # for any directory named "Release" is unreliable, since Visual
-          # Studio's CMake generator creates a same-named intermediate
-          # directory for every plugin target too, and picking "first match"
-          # can silently zip the wrong (empty or partial) directory.
-          $releaseDir = "build/windows/x64/runner/Release"
-          if (-not (Test-Path $releaseDir)) {
-            Write-Error "Release output not found at $releaseDir"
-            exit 1
-          }
-          Compress-Archive -Path "$releaseDir/*" -DestinationPath "DropNet-v${env:VERSION}-Windows.zip"
-
-      - name: Upload ZIP Artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: DropNet-v${{ env.VERSION }}-Windows
-          path: DropNet-v${{ env.VERSION }}-Windows.zip
-
   build-macos:
     needs: version
     runs-on: macos-latest

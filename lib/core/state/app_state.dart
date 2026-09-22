@@ -674,6 +674,27 @@ class AppController extends StateNotifier<AppState> {
     final localIpsFuture = _discovery.getAllLocalIps();
     final shareIntentFuture = Future<void>(() async {
       await _shareIntent.initialize();
+      // Subscribed immediately, not deferred with the other stream listeners
+      // below: sharedPayloadStream is a broadcast stream with no replay, so a
+      // share-intent event arriving in the gap before a listener existed was
+      // silently dropped — the app just opened with nothing imported.
+      _sharedPayloadSub ??= _shareIntent.sharedPayloadStream.listen((payload) {
+        if (payload.isEmpty) {
+          return;
+        }
+        final mergedFiles = _mergeUnique(
+          state.pendingSharedFilePaths,
+          payload.filePaths,
+        );
+        final mergedTexts = _mergeUnique(
+          state.pendingSharedTexts,
+          payload.texts,
+        );
+        state = state.copyWith(
+          pendingSharedFilePaths: mergedFiles,
+          pendingSharedTexts: mergedTexts,
+        );
+      });
     });
 
     final downloadDir = await downloadDirFuture;
@@ -689,7 +710,13 @@ class AppController extends StateNotifier<AppState> {
     // Only safe now, after any share-intent file has been claimed above —
     // this wipes the OS temp/cache directory, which on Android is the same
     // directory a cold "share to DropNet" launch just staged a file into.
-    unawaited(CacheCleanupService.sweepColdStart(excludePaths: initialShared.filePaths));
+    final shareExtensionInboxPath = await _shareIntent.getShareExtensionInboxPath();
+    unawaited(
+      CacheCleanupService.sweepColdStart(
+        excludePaths: initialShared.filePaths,
+        shareExtensionInboxPath: shareExtensionInboxPath,
+      ),
+    );
 
     await _discovery.updatePairingModeEnabled(restoredRequirePairingCode);
     if (!restoredUseDefaultDeviceIcon) {
@@ -1105,21 +1132,6 @@ class AppController extends StateNotifier<AppState> {
 
     _tempShareSub ??= _tempShare.stateStream.listen((tempShareState) {
       state = state.copyWith(tempLinkShare: tempShareState);
-    });
-
-    _sharedPayloadSub ??= _shareIntent.sharedPayloadStream.listen((payload) {
-      if (payload.isEmpty) {
-        return;
-      }
-      final mergedFiles = _mergeUnique(
-        state.pendingSharedFilePaths,
-        payload.filePaths,
-      );
-      final mergedTexts = _mergeUnique(state.pendingSharedTexts, payload.texts);
-      state = state.copyWith(
-        pendingSharedFilePaths: mergedFiles,
-        pendingSharedTexts: mergedTexts,
-      );
     });
   }
 
@@ -1668,6 +1680,16 @@ class AppController extends StateNotifier<AppState> {
     if (state.devices.isEmpty) {
       await scanLocalSubnetForDevices();
     }
+  }
+
+  /// Just the fast broadcast/mDNS re-announce, deliberately without the
+  /// subnet-probe fallback above — safe to call frequently (e.g. from a
+  /// periodic background timer). Probing all ~253 addresses on the subnet
+  /// every couple of seconds would peg the network/CPU and make the app feel
+  /// like it's frozen; that fallback is only appropriate for a one-off,
+  /// user-initiated refresh.
+  Future<void> refreshNearbyDevicesLightweight() {
+    return _discovery.refreshNow();
   }
 
   Future<int> stageFilesForWebPeers({

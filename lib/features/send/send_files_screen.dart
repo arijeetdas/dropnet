@@ -58,10 +58,45 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
   bool _extractingApk = false;
   bool _importingSharedFiles = false;
   Timer? _tempShareCopyResetTimer;
+  Timer? _iosBackgroundRefreshTimer;
+  bool _iosBackgroundRefreshInFlight = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (!kIsWeb && Platform.isIOS) {
+      // Discovery on iOS occasionally stalls silently (nearby list empties
+      // and never recovers, incoming requests time out unanswered) without
+      // any observed lifecycle event that would explain it. Rather than
+      // depending on a single root cause being found, a lightweight silent
+      // re-announce every 1.5s keeps it self-healing regardless of why it
+      // stalled.
+      _iosBackgroundRefreshTimer = Timer.periodic(
+        const Duration(milliseconds: 1500),
+        (_) => _silentlyRefreshNearbyDevices(),
+      );
+    }
+  }
+
+  Future<void> _silentlyRefreshNearbyDevices() async {
+    if (_iosBackgroundRefreshInFlight || !mounted) {
+      return;
+    }
+    _iosBackgroundRefreshInFlight = true;
+    try {
+      await ref.read(appControllerProvider.notifier).refreshNearbyDevicesLightweight();
+    } catch (_) {
+      // Best-effort background upkeep; a failed attempt just tries again on
+      // the next tick.
+    } finally {
+      _iosBackgroundRefreshInFlight = false;
+    }
+  }
 
   @override
   void dispose() {
     _tempShareCopyResetTimer?.cancel();
+    _iosBackgroundRefreshTimer?.cancel();
     super.dispose();
   }
 
@@ -103,6 +138,7 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
         state.pendingSharedTexts.isNotEmpty;
     if (canImportPending && hasPendingImports && !_importingSharedFiles) {
       _importingSharedFiles = true;
+      final navigator = Navigator.of(context, rootNavigator: true);
       Future<void>(() async {
         try {
           final controller = ref.read(appControllerProvider.notifier);
@@ -111,7 +147,57 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
           final textFiles = await _createTempFilesFromSharedTexts(pendingTexts);
           final pending = <String>[...pendingFiles, ...textFiles];
           if (pending.isNotEmpty) {
-            await _addPaths(pending);
+            final progress = ValueNotifier<double>(0);
+            var dialogShown = false;
+            // Importing is normally instant, so the popup only appears if a
+            // file is genuinely slow to stat/copy — avoids a flash of a
+            // loading dialog for the common near-zero-latency case.
+            final revealTimer = Timer(const Duration(milliseconds: 200), () {
+              if (!mounted || dialogShown) {
+                return;
+              }
+              dialogShown = true;
+              showDialog<void>(
+                context: this.context,
+                barrierDismissible: false,
+                useRootNavigator: true,
+                builder: (context) => PopScope(
+                  canPop: false,
+                  child: AlertDialog(
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(32),
+                    ),
+                    backgroundColor: Theme.of(context).colorScheme.surface,
+                    elevation: 6,
+                    content: ValueListenableBuilder<double>(
+                      valueListenable: progress,
+                      builder: (context, value, _) => Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const ExpressiveLoader(),
+                          const SizedBox(height: 16),
+                          Text('Loading (${value.round()}%)'),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            });
+
+            await _addPaths(
+              pending,
+              onProgress: (done, total) {
+                progress.value = total == 0 ? 100 : (done / total * 100);
+              },
+            );
+
+            revealTimer.cancel();
+            if (dialogShown && navigator.canPop()) {
+              navigator.pop();
+            }
+            progress.dispose();
+
             if (!mounted) {
               return;
             }
@@ -2127,35 +2213,39 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
     return file.path;
   }
 
-  Future<void> _addPaths(Iterable<String> paths) async {
+  Future<void> _addPaths(
+    Iterable<String> paths, {
+    void Function(int done, int total)? onProgress,
+  }) async {
     final existing = _files.map((file) => file.path).toSet();
     final fresh = <_SelectedFile>[];
-    for (final path in paths) {
-      if (existing.contains(path)) {
-        continue;
+    final pathList = paths.toList(growable: false);
+    for (var i = 0; i < pathList.length; i++) {
+      final path = pathList[i];
+      if (!existing.contains(path)) {
+        final file = File(path);
+        if (await file.exists()) {
+          final size = await file.length();
+          final ext = p.extension(path).toLowerCase();
+          final isImage = const {
+            '.png',
+            '.jpg',
+            '.jpeg',
+            '.gif',
+            '.webp',
+            '.bmp',
+          }.contains(ext);
+          fresh.add(
+            _SelectedFile(
+              path: path,
+              name: p.basename(path),
+              size: size,
+              isImage: isImage,
+            ),
+          );
+        }
       }
-      final file = File(path);
-      if (!await file.exists()) {
-        continue;
-      }
-      final size = await file.length();
-      final ext = p.extension(path).toLowerCase();
-      final isImage = const {
-        '.png',
-        '.jpg',
-        '.jpeg',
-        '.gif',
-        '.webp',
-        '.bmp',
-      }.contains(ext);
-      fresh.add(
-        _SelectedFile(
-          path: path,
-          name: p.basename(path),
-          size: size,
-          isImage: isImage,
-        ),
-      );
+      onProgress?.call(i + 1, pathList.length);
     }
     if (fresh.isEmpty) {
       return;

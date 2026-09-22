@@ -49,6 +49,17 @@ class ShareIntentService {
     });
   }
 
+  /// iOS only: the Share Extension's staging directory inside the shared App
+  /// Group container, so it can be swept like any other transient temp/cache
+  /// location instead of accumulating forever. Null on every other platform.
+  Future<String?> getShareExtensionInboxPath() async {
+    try {
+      return await _channel.invokeMethod<String>('getShareExtensionInboxPath');
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<SharedIntentPayload> consumePendingSharedPayload() async {
     try {
       final result = await _channel.invokeMethod<dynamic>(

@@ -10,17 +10,46 @@ class SceneDelegate: FlutterSceneDelegate {
 
   override func scene(
     _ scene: UIScene,
+    willConnectTo session: UISceneSession,
+    options connectionOptions: UIScene.ConnectionOptions
+  ) {
+    super.scene(scene, willConnectTo: session, options: connectionOptions)
+    // A cold launch straight from the Share Extension's hand-off delivers its
+    // URL here, as part of the initial connection, rather than through
+    // openURLContexts below (that's only for a URL arriving while the scene
+    // is already connected).
+    _ = handleURLContexts(connectionOptions.urlContexts)
+  }
+
+  override func scene(
+    _ scene: UIScene,
     openURLContexts URLContexts: Set<UIOpenURLContext>
   ) {
+    let unhandled = handleURLContexts(URLContexts)
+    if !unhandled.isEmpty {
+      super.scene(scene, openURLContexts: unhandled)
+    }
+  }
+
+  /// Returns whichever contexts weren't recognized as either the Share
+  /// Extension's hand-off signal or an importable file/link, so the caller
+  /// can still forward those to Flutter/other plugins.
+  private func handleURLContexts(_ contexts: Set<UIOpenURLContext>) -> Set<UIOpenURLContext> {
     guard let appDelegate = UIApplication.shared.delegate as? AppDelegate else {
-      super.scene(scene, openURLContexts: URLContexts)
-      return
+      return contexts
     }
 
     var unhandled: Set<UIOpenURLContext> = []
     var handledAny = false
-    for context in URLContexts {
-      if appDelegate.appendSharedPayload(url: context.url) {
+    for context in contexts {
+      let url = context.url
+      if url.scheme == "dropnet", url.host == "share-extension-import" {
+        if appDelegate.importFromShareExtension() {
+          handledAny = true
+        }
+        continue
+      }
+      if appDelegate.appendSharedPayload(url: url) {
         handledAny = true
       } else {
         unhandled.insert(context)
@@ -29,9 +58,7 @@ class SceneDelegate: FlutterSceneDelegate {
     if handledAny {
       appDelegate.emitSharedPayloadUpdated()
     }
-    if !unhandled.isEmpty {
-      super.scene(scene, openURLContexts: unhandled)
-    }
+    return unhandled
   }
 
   override func scene(

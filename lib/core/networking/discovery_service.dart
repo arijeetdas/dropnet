@@ -84,7 +84,24 @@ class DiscoveryService {
     return _tlsCertificateFingerprint;
   }
 
-  Future<void> start() async {
+  // start() has real async work (socket bind, mDNS setup) between the
+  // "already running?" check and actually setting _socket/starting timers.
+  // Two overlapping calls — e.g. the periodic background refresh landing
+  // while a settings-triggered restart is still in flight — could otherwise
+  // both race past that check and each bind a socket, register a duplicate
+  // mDNS broadcast (surfacing as "Name (2)" once the OS's own Bonjour
+  // conflict resolution renames the second one), and leave one set of
+  // announce/prune timers orphaned forever. Memoizing the in-flight call
+  // makes every concurrent caller await the same single run instead.
+  Future<void>? _startFuture;
+
+  Future<void> start() {
+    return _startFuture ??= _startInternal().whenComplete(() {
+      _startFuture = null;
+    });
+  }
+
+  Future<void> _startInternal() async {
     if (kDebugMode) {
       print('[DiscoveryService] Starting service (running state: $_running, port: $_discoveryPort)');
     }
@@ -215,6 +232,7 @@ class DiscoveryService {
       await _mdnsBroadcast?.stop().timeout(const Duration(seconds: 2));
     } catch (_) {}
     _mdnsBroadcast = null;
+    _resolvingServiceNames.clear();
     _socket?.close();
     _socket = null;
   }
@@ -706,13 +724,37 @@ class DiscoveryService {
     }
   }
 
+  // mDNS re-announces a service periodically at the protocol level, so
+  // "found" events keep refiring for services we've already seen — not just
+  // once. Calling resolve() again while a previous resolve for that same
+  // service is still in flight can wedge bonsoir_darwin's shared native
+  // resolver on iOS/macOS (the same class of race already documented above
+  // for tearing it down mid-resolve), after which it silently stops
+  // delivering ResolvedEvents entirely — the device list goes empty and
+  // never recovers on its own. Tracking in-flight resolves by service name
+  // and skipping a redundant resolve() call avoids ever triggering it.
+  final Set<String> _resolvingServiceNames = {};
+
   void _onMdnsEvent(BonsoirDiscoveryEvent event) {
     if (event is BonsoirDiscoveryServiceFoundEvent) {
+      final name = event.service.name;
+      if (!_resolvingServiceNames.add(name)) {
+        return;
+      }
+      // Safety net: if a resolve never fires a Resolved or Lost event at all
+      // (silent native failure, not just a slow one), don't block that
+      // service from ever being retried again.
+      unawaited(
+        Future<void>.delayed(const Duration(seconds: 10), () {
+          _resolvingServiceNames.remove(name);
+        }),
+      );
       event.service.resolve(_mdnsDiscovery!.serviceResolver);
       return;
     }
     if (event is BonsoirDiscoveryServiceResolvedEvent) {
       final service = event.service;
+      _resolvingServiceNames.remove(service.name);
       if (service.attributes['deviceId'] == _deviceId) {
         return;
       }
@@ -721,6 +763,7 @@ class DiscoveryService {
     }
     if (event is BonsoirDiscoveryServiceLostEvent) {
       final service = event.service;
+      _resolvingServiceNames.remove(service.name);
       final id = (service.attributes['deviceId']?.toString() ?? service.name)
           .trim();
       _devices.remove(id);
@@ -1188,10 +1231,7 @@ class DiscoveryService {
     }
     _identityLoaded = true;
     try {
-      final docs = await getApplicationDocumentsDirectory();
-      final file = File(
-        '${docs.path}${Platform.pathSeparator}$_identityFileName',
-      );
+      final file = await _identityFile();
       if (!await file.exists()) {
         _deviceNumber = _randomNumber();
         _manufacturerTag = await _detectManufacturerTag();
@@ -1237,12 +1277,40 @@ class DiscoveryService {
     }
   }
 
-  Future<void> _saveIdentity() async {
+  /// Resolves the identity file, migrating it out of the app's Documents
+  /// directory if found there from an older version. On iOS/macOS,
+  /// Documents is what UIFileSharingEnabled/"Open With" expose to the user
+  /// (intentionally, for received files) — internal identity data doesn't
+  /// belong alongside that, so it now lives in Application Support instead,
+  /// which is inside the sandbox but never user-browsable.
+  Future<File> _identityFile() async {
+    final support = await getApplicationSupportDirectory();
+    await support.create(recursive: true);
+    final target = File(
+      '${support.path}${Platform.pathSeparator}$_identityFileName',
+    );
+    if (await target.exists()) {
+      return target;
+    }
     try {
       final docs = await getApplicationDocumentsDirectory();
-      final file = File(
+      final legacy = File(
         '${docs.path}${Platform.pathSeparator}$_identityFileName',
       );
+      if (await legacy.exists()) {
+        await legacy.copy(target.path);
+        await legacy.delete();
+      }
+    } catch (_) {
+      // No legacy file, or migration failed — target simply won't exist yet
+      // and a fresh identity will be generated, same as a first launch.
+    }
+    return target;
+  }
+
+  Future<void> _saveIdentity() async {
+    try {
+      final file = await _identityFile();
       await file.writeAsString(
         jsonEncode({
           'baseName': _deviceBaseName,
