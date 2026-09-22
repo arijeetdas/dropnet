@@ -8,12 +8,12 @@ on:
 
 jobs:
   version:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       version: ${{ steps.extract.outputs.version }}
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Extract Version
         id: extract
@@ -24,16 +24,16 @@ jobs:
 
   build-android:
     needs: version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     env:
       VERSION: ${{ needs.version.outputs.version }}
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           distribution: zulu
           java-version: '17'
@@ -62,25 +62,25 @@ jobs:
           cp app-x86_64-release.apk DropNet-v${VERSION}-x86_64.apk
 
       - name: Upload Universal APK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: DropNet-v${{ env.VERSION }}-Universal
           path: build/app/outputs/flutter-apk/DropNet-v${{ env.VERSION }}-Universal.apk
 
       - name: Upload arm64-v8a APK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: DropNet-v${{ env.VERSION }}-arm64-v8a
           path: build/app/outputs/flutter-apk/DropNet-v${{ env.VERSION }}-arm64-v8a.apk
 
       - name: Upload armeabi-v7a APK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: DropNet-v${{ env.VERSION }}-armeabi-v7a
           path: build/app/outputs/flutter-apk/DropNet-v${{ env.VERSION }}-armeabi-v7a.apk
 
       - name: Upload x86_64 APK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: DropNet-v${{ env.VERSION }}-x86_64
           path: build/app/outputs/flutter-apk/DropNet-v${{ env.VERSION }}-x86_64.apk
@@ -93,7 +93,7 @@ jobs:
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -119,21 +119,21 @@ jobs:
           zip -r "DropNet-v${VERSION}-iOS.ipa" Payload
 
       - name: Upload IPA Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: DropNet-v${{ env.VERSION }}-iOS
           path: build/ios/iphoneos/DropNet-v${{ env.VERSION }}-iOS.ipa
 
   build-linux:
     needs: version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     env:
       VERSION: ${{ needs.version.outputs.version }}
       APPIMAGE_EXTRACT_AND_RUN: '1'
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -144,19 +144,24 @@ jobs:
       - name: Install Linux Build Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libfuse2
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
+          # No libfuse install needed: APPIMAGE_EXTRACT_AND_RUN=1 (set below)
+          # makes appimagetool extract-and-run itself instead of FUSE-mounting,
+          # which avoids depending on whatever the FUSE compat package happens
+          # to be named on a given Ubuntu release (it was renamed once already,
+          # libfuse2 -> libfuse2t64, in the 24.04 time_t transition).
 
       - name: Build Linux Packages
         run: bash tools/build_linux_release.sh
 
       - name: Upload DEB Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: DropNet-v${{ env.VERSION }}-Linux-amd64-deb
           path: deb_build/DropNet-v${{ env.VERSION }}-Linux-amd64.deb
 
       - name: Upload AppImage Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: DropNet-v${{ env.VERSION }}-Linux-x86_64-AppImage
           path: DropNet-v${{ env.VERSION }}-Linux-x86_64.AppImage
@@ -169,7 +174,7 @@ jobs:
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -186,11 +191,21 @@ jobs:
       - name: Create ZIP Package
         shell: pwsh
         run: |
-          $releaseDir = Get-ChildItem -Path build/windows -Recurse -Directory -Filter "Release" | Select-Object -First 1
-          Compress-Archive -Path "$($releaseDir.FullName)/*" -DestinationPath "DropNet-v${env:VERSION}-Windows.zip"
+          # Flutter's Windows release output always lands at this exact path
+          # (see flutter_tools' getWindowsBuildDirectory) — a recursive search
+          # for any directory named "Release" is unreliable, since Visual
+          # Studio's CMake generator creates a same-named intermediate
+          # directory for every plugin target too, and picking "first match"
+          # can silently zip the wrong (empty or partial) directory.
+          $releaseDir = "build/windows/x64/runner/Release"
+          if (-not (Test-Path $releaseDir)) {
+            Write-Error "Release output not found at $releaseDir"
+            exit 1
+          }
+          Compress-Archive -Path "$releaseDir/*" -DestinationPath "DropNet-v${env:VERSION}-Windows.zip"
 
       - name: Upload ZIP Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: DropNet-v${{ env.VERSION }}-Windows
           path: DropNet-v${{ env.VERSION }}-Windows.zip
@@ -203,7 +218,7 @@ jobs:
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -242,13 +257,13 @@ jobs:
             DropNet.app
 
       - name: Upload ZIP Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: DropNet-v${{ env.VERSION }}-macOS-zip
           path: build/macos/Build/Products/Release/DropNet-v${{ env.VERSION }}-macOS.zip
 
       - name: Upload DMG Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: DropNet-v${{ env.VERSION }}-macOS-dmg
           path: build/macos/Build/Products/Release/DropNet-v${{ env.VERSION }}-macOS.dmg

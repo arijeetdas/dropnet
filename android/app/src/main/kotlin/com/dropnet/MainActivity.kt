@@ -57,6 +57,11 @@ class MainActivity : FlutterFragmentActivity() {
 	private lateinit var filePickerLauncher: ActivityResultLauncher<Intent>
 	private val mainThreadHandler = Handler(Looper.getMainLooper())
 	private val appsExecutor = Executors.newSingleThreadExecutor()
+	// content:// URIs (share sheet, media/audio picker) are copied into the
+	// app's cache with a blocking stream read — for a large file that can take
+	// long enough to trigger an ANR if done on the main thread, so it always
+	// runs here instead.
+	private val shareExecutor = Executors.newSingleThreadExecutor()
 
 	override fun onCreate(savedInstanceState: Bundle?) {
 		super.onCreate(savedInstanceState)
@@ -106,19 +111,22 @@ class MainActivity : FlutterFragmentActivity() {
 
 			val clipData = activityResult.data?.clipData
 			val dataUri = activityResult.data?.data
-			val paths = mutableListOf<String>()
+			val uris = mutableListOf<Uri>()
 
 			if (clipData != null) {
 				for (i in 0 until clipData.itemCount) {
-					clipData.getItemAt(i).uri?.let { uri ->
-						resolveShareUriToPath(uri)?.let(paths::add)
-					}
+					clipData.getItemAt(i).uri?.let(uris::add)
 				}
 			} else if (dataUri != null) {
-				resolveShareUriToPath(dataUri)?.let(paths::add)
+				uris.add(dataUri)
 			}
 
-			result.success(paths)
+			shareExecutor.execute {
+				val paths = uris.mapNotNull { uri -> resolveShareUriToPath(uri) }
+				mainThreadHandler.post {
+					result.success(paths)
+				}
+			}
 		}
 	}
 
@@ -472,6 +480,7 @@ class MainActivity : FlutterFragmentActivity() {
 
 	override fun onDestroy() {
 		appsExecutor.shutdownNow()
+		shareExecutor.shutdownNow()
 		super.onDestroy()
 	}
 
@@ -669,7 +678,7 @@ class MainActivity : FlutterFragmentActivity() {
 			return
 		}
 
-		val collectedFiles = mutableListOf<String>()
+		val collectedUris = mutableListOf<Uri>()
 		val collectedTexts = mutableListOf<String>()
 		// Track URIs already processed from EXTRA_STREAM to avoid duplicating them
 		// when the same URIs also appear in clipData (Android always mirrors EXTRA_STREAM
@@ -685,7 +694,7 @@ class MainActivity : FlutterFragmentActivity() {
 			}
 			if (uri != null) {
 				seenUris.add(uri)
-				resolveShareUriToPath(uri)?.let(collectedFiles::add)
+				collectedUris.add(uri)
 			}
 		}
 
@@ -698,7 +707,7 @@ class MainActivity : FlutterFragmentActivity() {
 			}
 			uris?.forEach { uri ->
 				seenUris.add(uri)
-				resolveShareUriToPath(uri)?.let(collectedFiles::add)
+				collectedUris.add(uri)
 			}
 		}
 
@@ -714,7 +723,7 @@ class MainActivity : FlutterFragmentActivity() {
 				item.uri?.let { uri ->
 					// Skip URIs already handled via EXTRA_STREAM to prevent duplicate copies
 					if (seenUris.add(uri)) {
-						resolveShareUriToPath(uri)?.let(collectedFiles::add)
+						collectedUris.add(uri)
 					}
 				}
 				val text = item.text?.toString()?.trim().orEmpty()
@@ -724,33 +733,45 @@ class MainActivity : FlutterFragmentActivity() {
 			}
 		}
 
-		val dedupedFiles = collectedFiles.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
 		val dedupedTexts = collectedTexts.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
-		if (dedupedFiles.isEmpty() && dedupedTexts.isEmpty()) {
+		if (collectedUris.isEmpty() && dedupedTexts.isEmpty()) {
 			return
 		}
 
-		synchronized(pendingSharedFilePaths) {
-			for (path in dedupedFiles) {
-				if (!pendingSharedFilePaths.contains(path)) {
-					pendingSharedFilePaths.add(path)
-				}
+		// Resolving a content:// URI copies its full contents into the app's
+		// cache — done off the main thread so a large shared file can't block
+		// the UI long enough to trigger an ANR.
+		shareExecutor.execute {
+			val collectedFiles = collectedUris.mapNotNull { uri -> resolveShareUriToPath(uri) }
+			val dedupedFiles = collectedFiles.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+			if (dedupedFiles.isEmpty() && dedupedTexts.isEmpty()) {
+				return@execute
 			}
-			for (text in dedupedTexts) {
-				if (!pendingSharedTexts.contains(text)) {
-					pendingSharedTexts.add(text)
-				}
-			}
-		}
 
-		if (emitToFlutter) {
-			shareChannel?.invokeMethod(
-				"sharedPayloadUpdated",
-				mapOf(
-					"files" to dedupedFiles,
-					"texts" to dedupedTexts,
-				),
-			)
+			mainThreadHandler.post {
+				synchronized(pendingSharedFilePaths) {
+					for (path in dedupedFiles) {
+						if (!pendingSharedFilePaths.contains(path)) {
+							pendingSharedFilePaths.add(path)
+						}
+					}
+					for (text in dedupedTexts) {
+						if (!pendingSharedTexts.contains(text)) {
+							pendingSharedTexts.add(text)
+						}
+					}
+				}
+
+				if (emitToFlutter) {
+					shareChannel?.invokeMethod(
+						"sharedPayloadUpdated",
+						mapOf(
+							"files" to dedupedFiles,
+							"texts" to dedupedTexts,
+						),
+					)
+				}
+			}
 		}
 	}
 
