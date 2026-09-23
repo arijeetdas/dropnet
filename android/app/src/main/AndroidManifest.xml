@@ -14,11 +14,19 @@
         android:label="DropNet"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+        <!-- The one and only app instance.
+             - singleTask: at most one MainActivity exists; a new launch or
+               share is delivered to it through onNewIntent.
+             - Default task affinity (the package name), not "". With an empty
+               affinity Android could not match a new launch to DropNet's
+               existing task, and never pruned old DropNet tasks from Recents,
+               so every share showed up as another app instance.
+             - No share intent-filters here: shares arrive through
+               ShareReceiverActivity, which forwards them to this activity. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:launchMode="singleTop"
-            android:taskAffinity=""
+            android:launchMode="singleTask"
             android:theme="@style/LaunchTheme"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
@@ -31,6 +39,28 @@
               android:name="io.flutter.embedding.android.NormalTheme"
               android:resource="@style/NormalTheme"
               />
+            <!-- Intent filter to satisfy Flutter CLI launcher activity check.
+                 tools:node="remove" ensures the entire intent filter is stripped out during Gradle manifest merging
+                 to avoid conflicts and duplicate launcher issues. -->
+            <intent-filter tools:node="remove">
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Share sheet target. Invisible and short-lived: it forwards the
+             share (and its read permission) to MainActivity and finishes.
+             Its own empty affinity, noHistory and excludeFromRecents keep it
+             out of both DropNet's task and Recents. The label is what the
+             share sheet shows. -->
+        <activity
+            android:name=".ShareReceiverActivity"
+            android:exported="true"
+            android:label="DropNet"
+            android:taskAffinity=""
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
             <intent-filter>
                 <action android:name="android.intent.action.SEND"/>
                 <category android:name="android.intent.category.DEFAULT"/>
@@ -40,13 +70,6 @@
                 <action android:name="android.intent.action.SEND_MULTIPLE"/>
                 <category android:name="android.intent.category.DEFAULT"/>
                 <data android:mimeType="*/*"/>
-            </intent-filter>
-            <!-- Intent filter to satisfy Flutter CLI launcher activity check.
-                 tools:node="remove" ensures the entire intent filter is stripped out during Gradle manifest merging
-                 to avoid conflicts and duplicate launcher issues. -->
-            <intent-filter tools:node="remove">
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
 

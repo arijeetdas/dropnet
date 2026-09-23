@@ -151,6 +151,58 @@ void main() {
       },
     );
 
+    test('a rejected session is not offered file by file', () async {
+      final sender = TcpTransferService();
+      final receiver = TcpTransferService();
+      final tempRoot = await Directory.systemTemp.createTemp('dropnet_reject_');
+      final sourceDir = Directory(
+        '${tempRoot.path}${Platform.pathSeparator}src',
+      )..createSync(recursive: true);
+      final receiverDir = Directory(
+        '${tempRoot.path}${Platform.pathSeparator}dst',
+      )..createSync(recursive: true);
+
+      final files = <File>[
+        for (var index = 0; index < 3; index++)
+          await _createRandomFile(sourceDir, 'reject_$index.bin', 64 * 1024),
+      ];
+
+      final seenRequestIds = <String>{};
+      final incomingSub = receiver.incomingRequestsStream.listen((requests) {
+        for (final request in requests) {
+          seenRequestIds.add(request.id);
+          receiver.rejectIncomingRequest(request.id);
+        }
+      });
+
+      await receiver.startReceiver(
+        saveDirectory: receiverDir.path,
+        port: 45505,
+      );
+
+      await sender.sendFiles(
+        target: _device(
+          '127.0.0.1',
+          'receiver-reject',
+          tlsCertificateSha256: await _localFingerprint(),
+        ),
+        filePaths: files.map((file) => file.path).toList(growable: false),
+        senderDeviceName: 'sender-reject',
+        port: 45505,
+      );
+
+      expect(
+        seenRequestIds,
+        hasLength(1),
+        reason: 'After a rejection the sender must stop the session.',
+      );
+
+      await incomingSub.cancel();
+      await sender.dispose();
+      await receiver.dispose();
+      await tempRoot.delete(recursive: true);
+    });
+
     test(
       'parallel multi-target transfers remain stable with strong throughput',
       () async {

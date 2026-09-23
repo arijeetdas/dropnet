@@ -25,6 +25,7 @@ import '../../core/utils/dialog_utils.dart';
 import '../../core/utils/file_utils.dart';
 import '../../models/device_model.dart';
 import '../../widgets/macos_smiling_logo.dart';
+import '../../widgets/chromeos_logo.dart';
 import '../../widgets/adaptive_nav_scaffold.dart';
 import '../../widgets/pairing_code_dialog.dart';
 import '../../widgets/tab_shell_scope.dart';
@@ -57,6 +58,7 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
   bool _refreshingNearby = false;
   bool _extractingApk = false;
   bool _importingSharedFiles = false;
+  Timer? _pendingImportRetry;
   Timer? _tempShareCopyResetTimer;
   Timer? _iosBackgroundRefreshTimer;
   bool _iosBackgroundRefreshInFlight = false;
@@ -97,6 +99,7 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
   void dispose() {
     _tempShareCopyResetTimer?.cancel();
     _iosBackgroundRefreshTimer?.cancel();
+    _pendingImportRetry?.cancel();
     super.dispose();
   }
 
@@ -136,6 +139,23 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
     final hasPendingImports =
         state.pendingSharedFilePaths.isNotEmpty ||
         state.pendingSharedTexts.isNotEmpty;
+    // Shared files are only taken in while nothing covers this screen. The
+    // "Preparing shared files" popup is still open in the very frame the
+    // files arrive (it closes right after), and closing a popup doesn't
+    // rebuild this screen, so the files used to sit in the pending list
+    // forever unless something unrelated happened to trigger a rebuild. Keep
+    // checking until they can be imported.
+    if (hasPendingImports &&
+        !canImportPending &&
+        !_importingSharedFiles &&
+        isActiveBranch &&
+        !(_pendingImportRetry?.isActive ?? false)) {
+      _pendingImportRetry = Timer(const Duration(milliseconds: 300), () {
+        if (mounted) {
+          setState(() {});
+        }
+      });
+    }
     if (canImportPending && hasPendingImports && !_importingSharedFiles) {
       _importingSharedFiles = true;
       final navigator = Navigator.of(context, rootNavigator: true);
@@ -185,7 +205,7 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
               );
             });
 
-            await _addPaths(
+            final added = await _addPaths(
               pending,
               onProgress: (done, total) {
                 progress.value = total == 0 ? 100 : (done / total * 100);
@@ -201,14 +221,26 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
             if (!mounted) {
               return;
             }
+            final missing = pending.length - added;
             ScaffoldMessenger.of(this.context).showSnackBar(
               SnackBar(
-                content: Text('${pending.length} shared file(s) added.'),
+                content: Text(
+                  missing > 0 && added == 0
+                      ? 'The shared file(s) could not be opened. Try sharing again.'
+                      : missing > 0
+                      ? '$added shared file(s) added. $missing could not be opened.'
+                      : '$added shared file(s) added.',
+                ),
               ),
             );
           }
         } finally {
           _importingSharedFiles = false;
+          // Files shared while this import ran are waiting in the pending
+          // list; rebuild so they're picked up now, not on some later rebuild.
+          if (mounted) {
+            setState(() {});
+          }
         }
       });
     }
@@ -1094,6 +1126,13 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
                                 ? colorScheme.primary
                                 : colorScheme.onSurfaceVariant,
                           )
+                        : device.deviceType == DeviceType.chromeos
+                        ? ChromeOSLogo(
+                            size: 24,
+                            color: selected
+                                ? colorScheme.primary
+                                : colorScheme.onSurfaceVariant,
+                          )
                         : Icon(
                             _iconForDeviceType(device.deviceType),
                             color: selected
@@ -1648,6 +1687,8 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
         return Icons.window_rounded;
       case DeviceType.linux:
         return Icons.terminal_rounded;
+      case DeviceType.chromeos:
+        return Icons.laptop_chromebook_rounded;
     }
   }
 
@@ -2213,7 +2254,9 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
     return file.path;
   }
 
-  Future<void> _addPaths(
+  /// Adds every path that exists and isn't already selected. Returns how
+  /// many were actually added.
+  Future<int> _addPaths(
     Iterable<String> paths, {
     void Function(int done, int total)? onProgress,
   }) async {
@@ -2247,12 +2290,13 @@ class _SendFilesScreenState extends ConsumerState<SendFilesScreen> {
       }
       onProgress?.call(i + 1, pathList.length);
     }
-    if (fresh.isEmpty) {
-      return;
+    if (fresh.isEmpty || !mounted) {
+      return 0;
     }
     setState(() {
       _files.addAll(fresh);
     });
+    return fresh.length;
   }
 
   Future<void> _send() async {

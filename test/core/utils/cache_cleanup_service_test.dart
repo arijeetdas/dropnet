@@ -43,6 +43,32 @@ void main() {
       await tempDir.delete(recursive: true);
     });
 
+    test('sweepColdStart keeps Android share-intent imports and parents of excluded paths', () async {
+      final tempDir = await Directory.systemTemp.createTemp('dropnet_cache_test_');
+      final originalPlatform = PathProviderPlatform.instance;
+      PathProviderPlatform.instance = _FakePathProviderPlatform(tempDir.path);
+
+      // A share-intent copy that is still in flight (not yet in the pending
+      // list, so not in excludePaths) must survive.
+      final importsDir = Directory('${tempDir.path}/shared_imports')..createSync();
+      final inFlight = File('${importsDir.path}/whatsapp_video.mp4')
+        ..writeAsStringSync('data');
+      // An excluded file nested inside a subfolder must survive together
+      // with the folder that holds it.
+      final nestedDir = Directory('${tempDir.path}/nested')..createSync();
+      final nestedKeep = File('${nestedDir.path}/keep.bin')..writeAsStringSync('keep');
+      final junk = File('${tempDir.path}/junk.txt')..writeAsStringSync('junk');
+
+      await CacheCleanupService.sweepColdStart(excludePaths: [nestedKeep.path]);
+
+      expect(await inFlight.exists(), isTrue);
+      expect(await nestedKeep.exists(), isTrue);
+      expect(await junk.exists(), isFalse);
+
+      PathProviderPlatform.instance = originalPlatform;
+      await tempDir.delete(recursive: true);
+    });
+
     test('sweepOnResumeIfDue removes only stale dropnet_web_pending entries', () async {
       final pending = Directory(
         '${Directory.systemTemp.path}${Platform.pathSeparator}dropnet_web_pending',

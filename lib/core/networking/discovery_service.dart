@@ -11,6 +11,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../models/device_model.dart';
+import '../platform/device_environment.dart';
 import '../security/local_tls_certificate_service.dart';
 
 class DiscoveryService {
@@ -68,16 +69,21 @@ class DiscoveryService {
 
   Stream<List<DeviceModel>> get devicesStream => _devicesController.stream;
   String get deviceName => '$_deviceBaseName #$_deviceNumber';
-  String get manufacturerTag => _manufacturerTag;
+  /// Manufacturer shown to the user and advertised to peers. Empty on
+  /// ChromeOS: a Chromebook reports its OEM through the Android container,
+  /// which isn't meaningful there (same as Windows, which has no tag). The
+  /// stored value is left untouched in case detection ever changes.
+  String get manufacturerTag =>
+      DeviceEnvironment.isChromeOS ? '' : _manufacturerTag;
   String get cpuArchitectureTag => _cpuArchitectureTag;
   String get platformTag => _detectPlatformTag();
   String get deviceBaseName => _deviceBaseName;
   int get deviceNumber => _deviceNumber;
   String get deviceId => _deviceId;
   String get localTlsCertificateSha256 => _tlsCertificateFingerprint;
-  String get taggedDeviceName => _manufacturerTag.trim().isEmpty
+  String get taggedDeviceName => manufacturerTag.trim().isEmpty
       ? deviceName
-      : '$deviceName • ${_manufacturerTag.trim()}';
+      : '$deviceName • ${manufacturerTag.trim()}';
 
   Future<String> ensureLocalTlsCertificateSha256() async {
     await _refreshTlsFingerprintAndCertificate();
@@ -294,6 +300,9 @@ class DiscoveryService {
   }
 
   Future<void> updateManufacturerTag(String newTag) async {
+    if (DeviceEnvironment.isChromeOS) {
+      return;
+    }
     final normalized = _normalizeManufacturer(newTag);
     if (normalized == _manufacturerTag) {
       return;
@@ -362,6 +371,9 @@ class DiscoveryService {
   }
 
   Future<void> resetManufacturerTagToAuto() async {
+    if (DeviceEnvironment.isChromeOS) {
+      return;
+    }
     final detected = await _detectManufacturerTag();
     final normalized = _normalizeManufacturer(detected);
     if (normalized == _manufacturerTag) {
@@ -613,6 +625,7 @@ class DiscoveryService {
             isOnline: true,
             lastSeen: seenAt,
           ),
+          fromUdp: true,
         );
 
         final replyPort = peerDiscoveryPort ?? datagram.port;
@@ -694,7 +707,7 @@ class DiscoveryService {
         attributes: {
           'deviceId': _deviceId,
           'deviceType': _detectType().name,
-          'manufacturer': _manufacturerTag,
+          'manufacturer': manufacturerTag,
           'platform': platformTag,
           'tlsCertificateSha256': _tlsCertificateFingerprint,
           'pairingModeEnabled': _pairingModeEnabled ? '1' : '0',
@@ -777,10 +790,9 @@ class DiscoveryService {
       final dynamic dynService = service;
       final List<dynamic>? addresses = dynService.hostAddresses;
       if (addresses != null && addresses.isNotEmpty) {
-        final ip = addresses.firstWhere(
-          (addr) => !addr.toString().contains(':'),
-          orElse: () => addresses.first,
-        ).toString().trim();
+        final ip = await _pickReachablePeerAddress(
+          addresses.map((addr) => addr.toString().trim()).toList(),
+        );
         if (ip.isNotEmpty) {
           host = ip;
         }
@@ -881,8 +893,76 @@ class DiscoveryService {
     );
   }
 
-  void _upsertDiscoveredDevice(String key, DeviceModel device) {
+  /// Peers (desktops especially) advertise every adapter they have over mDNS:
+  /// Hyper-V/WSL/Docker/VirtualBox bridges, VPN tunnels, Android's Wi-Fi
+  /// Direct `p2p0` (192.168.49.1 on many phones), hotspot interfaces. Taking
+  /// simply the first IPv4 often picked one of those. Some are unreachable
+  /// (transfer fails with a network error), and some exist on *this* device
+  /// too (192.168.56.1, 172.17.0.1, 192.168.49.1 …), so the sender connected
+  /// to itself, got its own certificate back, and failed with "Secure
+  /// channel verification failed". Prefer an address on a subnet we share,
+  /// and never one of our own.
+  Future<String> _pickReachablePeerAddress(List<String> candidates) async {
+    final ipv4 = candidates
+        .where((address) => address.isNotEmpty && !address.contains(':'))
+        .toList(growable: false);
+    if (ipv4.isEmpty) {
+      return candidates.isEmpty ? '' : candidates.first;
+    }
+    List<_Ipv4Endpoint> local;
+    try {
+      local = await _listEligibleIpv4Addresses();
+    } catch (_) {
+      local = const <_Ipv4Endpoint>[];
+    }
+    local.sort(_compareIpv4Endpoints);
+    final ownAddresses = local.map((e) => e.address.address).toSet();
+    final usable = ipv4
+        .where((address) => _isUsableIpv4(address))
+        .where((address) => !ownAddresses.contains(address))
+        .toList(growable: false);
+    // Local interfaces are sorted best-first (Wi-Fi > Ethernet > others), so
+    // the first match is on the network DropNet actually uses.
+    for (final endpoint in local) {
+      for (final address in usable) {
+        if (_same24Subnet(endpoint.address.address, address)) {
+          return address;
+        }
+      }
+    }
+    if (usable.isNotEmpty) {
+      return usable.first;
+    }
+    return ipv4.first;
+  }
+
+  // Source address of the last UDP presence packet per device. A datagram's
+  // source address is proven reachable from here, unlike an address a peer
+  // merely advertises over mDNS.
+  final Map<String, ({String ip, DateTime at})> _udpConfirmedAddresses = {};
+
+  void _upsertDiscoveredDevice(
+    String key,
+    DeviceModel device, {
+    bool fromUdp = false,
+  }) {
     final normalizedKey = key.trim().isEmpty ? device.ipAddress : key.trim();
+    if (fromUdp) {
+      _udpConfirmedAddresses[normalizedKey] = (
+        ip: device.ipAddress,
+        at: DateTime.now(),
+      );
+    } else {
+      final confirmed = _udpConfirmedAddresses[normalizedKey];
+      if (confirmed != null &&
+          confirmed.ip != device.ipAddress &&
+          DateTime.now().difference(confirmed.at) <
+              _staleDeviceThreshold * 3) {
+        // mDNS resolves keep re-firing; don't let them flip a working,
+        // UDP-confirmed address to a different advertised one.
+        device = device.copyWith(ipAddress: confirmed.ip);
+      }
+    }
     final duplicates = <String>[];
     for (final entry in _devices.entries) {
       if (entry.key == normalizedKey) {
@@ -1131,6 +1211,9 @@ class DiscoveryService {
       return DeviceType.phone;
     }
     if (Platform.isAndroid) {
+      if (DeviceEnvironment.isChromeOS) {
+        return DeviceType.chromeos;
+      }
       final lower = _manufacturerTag.toLowerCase();
       if (lower.contains('tablet') ||
           lower.contains('pad') ||
@@ -1160,7 +1243,9 @@ class DiscoveryService {
       return _normalizePlatformLabel('Web');
     }
     if (Platform.isAndroid) {
-      return _normalizePlatformLabel('Android');
+      return _normalizePlatformLabel(
+        DeviceEnvironment.isChromeOS ? 'ChromeOS' : 'Android',
+      );
     }
     if (Platform.isIOS) {
       return _normalizePlatformLabel(
@@ -1196,6 +1281,9 @@ class DiscoveryService {
     }
     if (lower == 'android') {
       return 'Android';
+    }
+    if (lower == 'chromeos' || lower == 'chrome os') {
+      return 'ChromeOS';
     }
     if (lower == 'linux') {
       return 'Linux';
@@ -1415,7 +1503,7 @@ class DiscoveryService {
     final device = DeviceModel(
       deviceId: _deviceId,
       deviceName: deviceName,
-      manufacturer: _manufacturerTag,
+      manufacturer: manufacturerTag,
       platform: platformTag,
       ipAddress: ipAddress,
       deviceType: _detectType(),

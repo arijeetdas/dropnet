@@ -21,6 +21,14 @@ class CacheCleanupService {
   CacheCleanupService._();
 
   static const _lastResumeSweepKey = 'cache_cleanup.last_resume_sweep_ms';
+
+  /// Android's native share handler copies shared content that has no
+  /// directly readable path (WhatsApp, Telegram, Google Photos cloud items,
+  /// most apps' own FileProviders) into `<cache>/shared_imports/`. That copy
+  /// can still be running, or be sitting in the pending list, while the cold
+  /// start sweep runs — deleting it is exactly what made those shares vanish.
+  /// The native side prunes this folder itself (entries older than a day).
+  static const _preservedTopLevelNames = <String>{'shared_imports'};
   static const Duration _resumeSweepMinInterval = Duration(hours: 6);
   static const Duration _webPendingMaxAge = Duration(minutes: 30);
   static const Duration _webSessionsMaxAge = Duration(minutes: 30);
@@ -35,7 +43,11 @@ class CacheCleanupService {
   }) async {
     try {
       final tempDir = await getTemporaryDirectory();
-      await _clearDirectoryContents(tempDir, excludePaths: excludePaths);
+      await _clearDirectoryContents(
+        tempDir,
+        excludePaths: excludePaths,
+        preserveNames: _preservedTopLevelNames,
+      );
     } catch (_) {}
     // iOS only: the Share Extension's App Group staging directory lives
     // outside the standard temp/cache tree above, so it needs its own sweep —
@@ -137,13 +149,22 @@ class CacheCleanupService {
   static Future<void> _clearDirectoryContents(
     Directory dir, {
     List<String> excludePaths = const [],
+    Set<String> preserveNames = const <String>{},
   }) async {
     if (!await dir.exists()) {
       return;
     }
     final excluded = excludePaths.map((path) => p.normalize(path)).toSet();
     await for (final entity in dir.list(followLinks: false)) {
-      if (excluded.contains(p.normalize(entity.path))) {
+      final entityPath = p.normalize(entity.path);
+      if (preserveNames.contains(p.basename(entityPath))) {
+        continue;
+      }
+      // Protect both the excluded paths themselves and any directory that
+      // contains one — excluded files usually live in a subfolder, and
+      // deleting that folder recursively deletes them anyway.
+      if (excluded.contains(entityPath) ||
+          excluded.any((path) => p.isWithin(entityPath, path))) {
         continue;
       }
       try {

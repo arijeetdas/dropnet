@@ -20,6 +20,7 @@ import '../platform/media_store_service.dart';
 import '../platform/share_intent_service.dart';
 import '../platform/android_saf_service.dart';
 import '../platform/android_storage_service.dart';
+import '../platform/device_environment.dart';
 import '../networking/discovery_service.dart';
 import '../networking/temporary_link_share_service.dart';
 import '../networking/tcp_transfer_service.dart';
@@ -130,6 +131,7 @@ class AppState {
     required this.transferSessionActive,
     required this.pendingSharedFilePaths,
     required this.pendingSharedTexts,
+    this.sharedImportInProgress = false,
     required this.pendingTransferPreviewTexts,
     required this.pendingTransferPreviewFiles,
     required this.pendingApkPreviewFiles,
@@ -193,6 +195,10 @@ class AppState {
   final bool transferSessionActive;
   final List<String> pendingSharedFilePaths;
   final List<String> pendingSharedTexts;
+
+  /// Android: shared content is still being copied in by the native share
+  /// handler (large files from apps without a direct file path).
+  final bool sharedImportInProgress;
   final List<String> pendingTransferPreviewTexts;
   final List<TransferModel> pendingTransferPreviewFiles;
   final List<TransferModel> pendingApkPreviewFiles;
@@ -323,6 +329,7 @@ class AppState {
     bool? transferSessionActive,
     List<String>? pendingSharedFilePaths,
     List<String>? pendingSharedTexts,
+    bool? sharedImportInProgress,
     List<String>? pendingTransferPreviewTexts,
     List<TransferModel>? pendingTransferPreviewFiles,
     List<TransferModel>? pendingApkPreviewFiles,
@@ -392,6 +399,8 @@ class AppState {
       pendingSharedFilePaths:
           pendingSharedFilePaths ?? this.pendingSharedFilePaths,
       pendingSharedTexts: pendingSharedTexts ?? this.pendingSharedTexts,
+      sharedImportInProgress:
+          sharedImportInProgress ?? this.sharedImportInProgress,
       pendingTransferPreviewTexts:
           pendingTransferPreviewTexts ?? this.pendingTransferPreviewTexts,
       pendingTransferPreviewFiles:
@@ -498,6 +507,14 @@ final temporaryLinkShareServiceProvider = Provider<TemporaryLinkShareService>((
   return service;
 });
 
+/// Custom device icons offered on a Chromebook, in display order.
+const chromeOSCustomDeviceIcons = <DeviceType>[
+  DeviceType.chromeos,
+  DeviceType.laptop,
+  DeviceType.desktop,
+  DeviceType.tablet,
+];
+
 final shareIntentServiceProvider = Provider<ShareIntentService>((ref) {
   final service = ShareIntentService();
   ref.onDispose(() {
@@ -590,6 +607,7 @@ class AppController extends StateNotifier<AppState> {
   StreamSubscription<TransferModel>? _webCompletedTransferSub;
   StreamSubscription<TemporaryLinkShareState>? _tempShareSub;
   StreamSubscription<SharedIntentPayload>? _sharedPayloadSub;
+  StreamSubscription<bool>? _sharedImportSub;
 
   List<TransferHistoryEntry> _tcpHistory = const [];
   List<TransferHistoryEntry> _webHistory = const [];
@@ -621,6 +639,12 @@ class AppController extends StateNotifier<AppState> {
           (e) => e.name == restoredCustomDeviceIconStr,
         );
       } catch (_) {}
+    }
+    // A Chromebook only offers ChromeOS / Laptop / Desktop / Tablet as custom
+    // icons (no phone), with ChromeOS preselected.
+    if (DeviceEnvironment.isChromeOS &&
+        !chromeOSCustomDeviceIcons.contains(restoredCustomDeviceIcon)) {
+      restoredCustomDeviceIcon = DeviceType.chromeos;
     }
     final restoredThemeSeedValue =
         _prefs!.getInt(_themeSeedKey) ?? Colors.indigo.toARGB32();
@@ -679,6 +703,7 @@ class AppController extends StateNotifier<AppState> {
       // share-intent event arriving in the gap before a listener existed was
       // silently dropped — the app just opened with nothing imported.
       _sharedPayloadSub ??= _shareIntent.sharedPayloadStream.listen((payload) {
+        _reportFailedSharedImports(payload.failedCount);
         if (payload.isEmpty) {
           return;
         }
@@ -695,6 +720,13 @@ class AppController extends StateNotifier<AppState> {
           pendingSharedTexts: mergedTexts,
         );
       });
+      _sharedImportSub ??= _shareIntent.importInProgressStream.listen((
+        importing,
+      ) {
+        if (state.sharedImportInProgress != importing) {
+          state = state.copyWith(sharedImportInProgress: importing);
+        }
+      });
     });
 
     final downloadDir = await downloadDirFuture;
@@ -707,6 +739,13 @@ class AppController extends StateNotifier<AppState> {
     });
     await shareIntentFuture;
     final initialShared = await _shareIntent.consumePendingSharedPayload();
+    // Applied right away (not with the big state update below) so a later
+    // "import finished" event from the stream can't be overwritten by this
+    // older snapshot.
+    if (initialShared.importing && !state.sharedImportInProgress) {
+      state = state.copyWith(sharedImportInProgress: true);
+    }
+    _reportFailedSharedImports(initialShared.failedCount);
     // Only safe now, after any share-intent file has been claimed above —
     // this wipes the OS temp/cache directory, which on Android is the same
     // directory a cold "share to DropNet" launch just staged a file into.
@@ -795,8 +834,17 @@ class AppController extends StateNotifier<AppState> {
       saveMediaToGallery: restoredSaveMediaToGallery,
       categorizeReceivedFiles: restoredCategorizeReceivedFiles,
       rememberCategorizeFilesChoice: restoredRememberCategorizeFilesChoice,
-      pendingSharedFilePaths: initialShared.filePaths,
-      pendingSharedTexts: initialShared.texts,
+      // Merged, not assigned: a share delivered through the live stream
+      // while bootstrap was still running (warm share, or a slow cold-start
+      // copy finishing early) is already in state and must not be wiped.
+      pendingSharedFilePaths: _mergeUnique(
+        state.pendingSharedFilePaths,
+        initialShared.filePaths,
+      ),
+      pendingSharedTexts: _mergeUnique(
+        state.pendingSharedTexts,
+        initialShared.texts,
+      ),
       trustedPeers: restoredTrustedPeers,
       favoritePeers: restoredFavoritePeers,
       quickSaveMode: effectiveQuickSaveMode,
@@ -943,7 +991,34 @@ class AppController extends StateNotifier<AppState> {
       _emitCombinedHistory();
     });
 
-    _incomingSub ??= _transfer.incomingRequestsStream.listen((requests) {
+    _incomingSub ??= _transfer.incomingRequestsStream.listen(
+      _onIncomingTransferRequests,
+    );
+    // The TCP receiver starts during bootstrap, before this subscription
+    // exists, and its request stream doesn't replay. A request that arrived
+    // in that window was never shown to the user and silently expired into a
+    // rejection, so catch up with whatever is already waiting.
+    final alreadyPending = _transfer.pendingIncomingRequests;
+    if (alreadyPending.isNotEmpty) {
+      _onIncomingTransferRequests(alreadyPending);
+    }
+
+    _incomingPairingSub ??= _transfer.incomingPairingRequestsStream.listen((
+      requests,
+    ) {
+      state = state.copyWith(pendingPairingRequests: requests);
+    });
+
+    _incomingManualConnectSub ??= _transfer.incomingManualConnectRequestsStream.listen((
+      requests,
+    ) {
+      state = state.copyWith(pendingManualConnectRequests: requests);
+    });
+
+    _setupRemainingStreamSubscribers();
+  }
+
+  void _onIncomingTransferRequests(List<IncomingTransferRequest> requests) {
       var incomingRequests = requests;
 
       if (state.requirePairingCodeForDirectTransfers) {
@@ -990,20 +1065,9 @@ class AppController extends StateNotifier<AppState> {
       }
 
       state = state.copyWith(pendingIncomingRequests: incomingRequests);
-    });
+  }
 
-    _incomingPairingSub ??= _transfer.incomingPairingRequestsStream.listen((
-      requests,
-    ) {
-      state = state.copyWith(pendingPairingRequests: requests);
-    });
-
-    _incomingManualConnectSub ??= _transfer.incomingManualConnectRequestsStream.listen((
-      requests,
-    ) {
-      state = state.copyWith(pendingManualConnectRequests: requests);
-    });
-
+  void _setupRemainingStreamSubscribers() {
     _remoteManualDisconnectSub ??= _transfer.remoteManualDisconnectNoticesStream.listen((notices) {
       final nextNotices = List<RemoteManualDisconnectNotice>.from(state.pendingManualDisconnectNotices);
       var updated = false;
@@ -1170,7 +1234,33 @@ class AppController extends StateNotifier<AppState> {
     return _discovery.ensureLocalTlsCertificateSha256();
   }
 
+  /// Gives the sender the freshest discovery record for a target right
+  /// before each connection attempt (see [TcpTransferService.targetResolver]).
+  DeviceModel? _latestDiscoveredTarget(DeviceModel target) {
+    final id = target.deviceId.trim();
+    if (id.isEmpty) {
+      return null;
+    }
+    final fresh = state.devices
+        .where((device) => device.deviceId.trim() == id)
+        .firstOrNull;
+    if (fresh == null) {
+      return null;
+    }
+    if ((fresh.tlsCertificateSha256 ?? '').trim().isEmpty ||
+        fresh.ipAddress.trim().isEmpty) {
+      return null;
+    }
+    // Paired devices stay pinned to the identity recorded when pairing; a
+    // discovery record claiming a different one is never trusted silently.
+    if (state.requirePairingCodeForDirectTransfers && !isTargetTrusted(fresh)) {
+      return null;
+    }
+    return fresh;
+  }
+
   Future<void> _updateTransferIdentity() async {
+    _transfer.targetResolver = _latestDiscoveredTarget;
     final fingerprint = await _discovery.ensureLocalTlsCertificateSha256();
     _transfer.setIdentity(
       name: _discovery.deviceName,
@@ -2106,6 +2196,20 @@ class AppController extends StateNotifier<AppState> {
     final validValue = value.clamp(10, 600);
     state = state.copyWith(incomingRequestTimeoutSeconds: validValue);
     unawaited(_saveIncomingRequestTimeoutSeconds(validValue));
+  }
+
+  /// A share that can't be read used to just vanish; tell the user instead.
+  void _reportFailedSharedImports(int failedCount) {
+    if (failedCount <= 0) {
+      return;
+    }
+    final message = failedCount == 1
+        ? 'A shared file could not be imported. Check free storage and try sharing it again.'
+        : '$failedCount shared files could not be imported. Check free storage and try sharing them again.';
+    state = state.copyWith(
+      pendingSystemMessages: List<String>.from(state.pendingSystemMessages)
+        ..add(message),
+    );
   }
 
   void addPendingSharedFiles(List<String> filePaths) {
@@ -3214,6 +3318,7 @@ class AppController extends StateNotifier<AppState> {
     _webCompletedTransferSub?.cancel();
     _tempShareSub?.cancel();
     _sharedPayloadSub?.cancel();
+    _sharedImportSub?.cancel();
     super.dispose();
   }
 }

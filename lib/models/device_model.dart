@@ -1,6 +1,8 @@
 import 'dart:convert';
 
-enum DeviceType { phone, tablet, desktop, web, other, laptop, android, apple, macos, windows, linux }
+// New values go at the end: peers exchange these by name, and an older peer
+// that doesn't know a value falls back to `other`.
+enum DeviceType { phone, tablet, desktop, web, other, laptop, android, apple, macos, windows, linux, chromeos }
 
 class DeviceModel {
   const DeviceModel({
@@ -47,6 +49,9 @@ class DeviceModel {
     }
     if (lower == 'android') {
       return 'Android';
+    }
+    if (lower == 'chromeos' || lower == 'chrome os') {
+      return 'ChromeOS';
     }
     if (lower == 'linux') {
       return 'Linux';

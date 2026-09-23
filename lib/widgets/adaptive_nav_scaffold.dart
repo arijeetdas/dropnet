@@ -10,6 +10,7 @@ import 'package:flutter_dynamic_icon_plus/flutter_dynamic_icon_plus.dart';
 
 
 import '../core/state/app_state.dart';
+import '../core/platform/device_environment.dart';
 
 class AdaptiveNavScaffold extends ConsumerWidget {
   const AdaptiveNavScaffold({
@@ -357,8 +358,12 @@ class AdaptiveNavScaffold extends ConsumerWidget {
     final manufacturer = state.localDeviceManufacturer.trim();
     // No meaningful manufacturer concept on iOS/iPadOS (Apple only) or
     // Windows (no equivalent field) — keep it out of this popup there too.
-    final hideManufacturerTag =
-        !kIsWeb && (defaultTargetPlatform == TargetPlatform.iOS || defaultTargetPlatform == TargetPlatform.windows);
+    // Nor on ChromeOS, where the Android container reports the Chromebook's
+    // OEM rather than anything the user would recognise as this device.
+    final hideManufacturerTag = DeviceEnvironment.isChromeOS ||
+        (!kIsWeb &&
+            (defaultTargetPlatform == TargetPlatform.iOS ||
+                defaultTargetPlatform == TargetPlatform.windows));
 
     String activeIconAsset = 'assets/icon/app_icon.png';
     if (!kIsWeb && Platform.isAndroid) {

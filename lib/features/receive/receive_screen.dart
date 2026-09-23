@@ -8,6 +8,7 @@ import '../../core/state/app_state.dart';
 import '../../models/device_model.dart';
 import '../../models/private_network_profile.dart';
 import '../../widgets/macos_smiling_logo.dart';
+import '../../widgets/chromeos_logo.dart';
 import '../../core/utils/dialog_utils.dart';
 import '../../widgets/adaptive_nav_scaffold.dart';
 import '../../widgets/tab_shell_scope.dart';
@@ -339,6 +340,15 @@ class _ReceiveScreenState extends ConsumerState<ReceiveScreen>
                                           size: platformIconSize,
                                           color: colorScheme.onPrimaryContainer,
                                         )
+                                      : _showsChromeOSIcon(
+                                          useDefaultIcon: state.useDefaultDeviceIcon,
+                                          platform: state.localDevicePlatform,
+                                          customIcon: state.customDeviceIcon,
+                                        )
+                                      ? ChromeOSLogo(
+                                          size: platformIconSize,
+                                          color: colorScheme.onPrimaryContainer,
+                                        )
                                       : Icon(
                                           state.useDefaultDeviceIcon
                                               ? _getPlatformIcon(state.localDevicePlatform)
@@ -469,6 +479,15 @@ class _ReceiveScreenState extends ConsumerState<ReceiveScreen>
                                       children: [
                                         (!state.useDefaultDeviceIcon && state.customDeviceIcon == DeviceType.macos)
                                             ? MacOSSmilingLogo(
+                                                size: 14,
+                                                color: colorScheme.primary,
+                                              )
+                                            : _showsChromeOSIcon(
+                                          useDefaultIcon: state.useDefaultDeviceIcon,
+                                          platform: state.localDevicePlatform,
+                                          customIcon: state.customDeviceIcon,
+                                        )
+                                            ? ChromeOSLogo(
                                                 size: 14,
                                                 color: colorScheme.primary,
                                               )
@@ -734,6 +753,7 @@ class _ReceiveScreenState extends ConsumerState<ReceiveScreen>
 
   IconData _getPlatformIcon(String platform) {
     final lower = platform.toLowerCase().trim();
+    if (lower.contains('chromeos')) return Icons.laptop_chromebook_rounded;
     if (lower.contains('android')) return Icons.phone_android_rounded;
     if (lower.contains('ios') ||
         lower.contains('iphone') ||
@@ -746,6 +766,19 @@ class _ReceiveScreenState extends ConsumerState<ReceiveScreen>
     }
     if (lower.contains('linux')) return Icons.laptop_rounded;
     return Icons.devices_rounded;
+  }
+
+  /// ChromeOS installs show the ChromeOS mark: automatically when the icon
+  /// is auto-detected, or when the user picked it as the custom icon.
+  bool _showsChromeOSIcon({
+    required bool useDefaultIcon,
+    required String platform,
+    required DeviceType customIcon,
+  }) {
+    if (useDefaultIcon) {
+      return platform.trim().toLowerCase() == 'chromeos';
+    }
+    return customIcon == DeviceType.chromeos;
   }
 
   IconData _iconForDeviceType(DeviceType type) {
@@ -772,6 +805,8 @@ class _ReceiveScreenState extends ConsumerState<ReceiveScreen>
         return Icons.window_rounded;
       case DeviceType.linux:
         return Icons.terminal_rounded;
+      case DeviceType.chromeos:
+        return Icons.laptop_chromebook_rounded;
     }
   }
 

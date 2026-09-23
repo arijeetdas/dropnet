@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart' show CupertinoIcons;
 
 import '../models/device_model.dart';
+import 'chromeos_logo.dart';
 import 'macos_smiling_logo.dart';
 
 class DeviceCard extends StatelessWidget {
@@ -40,6 +41,8 @@ class DeviceCard extends StatelessWidget {
                   radius: 18,
                   child: device.deviceType == DeviceType.macos
                       ? const MacOSSmilingLogo(size: 24)
+                      : device.deviceType == DeviceType.chromeos
+                      ? const ChromeOSLogo(size: 22)
                       : Icon(_iconForDeviceType(device.deviceType)),
                 ),
                 const SizedBox(width: 12),
@@ -93,6 +96,8 @@ class DeviceCard extends StatelessWidget {
         return Icons.window;
       case DeviceType.linux:
         return Icons.terminal;
+      case DeviceType.chromeos:
+        return Icons.laptop_chromebook;
     }
   }
 }

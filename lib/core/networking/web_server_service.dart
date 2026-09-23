@@ -553,6 +553,10 @@ class WebServerService {
         'localhost',
         '127.0.0.1',
       ],
+      // Never the transfer identity: this certificate carries the current
+      // LAN IP and is regenerated when it changes, which would otherwise
+      // invalidate the fingerprint every peer has pinned for this device.
+      purpose: TlsCertificatePurpose.webServer,
     );
 
     _server = await shelf_io.serve(

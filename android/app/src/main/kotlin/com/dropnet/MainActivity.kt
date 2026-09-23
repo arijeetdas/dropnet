@@ -37,6 +37,11 @@ import java.net.URLConnection
 import java.util.concurrent.Executors
 
 class MainActivity : FlutterFragmentActivity() {
+	companion object {
+		private const val EXTRA_SHARE_HANDLED = "com.dropnet.extra.SHARE_HANDLED"
+		private const val SHARED_IMPORTS_DIR = "shared_imports"
+	}
+
 	private val appsChannelName = "dropnet/android_apps"
 	private val shareChannelName = "dropnet/share_intent"
 	private val mediaStoreChannelName = "dropnet/media_store"
@@ -50,8 +55,19 @@ class MainActivity : FlutterFragmentActivity() {
 	private var androidStorageChannel: MethodChannel? = null
 	private var androidSafChannel: MethodChannel? = null
 	private var shortcutsChannel: MethodChannel? = null
+	// Shared items waiting for Dart to pick them up, guarded by pendingSharedFilePaths.
+	// Dart always *pulls* them through consumePendingSharedPayload; native only
+	// signals "sharedPayloadAvailable". That single delivery path is what makes
+	// cold-start shares reliable: whichever of Dart's startup consume or the
+	// completion signal happens second still finds the items, and nothing is
+	// ever delivered twice.
 	private val pendingSharedFilePaths = mutableListOf<String>()
 	private val pendingSharedTexts = mutableListOf<String>()
+	// Number of share batches still being resolved/copied on shareExecutor.
+	private var inFlightShareImports = 0
+	// Shared items that could not be read or copied since Dart last asked,
+	// so the app can say so instead of silently showing nothing.
+	private var failedShareImports = 0
 	private var pendingShortcut: String? = null
 	private var pendingSafPickResult: MethodChannel.Result? = null
 	private var pendingFilePickResult: MethodChannel.Result? = null
@@ -124,18 +140,43 @@ class MainActivity : FlutterFragmentActivity() {
 			}
 
 			shareExecutor.execute {
-				val paths = uris.mapNotNull { uri -> resolveShareUriToPath(uri) }
+				// One unreadable item must not throw away the whole selection
+				// (or leave the Dart call waiting forever).
+				val paths = uris.mapNotNull { uri -> safeResolveShareUri(uri) }
 				mainThreadHandler.post {
 					result.success(paths)
 				}
 			}
 		}
+
+		// Handle the launching share intent exactly once. A non-null
+		// savedInstanceState means the activity is being recreated (process
+		// death, a config change not covered by configChanges) with the *same*
+		// intent, which was already imported the first time.
+		if (savedInstanceState == null) {
+			handleShareIntent(intent)
+		}
+	}
+
+	/// Pressing back on the app's first screen used to finish this activity,
+	/// throwing away the running app — including files already collected from
+	/// earlier shares — so the next share started a fresh instance. Leaving
+	/// the root screen now sends the app to the background instead (what
+	/// Android 12+ already does for apps opened from the launcher), so the
+	/// same instance keeps collecting files from every app you share from.
+	override fun finish() {
+		if (isTaskRoot && !isChangingConfigurations) {
+			if (moveTaskToBack(true)) {
+				return
+			}
+		}
+		super.finish()
 	}
 
 	override fun onNewIntent(intent: Intent) {
 		super.onNewIntent(intent)
 		setIntent(intent)
-		handleShareIntent(intent, emitToFlutter = true)
+		handleShareIntent(intent)
 		handleShortcutIntent(intent, emitToFlutter = true)
 	}
 
@@ -205,7 +246,11 @@ class MainActivity : FlutterFragmentActivity() {
 							mapOf(
 								"files" to files,
 								"texts" to texts,
-							)
+								// Tells Dart more items are still being copied in and
+								// will be signalled through sharedPayloadAvailable.
+								"importing" to (inFlightShareImports > 0),
+								"failed" to failedShareImports,
+							).also { failedShareImports = 0 }
 						}
 						result.success(payload)
 					}
@@ -327,6 +372,16 @@ class MainActivity : FlutterFragmentActivity() {
 					"listStorageRoots" -> {
 						val roots = runCatching { listStorageRoots() }.getOrDefault(emptyList())
 						result.success(roots)
+					}
+					"getDeviceEnvironment" -> {
+						result.success(
+							mapOf(
+								"isChromeOS" to isRunningOnChromeOS(),
+								"manufacturer" to (Build.MANUFACTURER ?: ""),
+								"brand" to (Build.BRAND ?: ""),
+								"model" to (Build.MODEL ?: ""),
+							)
+						)
 					}
 					"getInstalledApkType" -> {
 						val type = getInstalledApkType()
@@ -476,7 +531,6 @@ class MainActivity : FlutterFragmentActivity() {
 				}
 			}
 
-		handleShareIntent(intent, emitToFlutter = false)
 		handleShortcutIntent(intent, emitToFlutter = false)
 	}
 
@@ -671,7 +725,7 @@ class MainActivity : FlutterFragmentActivity() {
 		}
 	}
 
-	private fun handleShareIntent(intent: Intent?, emitToFlutter: Boolean) {
+	private fun handleShareIntent(intent: Intent?) {
 		if (intent == null) {
 			return
 		}
@@ -679,6 +733,17 @@ class MainActivity : FlutterFragmentActivity() {
 		if (action != Intent.ACTION_SEND && action != Intent.ACTION_SEND_MULTIPLE) {
 			return
 		}
+		// Reopening the app from Recents re-delivers the original launch intent
+		// (and its URI grants are usually gone by then), and the same Intent
+		// object can reach this method twice (onCreate + a later onNewIntent
+		// with setIntent). Import each share exactly once.
+		if ((intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0) {
+			return
+		}
+		if (intent.getBooleanExtra(EXTRA_SHARE_HANDLED, false)) {
+			return
+		}
+		intent.putExtra(EXTRA_SHARE_HANDLED, true)
 
 		val collectedUris = mutableListOf<Uri>()
 		val collectedTexts = mutableListOf<String>()
@@ -687,33 +752,39 @@ class MainActivity : FlutterFragmentActivity() {
 		// into clipData for compatibility, which would otherwise cause two file copies).
 		val seenUris = mutableSetOf<Uri>()
 
+		// Some senders put a Uri where a list is expected (or vice versa), or
+		// ship extras that fail to unparcel; neither may abort the whole share.
 		if (action == Intent.ACTION_SEND) {
-			val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-				intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
-			} else {
-				@Suppress("DEPRECATION")
-				intent.getParcelableExtra(Intent.EXTRA_STREAM)
-			}
-			if (uri != null) {
-				seenUris.add(uri)
+			val uri = runCatching {
+				if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+					intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+				} else {
+					@Suppress("DEPRECATION")
+					intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+				}
+			}.getOrNull()
+			if (uri != null && seenUris.add(uri)) {
 				collectedUris.add(uri)
 			}
 		}
 
 		if (action == Intent.ACTION_SEND_MULTIPLE) {
-			val uris = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-				intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM, Uri::class.java)
-			} else {
-				@Suppress("DEPRECATION")
-				intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)
-			}
+			val uris = runCatching {
+				if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+					intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM, Uri::class.java)
+				} else {
+					@Suppress("DEPRECATION")
+					intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)
+				}
+			}.getOrNull()
 			uris?.forEach { uri ->
-				seenUris.add(uri)
-				collectedUris.add(uri)
+				if (seenUris.add(uri)) {
+					collectedUris.add(uri)
+				}
 			}
 		}
 
-		intent.getStringExtra(Intent.EXTRA_TEXT)
+		runCatching { intent.getStringExtra(Intent.EXTRA_TEXT) }.getOrNull()
 			?.trim()
 			?.takeIf { it.isNotEmpty() }
 			?.let(collectedTexts::add)
@@ -740,38 +811,91 @@ class MainActivity : FlutterFragmentActivity() {
 			return
 		}
 
-		// Resolving a content:// URI copies its full contents into the app's
+		if (collectedUris.isEmpty()) {
+			addPendingSharedItems(emptyList(), dedupedTexts)
+			notifySharedPayloadAvailable()
+			return
+		}
+
+		synchronized(pendingSharedFilePaths) {
+			inFlightShareImports++
+		}
+		// Lets Dart switch to the Send screen and show progress right away,
+		// instead of sitting on the previous screen while a large file copies.
+		runCatching {
+			shareChannel?.invokeMethod("sharedImportStateChanged", mapOf("importing" to true))
+		}
+
+		// Resolving a content:// URI may copy its full contents into the app's
 		// cache — done off the main thread so a large shared file can't block
 		// the UI long enough to trigger an ANR.
 		shareExecutor.execute {
-			val collectedFiles = collectedUris.mapNotNull { uri -> resolveShareUriToPath(uri) }
-			val dedupedFiles = collectedFiles.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
-			if (dedupedFiles.isEmpty() && dedupedTexts.isEmpty()) {
-				return@execute
-			}
+			pruneStaleSharedImports()
+			val results = collectedUris.map { uri -> safeResolveShareUri(uri) }
+			val failures = results.count { it.isNullOrBlank() }
+			val resolvedFiles = results
+				.filterNotNull()
+				.map { it.trim() }
+				.filter { it.isNotEmpty() }
+				.distinct()
 
 			mainThreadHandler.post {
 				synchronized(pendingSharedFilePaths) {
-					for (path in dedupedFiles) {
-						if (!pendingSharedFilePaths.contains(path)) {
-							pendingSharedFilePaths.add(path)
-						}
-					}
-					for (text in dedupedTexts) {
-						if (!pendingSharedTexts.contains(text)) {
-							pendingSharedTexts.add(text)
-						}
-					}
+					inFlightShareImports = (inFlightShareImports - 1).coerceAtLeast(0)
+					failedShareImports += failures
 				}
+				addPendingSharedItems(resolvedFiles, dedupedTexts)
+				// Always signal, even when nothing could be read: Dart's consume
+				// call also reports that importing has finished.
+				notifySharedPayloadAvailable()
+			}
+		}
+	}
 
-				if (emitToFlutter) {
-					shareChannel?.invokeMethod(
-						"sharedPayloadUpdated",
-						mapOf(
-							"files" to dedupedFiles,
-							"texts" to dedupedTexts,
-						),
-					)
+	private fun addPendingSharedItems(files: List<String>, texts: List<String>) {
+		synchronized(pendingSharedFilePaths) {
+			for (path in files) {
+				if (!pendingSharedFilePaths.contains(path)) {
+					pendingSharedFilePaths.add(path)
+				}
+			}
+			for (text in texts) {
+				if (!pendingSharedTexts.contains(text)) {
+					pendingSharedTexts.add(text)
+				}
+			}
+		}
+	}
+
+	/// Tells Dart that shared items are waiting. If the Dart side isn't
+	/// listening yet (cold start, engine still booting) the message is simply
+	/// dropped and the items stay queued for the consume call Dart makes during
+	/// startup — the previous "emit only when warm" logic lost exactly those.
+	private fun notifySharedPayloadAvailable() {
+		runCatching {
+			shareChannel?.invokeMethod("sharedPayloadAvailable", null)
+		}
+	}
+
+	private fun safeResolveShareUri(uri: Uri): String? {
+		return try {
+			resolveShareUriToPath(uri)
+		} catch (error: Throwable) {
+			android.util.Log.w("DropNetShare", "Could not import shared item $uri: ${error.message}")
+			null
+		}
+	}
+
+	/// Copies into shared_imports are only needed until the file has been
+	/// sent; drop anything older than a day that isn't still queued.
+	private fun pruneStaleSharedImports() {
+		runCatching {
+			val dir = File(cacheDir, SHARED_IMPORTS_DIR)
+			val cutoff = System.currentTimeMillis() - 24L * 60L * 60L * 1000L
+			val stillPending = synchronized(pendingSharedFilePaths) { pendingSharedFilePaths.toSet() }
+			dir.listFiles()?.forEach { file ->
+				if (file.lastModified() < cutoff && !stillPending.contains(file.absolutePath)) {
+					file.deleteRecursively()
 				}
 			}
 		}
@@ -779,7 +903,7 @@ class MainActivity : FlutterFragmentActivity() {
 
 	private fun resolveShareUriToPath(uri: Uri): String? {
 		return when (uri.scheme?.lowercase()) {
-			"file" -> uri.path
+			"file" -> uri.path?.let(::File)?.takeIf { it.isFile && it.canRead() }?.absolutePath
 			"content" -> resolveDirectFilePath(uri) ?: copyContentUriToCache(uri)
 			else -> null
 		}
@@ -801,7 +925,49 @@ class MainActivity : FlutterFragmentActivity() {
 			null
 		}
 		val file = path?.let(::File)
-		return if (file != null && file.isFile && file.canRead()) file.absolutePath else null
+		if (file != null && file.isFile && file.canRead()) {
+			return file.absolutePath
+		}
+		return resolvePathFromDescriptor(uri)
+	}
+
+	/// Most apps (WhatsApp, file managers, galleries) share through their own
+	/// FileProvider, whose URIs can't be mapped to a path by querying them.
+	/// Their content is still an ordinary file on shared storage, though: open
+	/// it and ask the kernel which file the descriptor points at. If that
+	/// file is readable here (DropNet has all-files access) and has the same
+	/// size, send it straight from where it is. Previously every such share
+	/// was copied into the app's cache first, which for a multi-GB video took
+	/// long enough to look stuck, and failed outright when the phone didn't
+	/// have that much free space.
+	private fun resolvePathFromDescriptor(uri: Uri): String? {
+		return try {
+			applicationContext.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
+				val linked = android.system.Os.readlink("/proc/self/fd/${pfd.fd}")
+				val file = File(normalizeStoragePath(linked))
+				val expectedSize = pfd.statSize
+				if (file.isFile && file.canRead() && (expectedSize < 0 || file.length() == expectedSize)) {
+					file.absolutePath
+				} else {
+					null
+				}
+			}
+		} catch (_: Throwable) {
+			null
+		}
+	}
+
+	/// The descriptor may be reported with a provider-side mount path; map it
+	/// back to the /storage path this app can open.
+	private fun normalizeStoragePath(path: String): String {
+		Regex("^/mnt/(?:pass_through|user|runtime/[^/]+)/\\d+/(.+)$").find(path)?.let {
+			return "/storage/${it.groupValues[1]}"
+		}
+		Regex("^/mnt/media_rw/(.+)$").find(path)?.let { return "/storage/${it.groupValues[1]}" }
+		Regex("^/data/media/(\\d+)/(.+)$").find(path)?.let {
+			return "/storage/emulated/${it.groupValues[1]}/${it.groupValues[2]}"
+		}
+		return path
 	}
 
 	private fun resolveDocumentUriPath(uri: Uri): String? {
@@ -879,10 +1045,36 @@ class MainActivity : FlutterFragmentActivity() {
 
 	private fun copyContentUriToCache(uri: Uri): String? {
 		val resolver = applicationContext.contentResolver
-		val input = resolver.openInputStream(uri) ?: return null
-		val displayName = queryDisplayName(uri) ?: "shared_${System.currentTimeMillis()}"
-		val safeName = displayName.replace(Regex("[^a-zA-Z0-9._-]+"), "_")
-		val targetDir = File(cacheDir, "shared_imports").apply { mkdirs() }
+		val input = runCatching { resolver.openInputStream(uri) }.getOrNull()
+			// Some providers only implement openAssetFile/openFile.
+			?: runCatching { resolver.openAssetFileDescriptor(uri, "r")?.createInputStream() }.getOrNull()
+			?: return null
+		val displayName = runCatching { queryDisplayName(uri) }.getOrNull()
+			?.trim()
+			?.takeIf { it.isNotEmpty() }
+			?: "shared_${System.currentTimeMillis()}"
+		var safeName = displayName.replace(Regex("[^a-zA-Z0-9._-]+"), "_")
+		// Several apps (WhatsApp documents, Telegram, some galleries) report a
+		// name without an extension; derive one from the MIME type so the
+		// receiver can still recognise and open the file.
+		if (!safeName.contains('.')) {
+			val mimeType = runCatching { resolver.getType(uri) }.getOrNull()
+			val extension = mimeType?.let {
+				android.webkit.MimeTypeMap.getSingleton().getExtensionFromMimeType(it)
+			}
+			if (!extension.isNullOrBlank()) {
+				safeName = "$safeName.$extension"
+			}
+		}
+		val targetDir = File(cacheDir, SHARED_IMPORTS_DIR).apply { mkdirs() }
+		// Fail fast instead of filling the disk and dying halfway through.
+		val declaredSize = runCatching { querySize(uri) }.getOrNull()
+		if (declaredSize != null && declaredSize > 0 &&
+			targetDir.usableSpace < declaredSize + 64L * 1024L * 1024L
+		) {
+			input.close()
+			throw java.io.IOException("Not enough free storage to import $displayName")
+		}
 		var target = File(targetDir, safeName)
 		if (target.exists()) {
 			val dotIndex = safeName.lastIndexOf('.')
@@ -895,12 +1087,30 @@ class MainActivity : FlutterFragmentActivity() {
 			}
 		}
 
-		input.use { source ->
-			target.outputStream().use { out ->
-				source.copyTo(out)
+		return try {
+			input.use { source ->
+				target.outputStream().use { out ->
+					source.copyTo(out)
+				}
+			}
+			target.absolutePath
+		} catch (error: Throwable) {
+			// Never leave a truncated file behind that could be picked up later.
+			target.delete()
+			throw error
+		}
+	}
+
+	private fun querySize(uri: Uri): Long? {
+		applicationContext.contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+			if (cursor.moveToFirst()) {
+				val index = cursor.getColumnIndex(OpenableColumns.SIZE)
+				if (index >= 0 && !cursor.isNull(index)) {
+					return cursor.getLong(index)
+				}
 			}
 		}
-		return target.absolutePath
+		return null
 	}
 
 	private fun queryDisplayName(uri: Uri): String? {
@@ -1156,6 +1366,20 @@ class MainActivity : FlutterFragmentActivity() {
 		val stream = ByteArrayOutputStream()
 		bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
 		return stream.toByteArray()
+	}
+
+	/// True when this APK runs on a Chromebook through ChromeOS's Android
+	/// runtime (ARC++ or ARCVM). "org.chromium.arc" is the system feature
+	/// ChromeOS declares for its Android container (the check Google documents
+	/// for detecting ChromeOS); "org.chromium.arc.device_management" is present
+	/// on the same devices. ARC builds also use a "cheets" device name, kept as
+	/// a fallback for images that don't expose the features.
+	private fun isRunningOnChromeOS(): Boolean {
+		val pm = packageManager
+		if (runCatching { pm.hasSystemFeature("org.chromium.arc") }.getOrDefault(false)) return true
+		if (runCatching { pm.hasSystemFeature("org.chromium.arc.device_management") }.getOrDefault(false)) return true
+		val device = Build.DEVICE.orEmpty()
+		return device.matches(Regex(".+_cheets|cheets_.+"))
 	}
 
 	private fun getInstalledApkType(): String {

@@ -317,7 +317,7 @@ class TcpTransferService {
         break;
       }
       final path = candidates[index];
-      await _sendSingleFileWithRetry(
+      final outcome = await _sendSingleFileWithRetry(
         target: target,
         filePath: path,
         port: port,
@@ -330,9 +330,30 @@ class TcpTransferService {
         sessionTotalBytes: totalBytes,
         pairingCode: pairingCode,
       );
+      // The receiver said no to this session. Its answer is remembered per
+      // session on the receiving side, so offering the remaining files would
+      // only produce a string of instant, prompt-less rejections.
+      if (outcome == _SendOutcome.rejected) {
+        break;
+      }
     }
     _canceledSessions.remove(sessionId);
   }
+
+  /// Optional hook the app layer uses to hand the sender the freshest
+  /// discovery record for a target (current IP, port and advertised TLS
+  /// fingerprint) right before every connection attempt. A long send session
+  /// otherwise keeps using the snapshot taken when the user tapped Send, which
+  /// goes stale if the receiver's address changes (DHCP renewal, MAC
+  /// randomization, switching between Wi-Fi and Ethernet) mid-session.
+  /// Returning null keeps the current target.
+  DeviceModel? Function(DeviceModel target)? targetResolver;
+
+  /// Snapshot of transfer requests currently awaiting a decision. The request
+  /// stream is a broadcast stream without replay, so a listener attached after
+  /// a request arrived uses this to catch up instead of never seeing it.
+  List<IncomingTransferRequest> get pendingIncomingRequests =>
+      List<IncomingTransferRequest>.unmodifiable(_incomingRequests.values);
 
   Future<({bool accepted, String peerFingerprint})> requestPairing({
     required DeviceModel target,
@@ -606,7 +627,7 @@ class TcpTransferService {
     }
   }
 
-  Future<void> _sendSingleFileWithRetry({
+  Future<_SendOutcome> _sendSingleFileWithRetry({
     required DeviceModel target,
     required String filePath,
     required int port,
@@ -619,12 +640,20 @@ class TcpTransferService {
     required int sessionTotalBytes,
     String? pairingCode,
   }) async {
-    const maxAttempts = 2;
+    const maxAttempts = 3;
+    var currentTarget = target;
+    var currentPort = port;
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
-      final shouldRetry = await _sendSingleFile(
-        target: target,
+      // Always connect using the freshest discovery data for this device.
+      final resolved = _resolveTarget(currentTarget);
+      if (resolved != null) {
+        currentTarget = resolved;
+        currentPort = resolved.port ?? currentPort;
+      }
+      final outcome = await _sendSingleFile(
+        target: currentTarget,
         filePath: filePath,
-        port: port,
+        port: currentPort,
         senderDeviceName: senderDeviceName,
         senderDeviceId: senderDeviceId,
         senderTlsCertificateSha256: senderTlsCertificateSha256,
@@ -636,14 +665,27 @@ class TcpTransferService {
         maxAttempts: maxAttempts,
         pairingCode: pairingCode,
       );
-      if (!shouldRetry) {
-        return;
+      if (outcome != _SendOutcome.retry) {
+        return outcome;
       }
-      await Future<void>.delayed(const Duration(milliseconds: 500));
+      await Future<void>.delayed(Duration(milliseconds: 500 * attempt));
+    }
+    return _SendOutcome.finished;
+  }
+
+  DeviceModel? _resolveTarget(DeviceModel target) {
+    final resolver = targetResolver;
+    if (resolver == null) {
+      return null;
+    }
+    try {
+      return resolver(target);
+    } catch (_) {
+      return null;
     }
   }
 
-  Future<bool> _sendSingleFile({
+  Future<_SendOutcome> _sendSingleFile({
     required DeviceModel target,
     required String filePath,
     required int port,
@@ -660,9 +702,14 @@ class TcpTransferService {
   }) async {
     final file = File(filePath);
     if (!await file.exists()) {
-      return false;
+      return _SendOutcome.finished;
     }
 
+    // Set when the TLS handshake reached the certificate check and the
+    // presented certificate was not the one discovery advertised. Lets the
+    // error handler tell "wrong/changed identity" apart from an ordinary
+    // network drop that merely happened during the handshake.
+    var certificateMismatch = false;
     final transferId = _uuid.v4();
     final totalSize = await file.length();
     final startedAt = DateTime.now();
@@ -707,10 +754,14 @@ class TcpTransferService {
         rawSocket,
         host: target.ipAddress,
         onBadCertificate: (certificate) {
-          return _matchesExpectedCertificateFingerprint(
+          final matches = _matchesExpectedCertificateFingerprint(
             certificate,
             expectedPeerFingerprint,
           );
+          if (!matches) {
+            certificateMismatch = true;
+          }
+          return matches;
         },
       );
 
@@ -718,6 +769,7 @@ class TcpTransferService {
         socket.peerCertificate,
         expectedPeerFingerprint,
       )) {
+        certificateMismatch = true;
         throw const HandshakeException(
           'Peer certificate fingerprint mismatch.',
         );
@@ -772,7 +824,7 @@ class TcpTransferService {
           ),
         );
         _archiveTransfer(transferId);
-        return false;
+        return _SendOutcome.rejected;
       }
 
       // Receiver -> sender messages keep arriving on this same line stream
@@ -949,17 +1001,18 @@ class TcpTransferService {
         if (!ok) {
           final reason = (completion['error']?.toString().trim() ?? 'Receiver reported transfer failure.');
           final isCancelled = reason.contains('cancelled_by_recipient') || completion['error'] == 'cancelled_by_recipient';
+          final willRetry = !isCancelled && maxAttempts > attempt;
           _updateTransfer(
             transferId,
             (t) => t.copyWith(
               status: isCancelled ? TransferStatus.canceled : TransferStatus.failed,
               errorMessage: isCancelled
                   ? 'Cancelled by recipient.'
-                  : (maxAttempts > attempt ? '$reason Retrying...' : reason),
+                  : (willRetry ? '$reason Retrying...' : reason),
             ),
           );
           _archiveTransfer(transferId);
-          return !isCancelled && maxAttempts > attempt;
+          return willRetry ? _SendOutcome.retry : _SendOutcome.finished;
         }
         _updateTransfer(
           transferId,
@@ -973,27 +1026,66 @@ class TcpTransferService {
         );
       }
       _archiveTransfer(transferId);
-      return false;
+      return _SendOutcome.finished;
     } catch (error) {
-      final reason = _humanizeTransferError(error);
       final isCancelled = error.toString().contains('cancelled_by_recipient');
+
+      // A certificate mismatch is only worth retrying if discovery now has
+      // different data for this device (it re-announced with a new address
+      // or identity). Retrying with the same stale data would fail the same
+      // way, so in that case surface the real cause instead.
+      var identityRefreshed = false;
+      if (certificateMismatch) {
+        final fresh = _resolveTarget(target);
+        if (fresh != null) {
+          final freshFingerprint = (fresh.tlsCertificateSha256 ?? '')
+              .trim()
+              .toLowerCase();
+          final staleFingerprint = (target.tlsCertificateSha256 ?? '')
+              .trim()
+              .toLowerCase();
+          identityRefreshed =
+              freshFingerprint.isNotEmpty &&
+              (freshFingerprint != staleFingerprint ||
+                  fresh.ipAddress != target.ipAddress);
+        }
+      }
+
+      // TLS errors that are NOT a certificate mismatch are transport
+      // failures that happened to occur during the handshake (Wi-Fi power
+      // save, a router dropping an idle flow, the peer app being briefly
+      // suspended). They are as transient as any other socket error.
+      final transientTlsFailure =
+          !certificateMismatch && error is TlsException;
+      final retryable =
+          !isCancelled &&
+          (error is SocketException ||
+              error is TimeoutException ||
+              transientTlsFailure ||
+              identityRefreshed ||
+              (error is FileSystemException &&
+                  error.message.contains('Unexpected EOF')));
+      final willRetry = retryable && maxAttempts > attempt;
+
+      final reason = certificateMismatch
+          ? 'Security check failed: the device at ${target.ipAddress} did not '
+                'present the identity DropNet discovered for '
+                '${target.deviceName}. Wait for the device list to refresh and '
+                'try again.'
+          : transientTlsFailure
+          ? 'The secure connection was interrupted by the network.'
+          : _humanizeTransferError(error);
       _updateTransfer(
         transferId,
         (t) => t.copyWith(
           status: isCancelled ? TransferStatus.canceled : TransferStatus.failed,
           errorMessage: isCancelled
               ? 'Cancelled by recipient.'
-              : (maxAttempts > attempt ? '$reason Retrying...' : reason),
+              : (willRetry ? '$reason Retrying...' : reason),
         ),
       );
       _archiveTransfer(transferId);
-      final retryable =
-          !isCancelled &&
-          (error is SocketException ||
-          error is TimeoutException ||
-          (error is FileSystemException &&
-              error.message.contains('Unexpected EOF')));
-      return retryable && maxAttempts > attempt;
+      return willRetry ? _SendOutcome.retry : _SendOutcome.finished;
     } finally {
       await lineIterator?.cancel();
       await reader?.close();
@@ -1269,6 +1361,12 @@ class TcpTransferService {
               );
 
               bool accepted;
+              // Only a decision the user (or an auto-accept policy) actually
+              // made is remembered for the rest of the session. A request
+              // that simply expired — the app was in the background, the
+              // dialog never got a chance to show — must not silently
+              // auto-reject every later file of the same session.
+              var decidedExplicitly = true;
               final remembered = _readSessionDecision(decisionKey);
               if (remembered != null) {
                 accepted = remembered;
@@ -1297,14 +1395,17 @@ class TcpTransferService {
 
                 accepted = await decisionCompleter.future.timeout(
                   _incomingDecisionTimeout,
-                  onTimeout: () => false,
+                  onTimeout: () {
+                    decidedExplicitly = false;
+                    return false;
+                  },
                 );
                 _incomingDecisions.remove(transferId);
                 _incomingRequests.remove(transferId);
                 _emitIncomingRequests();
               }
 
-              if (sessionId.isNotEmpty) {
+              if (sessionId.isNotEmpty && decidedExplicitly) {
                 _rememberSessionDecision(decisionKey, accepted);
               }
 
@@ -2286,6 +2387,18 @@ class _IncrementalDigestSink implements Sink<Digest> {
 /// Gates how often a progress update fires, shared by the same constant
 /// interval on both the sender and receiver so their emission cadence — not
 /// just their byte source — is aligned.
+/// Result of one attempt to send a single file.
+enum _SendOutcome {
+  /// Done with this file (sent, failed for good, or cancelled).
+  finished,
+
+  /// A transient failure; try this file again.
+  retry,
+
+  /// The receiver rejected the session; don't offer the remaining files.
+  rejected,
+}
+
 class _ProgressThrottle {
   DateTime _last = DateTime.fromMillisecondsSinceEpoch(0);
 

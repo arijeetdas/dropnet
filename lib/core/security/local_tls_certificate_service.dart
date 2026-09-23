@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:isolate';
 import 'dart:io';
@@ -8,94 +9,94 @@ import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+/// Which certificate a TLS server should present.
+///
+/// - [transferIdentity]: the device's long-lived identity. Its SHA-256
+///   fingerprint is advertised through discovery (UDP presence + mDNS TXT),
+///   pinned by senders during the TLS handshake, and stored by paired peers.
+///   It must therefore never change while the app is installed, no matter
+///   which network the device joins.
+/// - [webServer]: the certificate used by the browser-facing HTTPS servers
+///   (Web Mode and temporary share links). Browsers want the current LAN IP
+///   in the certificate's subjectAlternativeNames, so this one is regenerated
+///   whenever the IP changes — which is exactly why it must be kept separate
+///   from the transfer identity.
+enum TlsCertificatePurpose { transferIdentity, webServer }
+
 class LocalTlsCertificateService {
   static const _securityDirectoryName = 'security';
+
+  // Transfer identity (file names kept for backwards compatibility, so an
+  // existing install keeps its fingerprint and all of its pairings).
   static const _certificateFileName = 'dropnet_local_cert.pem';
   static const _privateKeyFileName = 'dropnet_local_key.pem';
   static const _metaFileName = 'dropnet_local_cert_meta.json';
 
-  Future<void> _deleteExistingMaterial() async {
-    try {
-      final directory = await _certificateDirectory();
-      final certificate = File(p.join(directory.path, _certificateFileName));
-      final privateKey = File(p.join(directory.path, _privateKeyFileName));
-      final meta = File(p.join(directory.path, _metaFileName));
-      if (await certificate.exists()) {
-        await certificate.delete();
-      }
-      if (await privateKey.exists()) {
-        await privateKey.delete();
-      }
-      if (await meta.exists()) {
-        await meta.delete();
-      }
-    } catch (_) {}
-  }
+  // Browser-facing HTTPS servers.
+  static const _webCertificateFileName = 'dropnet_web_cert.pem';
+  static const _webPrivateKeyFileName = 'dropnet_web_key.pem';
+  static const _webMetaFileName = 'dropnet_web_cert_meta.json';
+
+  static const _identityCommonName = 'DropNet Local';
+  static const _identitySans = <String>['localhost', '127.0.0.1'];
+
+  /// Process-wide (per isolate) identity material. Every service instance
+  /// (discovery, TCP receiver, pairing, presence signing) shares this single
+  /// in-memory copy, so the fingerprint that gets advertised is always the
+  /// fingerprint of the exact certificate the TCP server presents.
+  ///
+  /// Previously each service had its own instance and read/generated the
+  /// files independently: two services racing on first launch could each
+  /// generate a different key pair (leaving a cert from one run and a key
+  /// from the other), and the "self-heal" path regenerated the certificate
+  /// behind discovery's back. Either way peers pinned a fingerprint the
+  /// server no longer presented, and every transfer failed with
+  /// "Secure channel verification failed".
+  static Future<_PemMaterial>? _identityFuture;
+
+  /// Serializes web-certificate (re)generation so concurrent starts of the
+  /// web server and the temporary link server can't interleave writes.
+  static Future<void> _webLock = Future<void>.value();
 
   Future<SecurityContext> createServerContext({
     required String commonName,
     required List<String> subjectAlternativeNames,
+    TlsCertificatePurpose purpose = TlsCertificatePurpose.transferIdentity,
   }) async {
-    try {
-      final material = await _loadOrCreateMaterial(
-        commonName: commonName,
-        subjectAlternativeNames: subjectAlternativeNames,
-      );
-
-      final context = SecurityContext();
-      context.useCertificateChain(material.certificate.path);
-      context.usePrivateKey(material.privateKey.path);
-      return context;
-    } catch (e) {
-      // Catch KEY_VALUES_MISMATCH or other TlsExceptions and heal by regenerating
-      await _deleteExistingMaterial();
-
-      final material = await _loadOrCreateMaterial(
-        commonName: commonName,
-        subjectAlternativeNames: subjectAlternativeNames,
-      );
-
-      final context = SecurityContext();
-      context.useCertificateChain(material.certificate.path);
-      context.usePrivateKey(material.privateKey.path);
-      return context;
-    }
+    final material = purpose == TlsCertificatePurpose.transferIdentity
+        ? await _identityMaterial()
+        : await _webMaterial(
+            commonName: commonName,
+            subjectAlternativeNames: subjectAlternativeNames,
+          );
+    return _buildContext(material);
   }
 
   Future<String> readCertificateSha256Fingerprint({
-    required String commonName,
-    required List<String> subjectAlternativeNames,
+    String commonName = _identityCommonName,
+    List<String> subjectAlternativeNames = _identitySans,
   }) async {
-    final material = await _loadOrCreateMaterial(
-      commonName: commonName,
-      subjectAlternativeNames: subjectAlternativeNames,
-    );
-    final pem = await material.certificate.readAsString();
-    return _sha256FingerprintFromPem(pem);
+    final material = await _identityMaterial();
+    return _sha256FingerprintFromPem(material.certificatePem);
   }
 
   Future<String> readCertificatePem({
-    required String commonName,
-    required List<String> subjectAlternativeNames,
+    String commonName = _identityCommonName,
+    List<String> subjectAlternativeNames = _identitySans,
   }) async {
-    final material = await _loadOrCreateMaterial(
-      commonName: commonName,
-      subjectAlternativeNames: subjectAlternativeNames,
-    );
-    return material.certificate.readAsString();
+    final material = await _identityMaterial();
+    return material.certificatePem;
   }
 
   Future<String> signPayloadSha256Base64Url({
     required String payload,
-    required String commonName,
-    required List<String> subjectAlternativeNames,
+    String commonName = _identityCommonName,
+    List<String> subjectAlternativeNames = _identitySans,
   }) async {
-    final material = await _loadOrCreateMaterial(
-      commonName: commonName,
-      subjectAlternativeNames: subjectAlternativeNames,
+    final material = await _identityMaterial();
+    final privateKey = CryptoUtils.rsaPrivateKeyFromPem(
+      material.privateKeyPem,
     );
-    final privateKeyPem = await material.privateKey.readAsString();
-    final privateKey = CryptoUtils.rsaPrivateKeyFromPem(privateKeyPem);
     final signature = CryptoUtils.rsaSign(
       privateKey,
       Uint8List.fromList(utf8.encode(payload)),
@@ -141,30 +142,174 @@ class LocalTlsCertificateService {
     return sha256.convert(utf8.encode(normalizedPem)).toString();
   }
 
-  Future<_TlsCertificateMaterial> _loadOrCreateMaterial({
-    required String commonName,
-    required List<String> subjectAlternativeNames,
-  }) async {
+  // ── Transfer identity ─────────────────────────────────────────────────────
+
+  Future<_PemMaterial> _identityMaterial() {
+    final existing = _identityFuture;
+    if (existing != null) {
+      return existing;
+    }
+    final future = _loadOrCreateIdentity();
+    _identityFuture = future;
+    // Don't cache a failure (e.g. a transient I/O error) forever.
+    future.catchError((Object _) {
+      if (identical(_identityFuture, future)) {
+        _identityFuture = null;
+      }
+      return const _PemMaterial(certificatePem: '', privateKeyPem: '');
+    });
+    return future;
+  }
+
+  Future<_PemMaterial> _loadOrCreateIdentity() async {
     final directory = await _certificateDirectory();
     final certificate = File(p.join(directory.path, _certificateFileName));
     final privateKey = File(p.join(directory.path, _privateKeyFileName));
     final meta = File(p.join(directory.path, _metaFileName));
 
+    // The identity is reused whenever it is present and valid — deliberately
+    // regardless of which subjectAlternativeNames it was generated with.
+    // Peers pin its fingerprint, so replacing it is only acceptable when the
+    // material is genuinely missing or unusable.
+    for (var attempt = 0; attempt < 2; attempt++) {
+      final existing = await _readValidMaterial(certificate, privateKey);
+      if (existing != null) {
+        return existing;
+      }
+      if (!await certificate.exists() && !await privateKey.exists()) {
+        break;
+      }
+      // Files exist but don't form a valid pair. Another isolate (e.g. a
+      // second Flutter engine in the same process) may be mid-write, so give
+      // it a moment before concluding the material is corrupt.
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+    }
+
+    final generated = await _generateMaterial(
+      commonName: _identityCommonName,
+      subjectAlternativeNames: _normalizeSubjectAlternativeNames(
+        _identitySans,
+      ),
+    );
+    await _writeMaterial(
+      material: generated,
+      certificate: certificate,
+      privateKey: privateKey,
+      meta: meta,
+      subjectAlternativeNames: _normalizeSubjectAlternativeNames(
+        _identitySans,
+      ),
+    );
+    return generated;
+  }
+
+  // ── Web server certificate ────────────────────────────────────────────────
+
+  Future<_PemMaterial> _webMaterial({
+    required String commonName,
+    required List<String> subjectAlternativeNames,
+  }) {
+    final completer = Completer<_PemMaterial>();
+    final previous = _webLock;
+    final done = Completer<void>();
+    _webLock = done.future;
+    () async {
+      try {
+        await previous;
+      } catch (_) {}
+      try {
+        completer.complete(
+          await _loadOrCreateWeb(
+            commonName: commonName,
+            subjectAlternativeNames: subjectAlternativeNames,
+          ),
+        );
+      } catch (error, stackTrace) {
+        completer.completeError(error, stackTrace);
+      } finally {
+        done.complete();
+      }
+    }();
+    return completer.future;
+  }
+
+  Future<_PemMaterial> _loadOrCreateWeb({
+    required String commonName,
+    required List<String> subjectAlternativeNames,
+  }) async {
+    final directory = await _certificateDirectory();
+    final certificate = File(p.join(directory.path, _webCertificateFileName));
+    final privateKey = File(p.join(directory.path, _webPrivateKeyFileName));
+    final meta = File(p.join(directory.path, _webMetaFileName));
     final normalizedNames = _normalizeSubjectAlternativeNames(
       subjectAlternativeNames,
     );
 
     final existingNames = await _readExistingNames(meta);
-    final hasExistingMaterial =
-        await certificate.exists() && await privateKey.exists();
-
-    if (hasExistingMaterial && _covers(existingNames, normalizedNames)) {
-      return _TlsCertificateMaterial(
-        certificate: certificate,
-        privateKey: privateKey,
-      );
+    if (_covers(existingNames, normalizedNames)) {
+      final existing = await _readValidMaterial(certificate, privateKey);
+      if (existing != null) {
+        return existing;
+      }
     }
 
+    // Keep previously covered names too, so alternating between two networks
+    // doesn't regenerate the certificate every single time.
+    final mergedNames = <String>{...existingNames, ...normalizedNames}.toList()
+      ..sort();
+    final generated = await _generateMaterial(
+      commonName: commonName,
+      subjectAlternativeNames: mergedNames,
+    );
+    await _writeMaterial(
+      material: generated,
+      certificate: certificate,
+      privateKey: privateKey,
+      meta: meta,
+      subjectAlternativeNames: mergedNames,
+    );
+    return generated;
+  }
+
+  // ── Shared helpers ────────────────────────────────────────────────────────
+
+  SecurityContext _buildContext(_PemMaterial material) {
+    final context = SecurityContext();
+    context.useCertificateChainBytes(utf8.encode(material.certificatePem));
+    context.usePrivateKeyBytes(utf8.encode(material.privateKeyPem));
+    return context;
+  }
+
+  /// Returns the material only if both files exist and the key actually
+  /// belongs to the certificate (BoringSSL rejects a mismatched pair with
+  /// KEY_VALUES_MISMATCH when the key is loaded into a context).
+  Future<_PemMaterial?> _readValidMaterial(
+    File certificate,
+    File privateKey,
+  ) async {
+    try {
+      if (!await certificate.exists() || !await privateKey.exists()) {
+        return null;
+      }
+      final material = _PemMaterial(
+        certificatePem: await certificate.readAsString(),
+        privateKeyPem: await privateKey.readAsString(),
+      );
+      if (material.certificatePem.trim().isEmpty ||
+          material.privateKeyPem.trim().isEmpty) {
+        return null;
+      }
+      _buildContext(material);
+      return material;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<_PemMaterial> _generateMaterial({
+    required String commonName,
+    required List<String> subjectAlternativeNames,
+  }) async {
     // Offload ALL synchronous CPU-intensive crypto work to a background isolate:
     // key-pair generation, CSR building, self-signed cert creation, and PEM
     // encoding.  Each of these is pure-Dart CPU work that blocks the main
@@ -173,10 +318,11 @@ class LocalTlsCertificateService {
     final serialNumber = DateTime.now().millisecondsSinceEpoch.toString();
     final notBefore = DateTime.now().subtract(const Duration(minutes: 5));
     final subject = <String, String>{
-      'CN': commonName.trim().isEmpty ? 'DropNet Local' : commonName.trim(),
+      'CN': commonName.trim().isEmpty ? _identityCommonName : commonName.trim(),
       'O': 'DropNet',
       'OU': 'Local Transfer',
     };
+    final names = List<String>.from(subjectAlternativeNames);
 
     final generated = await Isolate.run(() {
       final keyPair = CryptoUtils.generateRSAKeyPair(keySize: 2048);
@@ -187,14 +333,14 @@ class LocalTlsCertificateService {
         subject,
         privateKeyObject,
         publicKeyObject,
-        san: normalizedNames,
+        san: names,
       );
 
       final certificatePem = X509Utils.generateSelfSignedCertificate(
         privateKeyObject,
         csr,
         3650,
-        sans: normalizedNames,
+        sans: names,
         serialNumber: serialNumber,
         notBefore: notBefore,
       );
@@ -206,19 +352,35 @@ class LocalTlsCertificateService {
       return (certificatePem: certificatePem, privateKeyPem: privateKeyPem);
     });
 
-    await certificate.writeAsString(generated.certificatePem, flush: true);
-    await privateKey.writeAsString(generated.privateKeyPem, flush: true);
-    await meta.writeAsString(
+    return _PemMaterial(
+      certificatePem: generated.certificatePem,
+      privateKeyPem: generated.privateKeyPem,
+    );
+  }
+
+  /// Writes each file to a temporary sibling first and renames it into place,
+  /// so a concurrent reader never observes a half-written PEM.
+  Future<void> _writeMaterial({
+    required _PemMaterial material,
+    required File certificate,
+    required File privateKey,
+    required File meta,
+    required List<String> subjectAlternativeNames,
+  }) async {
+    Future<void> writeAtomically(File target, String contents) async {
+      final temp = File('${target.path}.tmp');
+      await temp.writeAsString(contents, flush: true);
+      await temp.rename(target.path);
+    }
+
+    await writeAtomically(privateKey, material.privateKeyPem);
+    await writeAtomically(certificate, material.certificatePem);
+    await writeAtomically(
+      meta,
       jsonEncode({
-        'subjectAlternativeNames': normalizedNames,
+        'subjectAlternativeNames': subjectAlternativeNames,
         'generatedAt': DateTime.now().toIso8601String(),
       }),
-      flush: true,
-    );
-
-    return _TlsCertificateMaterial(
-      certificate: certificate,
-      privateKey: privateKey,
     );
   }
 
@@ -288,12 +450,12 @@ class LocalTlsCertificateService {
   }
 }
 
-class _TlsCertificateMaterial {
-  const _TlsCertificateMaterial({
-    required this.certificate,
-    required this.privateKey,
+class _PemMaterial {
+  const _PemMaterial({
+    required this.certificatePem,
+    required this.privateKeyPem,
   });
 
-  final File certificate;
-  final File privateKey;
+  final String certificatePem;
+  final String privateKeyPem;
 }

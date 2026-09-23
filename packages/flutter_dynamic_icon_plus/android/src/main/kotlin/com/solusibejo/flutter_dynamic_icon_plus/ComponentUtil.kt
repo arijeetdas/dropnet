@@ -123,50 +123,19 @@ object ComponentUtil {
         }
     }
 
-    private fun getComponentNames(context: Context, activityName: String?): List<ComponentName> {
-        val packageName = context.packageName
-        if (activityName == null) {
-            val pm = context.packageManager
-            val components = ArrayList<ComponentName>()
-            try {
-                val info = pm.getPackageInfo(
-                    packageName,
-                    PackageManager.GET_ACTIVITIES or PackageManager.GET_DISABLED_COMPONENTS
-                )
-                // Store activities in a local variable to make it safe for smart cast
-                val activities = info.activities
-                if (activities != null) {
-                    for (activityInfo in activities) {
-                        if (activityInfo.targetActivity == null) {
-                            components.add(ComponentName(packageName, activityInfo.name))
-                        }
-                    }
-                }
-            } catch (e: PackageManager.NameNotFoundException) {
-                // the package isn't installed on the device
-                Log.d("getComponentNames", "the package isn't installed on the device")
-            }
-            return components
-        }
-        // If activityName is not null, return a list with single component
-        return listOf(ComponentName(packageName, activityName))
-    }
-
     fun changeAppIcon(context: Context, packageManager: PackageManager, packageName: String){
-        val sp = context.getSharedPreferences(FlutterDynamicIconPlusPlugin.pluginName, Context.MODE_PRIVATE)
-        sp.getString(FlutterDynamicIconPlusPlugin.appIcon, null).let { name ->
-            val currentlyEnabled = getCurrentEnabledAlias(context)
-            Log.d("changeAppIcon", "Currently Enabled: $currentlyEnabled")
-            Log.d("changeAppIcon", "Will Enabled: $name")
+        // Repair installs hit by the old bug below, which could disable the
+        // real launcher activity itself (leaving no way to open the app and
+        // no share target). The alias switch needs it enabled anyway.
+        ensureAliasTargetsEnabled(context, packageManager)
 
-            if(name != null){
-                if(name.isNotEmpty()){
-                    if(currentlyEnabled?.name != name){
-                        setupIcon(context, packageManager, packageName, name, currentlyEnabled?.name)
-                    }
-                }
-            }
+        val sp = context.getSharedPreferences(FlutterDynamicIconPlusPlugin.pluginName, Context.MODE_PRIVATE)
+        val name = sp.getString(FlutterDynamicIconPlusPlugin.appIcon, null)
+        Log.d("changeAppIcon", "Will Enabled: $name")
+        if (name.isNullOrEmpty()) {
+            return
         }
+        setupIcon(context, packageManager, name)
     }
 
     fun removeCurrentAppIcon(context: Context){
@@ -174,31 +143,59 @@ object ComponentUtil {
         sp.edit()?.remove(FlutterDynamicIconPlusPlugin.appIcon)?.apply()
     }
 
-    private fun setupIcon(context: Context, packageManager: PackageManager, packageName: String, newName: String?, currentlyName: String?){
-        val components: List<ComponentName> = getComponentNames(context, newName)
+    /// Names of every `<activity-alias>` in the manifest (enabled or not).
+    private fun aliasNames(context: Context): List<String> {
+        return try {
+            packageInfo(context).activities
+                ?.filter { it.targetActivity != null }
+                ?.map { it.name }
+                .orEmpty()
+        } catch (e: PackageManager.NameNotFoundException) {
+            emptyList()
+        }
+    }
 
-        for (component in components) {
-            if (currentlyName != null && currentlyName == component.className) return
-            Log.d(
-                "setAlternateIconName",
-                String.format(
-                    "Changing enabled activity-alias from %s to %s",
-                    currentlyName ?: "default", component.className
+    private fun ensureAliasTargetsEnabled(context: Context, packageManager: PackageManager) {
+        val targets = try {
+            packageInfo(context).activities
+                ?.mapNotNull { it.targetActivity }
+                ?.toSet()
+                .orEmpty()
+        } catch (e: PackageManager.NameNotFoundException) {
+            emptySet()
+        }
+        for (target in targets) {
+            val component = ComponentName(context.packageName, target)
+            if (packageManager.getComponentEnabledSetting(component) ==
+                PackageManager.COMPONENT_ENABLED_STATE_DISABLED) {
+                packageManager.setComponentEnabledSetting(
+                    component,
+                    PackageManager.COMPONENT_ENABLED_STATE_DEFAULT,
+                    PackageManager.DONT_KILL_APP
                 )
-            )
-            enable(context, packageManager, component.className)
+            }
         }
+    }
 
-        val componentsToDisable: List<ComponentName> = if (currentlyName != null) {
-            listOf(
-                ComponentName(packageName, currentlyName)
-            )
-        } else {
-            getComponentNames(context, null)
+    /// Enables exactly one launcher alias and disables every other alias.
+    ///
+    /// The previous version disabled only the alias it believed was current;
+    /// when none was detected it disabled every activity *without* a
+    /// targetActivity — i.e. the real MainActivity. It also left an extra
+    /// alias enabled whenever its guess was wrong (two launcher icons).
+    private fun setupIcon(context: Context, packageManager: PackageManager, newName: String) {
+        val aliases = aliasNames(context)
+        if (!aliases.contains(newName)) {
+            Log.w("setAlternateIconName", "Ignoring unknown activity-alias $newName")
+            return
         }
-
-        for (toDisable in componentsToDisable) {
-            disable(context, packageManager, toDisable.className)
+        Log.d("setAlternateIconName", "Enabling activity-alias $newName")
+        // Enable first so there is never a moment without a launcher entry.
+        enable(context, packageManager, newName)
+        for (alias in aliases) {
+            if (alias != newName) {
+                disable(context, packageManager, alias)
+            }
         }
     }
 }

@@ -248,6 +248,7 @@ class TemporaryLinkShareService {
     final tlsContext = await _tlsCertificates.createServerContext(
       commonName: 'DropNet Temporary Link Server',
       subjectAlternativeNames: _buildSans(host),
+      purpose: TlsCertificatePurpose.webServer,
     );
 
     _server = await shelf_io.serve(

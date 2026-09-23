@@ -13,6 +13,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'core/platform/app_shortcut_service.dart';
 import 'core/utils/file_utils.dart';
 import 'core/utils/dialog_utils.dart';
+import 'widgets/expressive_loader.dart';
 import 'core/networking/web_server_service.dart';
 import 'models/transfer_model.dart';
 import 'features/analytics/analytics_screen.dart';
@@ -200,6 +201,12 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
   final Set<String> _cancellationNoticeShownFor = {};
   final Set<String> _manualDisconnectNoticeShownFor = {};
   final Map<String, _ActivePairingDialog> _activePairingDialogs = {};
+  // Incoming-transfer approval dialogs currently on screen, by request id.
+  final Map<String, ({BuildContext context, IncomingTransferRequest request})>
+  _activeIncomingDialogs = {};
+  // Context of the "Preparing shared files" popup while it is on screen.
+  BuildContext? _sharedImportDialogContext;
+  Timer? _sharedImportDialogDelay;
   bool _transferSessionOpen = false;
   bool _sharedTextOpening = false;
   bool _receivedFilePreviewOpening = false;
@@ -309,6 +316,7 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
   void dispose() {
     WidgetsBinding.instance.removeObserver(_lifecycleObserver);
     _permissionPollTimer?.cancel();
+    _sharedImportDialogDelay?.cancel();
     unawaited(_shortcutSub?.cancel());
     unawaited(_appShortcuts.dispose());
     super.dispose();
@@ -330,6 +338,7 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
         (id) =>
             !next.pendingIncomingRequests.any((request) => request.id == id),
       );
+      _closeExpiredIncomingDialogs(next);
       _pairingDialogShownFor.removeWhere(
         (id) => !next.pendingPairingRequests.any((request) => request.id == id),
       );
@@ -410,11 +419,22 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
 
       final hasPendingSendImports =
           next.pendingSharedFilePaths.isNotEmpty ||
-          next.pendingSharedTexts.isNotEmpty;
+          next.pendingSharedTexts.isNotEmpty ||
+          // Open Send as soon as a share starts importing, instead of
+          // leaving the user on the Receive tab while a large file copies.
+          (next.sharedImportInProgress &&
+              !(previous?.sharedImportInProgress ?? false));
       if (hasPendingSendImports) {
         if (!_isSendRouteVisible()) {
           _router.go('/send');
         }
+      }
+
+      final wasImporting = previous?.sharedImportInProgress ?? false;
+      if (next.sharedImportInProgress && !wasImporting) {
+        _showSharedImportDialog();
+      } else if (!next.sharedImportInProgress && wasImporting) {
+        _closeSharedImportDialog();
       }
 
       final sessionStarted = next.transferSessionActive && !(previous?.transferSessionActive ?? false);
@@ -1243,6 +1263,174 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
     }
   }
 
+  /// Shown while Android copies shared content into the app (large files
+  /// from apps like WhatsApp). Closes itself once the import finishes.
+  void _showSharedImportDialog() {
+    // Only when preparing actually takes a moment: most shares (including
+    // large files that can be read in place) finish almost instantly, and a
+    // popup that flashes for a few milliseconds is just noise.
+    if (_sharedImportDialogDelay?.isActive ?? false) {
+      return;
+    }
+    _sharedImportDialogDelay = Timer(const Duration(milliseconds: 250), () {
+      if (mounted && ref.read(appControllerProvider).sharedImportInProgress) {
+        _presentSharedImportDialog();
+        WidgetsBinding.instance.scheduleFrame();
+      }
+    });
+  }
+
+  void _presentSharedImportDialog() {
+    // After the frame, so the switch to the Send tab triggered by the same
+    // state change happens first and can't dismiss this popup.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _sharedImportDialogContext != null) {
+        return;
+      }
+      if (!ref.read(appControllerProvider).sharedImportInProgress) {
+        return;
+      }
+      final dialogContext = _rootNavigatorKey.currentContext;
+      if (dialogContext == null) {
+        // Navigator not built yet (app still starting): try next frame.
+        _presentSharedImportDialog();
+        WidgetsBinding.instance.scheduleFrame();
+        return;
+      }
+      unawaited(
+        showDropNetDialog<void>(
+          context: dialogContext,
+          barrierLabel: 'Preparing shared files',
+          builder: (context) {
+            _sharedImportDialogContext = context;
+            // The import may have finished while the popup was opening.
+            if (!ref.read(appControllerProvider).sharedImportInProgress) {
+              _closeSharedImportDialog();
+            }
+            final colorScheme = Theme.of(context).colorScheme;
+            return AlertDialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(32),
+              ),
+              backgroundColor: colorScheme.surface,
+              elevation: 6,
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const ExpressiveLoader(),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Preparing shared files…',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodyLarge,
+                  ),
+                ],
+              ),
+            );
+          },
+        ).whenComplete(() {
+          _sharedImportDialogContext = null;
+          // Removed while the import is still running — typically because
+          // switching to the Send tab replaced a page (Settings, History…)
+          // the popup was stacked on. Put it back so the user isn't left
+          // without any sign that the file is still being prepared.
+          if (mounted &&
+              ref.read(appControllerProvider).sharedImportInProgress) {
+            _presentSharedImportDialog();
+          }
+        }),
+      );
+    });
+  }
+
+  void _closeSharedImportDialog() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final dialogContext = _sharedImportDialogContext;
+      _sharedImportDialogContext = null;
+      if (dialogContext == null || !dialogContext.mounted) {
+        return;
+      }
+      final route = ModalRoute.of(dialogContext);
+      if (route != null && route.isActive) {
+        Navigator.of(dialogContext).removeRoute(route);
+      }
+    });
+  }
+
+  bool _isIncomingRequestPending(String id) {
+    return ref
+        .read(appControllerProvider)
+        .pendingIncomingRequests
+        .any((pending) => pending.id == id);
+  }
+
+  void _reshowIncomingDialogIfStillPending(IncomingTransferRequest request) {
+    if (!_isIncomingRequestPending(request.id)) {
+      return;
+    }
+    _dialogShownFor.remove(request.id);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          _dialogShownFor.contains(request.id) ||
+          !_isIncomingRequestPending(request.id)) {
+        return;
+      }
+      _dialogShownFor.add(request.id);
+      _showIncomingDialog(request);
+    });
+  }
+
+  /// Closes approval dialogs whose request is no longer pending (it expired
+  /// on the receiver, or the sender gave up). Otherwise the stale dialog
+  /// stays up and a later "Accept" tap silently does nothing while the
+  /// sender already reports "Rejected by receiver".
+  void _closeExpiredIncomingDialogs(AppState next) {
+    if (_activeIncomingDialogs.isEmpty) {
+      return;
+    }
+    final expired = _activeIncomingDialogs.entries
+        .where(
+          (entry) => !next.pendingIncomingRequests.any(
+            (request) => request.id == entry.key,
+          ),
+        )
+        .toList(growable: false);
+    if (expired.isEmpty) {
+      return;
+    }
+    for (final entry in expired) {
+      _activeIncomingDialogs.remove(entry.key);
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      for (final entry in expired) {
+        final dialogContext = entry.value.context;
+        if (!dialogContext.mounted) {
+          continue;
+        }
+        final route = ModalRoute.of(dialogContext);
+        if (route == null || !route.isActive) {
+          // Already answered and closed by the user.
+          continue;
+        }
+        Navigator.of(dialogContext).removeRoute(route);
+        final messengerContext = _rootNavigatorKey.currentContext;
+        if (messengerContext != null) {
+          ScaffoldMessenger.maybeOf(messengerContext)?.showSnackBar(
+            SnackBar(
+              content: Text(
+                'Transfer request from ${entry.value.request.fromDeviceName} '
+                'expired or was withdrawn.',
+              ),
+            ),
+          );
+        }
+      }
+    });
+  }
+
   Future<void> _showIncomingDialog(IncomingTransferRequest request) async {
     final dialogContext = _rootNavigatorKey.currentContext;
     if (!mounted || dialogContext == null) {
@@ -1341,30 +1529,46 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
     // Show initial transfer request
     final initialApproved = await showInstantDialog<bool>(
       context: dialogContext,
-      builder: (context) => PopScope(
-        canPop: false,
-        child: _DecisionScreen(
-          eyebrow: 'Incoming transfer',
-          title: 'Accept this transfer request?',
-          subtitle:
-              'Approve to start receiving this file into your current download location.',
-          highlightTitle: request.fileName,
-          highlightSubtitle: TransferVisuals.kindLabel(request.fileName),
-          icon: TransferVisuals.iconForName(request.fileName),
-          accent: TransferVisuals.accentColor(context, request.fileName),
-          details: details,
-          secondaryLabel: 'Reject',
-          primaryLabel: 'Accept',
-          onSecondary: () => Navigator.of(context).pop(false),
-          onPrimary: () => Navigator.of(context).pop(true),
-        ),
-      ),
+      builder: (context) {
+        _activeIncomingDialogs[request.id] = (
+          context: context,
+          request: request,
+        );
+        return PopScope(
+          canPop: false,
+          child: _DecisionScreen(
+            eyebrow: 'Incoming transfer',
+            title: 'Accept this transfer request?',
+            subtitle:
+                'Approve to start receiving this file into your current download location.',
+            highlightTitle: request.fileName,
+            highlightSubtitle: TransferVisuals.kindLabel(request.fileName),
+            icon: TransferVisuals.iconForName(request.fileName),
+            accent: TransferVisuals.accentColor(context, request.fileName),
+            details: details,
+            secondaryLabel: 'Reject',
+            primaryLabel: 'Accept',
+            onSecondary: () => Navigator.of(context).pop(false),
+            onPrimary: () => Navigator.of(context).pop(true),
+          ),
+        );
+      },
     );
+    _activeIncomingDialogs.remove(request.id);
 
-    if (!mounted || initialApproved != true) {
-      if (!mounted) {
-        return;
-      }
+    if (!mounted) {
+      return;
+    }
+    // null means the dialog went away without the user answering: either a
+    // navigation (share-intent redirect to Send, permission check, startup
+    // routing) replaced the page beneath it, or the request expired and
+    // _closeExpiredIncomingDialogs removed it. That used to be treated as a
+    // rejection, so transfers were declined that nobody had declined.
+    if (initialApproved == null) {
+      _reshowIncomingDialogIfStillPending(request);
+      return;
+    }
+    if (initialApproved != true) {
       ref
           .read(appControllerProvider.notifier)
           .rejectIncomingRequest(request.id);
@@ -1392,6 +1596,10 @@ class _DropNetAppState extends ConsumerState<DropNetApp> {
         return;
       }
 
+      if (codeApproved == null) {
+        _reshowIncomingDialogIfStillPending(request);
+        return;
+      }
       if (codeApproved == true) {
         ref
             .read(appControllerProvider.notifier)

@@ -15,7 +15,10 @@ import '../../models/device_model.dart';
 import '../../core/state/app_state.dart';
 import '../../core/utils/dialog_utils.dart';
 import '../../core/utils/file_utils.dart';
+import '../../core/platform/device_environment.dart';
+import '../../widgets/chromeos_logo.dart';
 import '../../widgets/macos_smiling_logo.dart';
+import '../../widgets/platform_logo.dart';
 import 'package:flutter/cupertino.dart' show CupertinoIcons;
 
 class SettingsScreen extends ConsumerStatefulWidget {
@@ -61,13 +64,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final state = ref.watch(appControllerProvider);
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-    final canEditManufacturer = !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+    final isChromeOS = DeviceEnvironment.isChromeOS;
+    final canEditManufacturer =
+        !kIsWeb && defaultTargetPlatform == TargetPlatform.android && !isChromeOS;
     // The manufacturer tag is meaningless here: iOS/iPadOS device models are
     // reported directly by the OS, and Windows has no equivalent concept —
     // showing a greyed-out, always-auto-detected field only confuses users
     // on these platforms, so it's hidden entirely instead.
-    final hideManufacturerTag =
-        !kIsWeb && (defaultTargetPlatform == TargetPlatform.iOS || defaultTargetPlatform == TargetPlatform.windows);
+    // ChromeOS joins them: the Android container reports the Chromebook's OEM,
+    // which isn't a meaningful device tag there.
+    final hideManufacturerTag = isChromeOS ||
+        (!kIsWeb &&
+            (defaultTargetPlatform == TargetPlatform.iOS ||
+                defaultTargetPlatform == TargetPlatform.windows));
     if (_nameController.text.isEmpty && state.localDeviceBaseName.isNotEmpty) {
       _nameController.text = state.localDeviceBaseName;
     }
@@ -556,7 +565,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                                       onPressed: () => _showDeviceIconPickerDialog(context),
                                       icon: state.customDeviceIcon == DeviceType.macos
                                           ? const MacOSSmilingLogo(size: 18)
-                                          : Icon(_iconForDeviceType(state.customDeviceIcon)),
+                                          : state.customDeviceIcon == DeviceType.chromeos
+                                              ? const ChromeOSLogo(size: 18)
+                                              : Icon(_iconForDeviceType(state.customDeviceIcon)),
                                       label: Text(_labelForDeviceType(state.customDeviceIcon)),
                                       style: OutlinedButton.styleFrom(
                                         shape: RoundedRectangleBorder(
@@ -751,7 +762,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                Icon(Icons.info_outline_rounded, size: 15, color: colorScheme.onSurfaceVariant),
+                                const PlatformLogo(size: 15),
                                 const SizedBox(width: 6),
                                 Text(
                                   'DropNet v$_appVersion',
@@ -778,14 +789,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
-  String _platformDisplayName() {
-    if (!kIsWeb && Platform.isAndroid) return 'Android';
-    if (!kIsWeb && Platform.isIOS) return 'iOS';
-    if (!kIsWeb && Platform.isMacOS) return 'macOS';
-    if (!kIsWeb && Platform.isWindows) return 'Windows';
-    if (!kIsWeb && Platform.isLinux) return 'Linux';
-    return 'Web';
-  }
+  String _platformDisplayName() => DeviceEnvironment.platformDisplayName;
 
   Future<void> _launchUpdatesWebsite() async {
     final uri = Uri.parse('https://dropnet.arijeet.in');
@@ -942,9 +946,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 if (isAndroid) ...[
-                  Row(
+                  // Stacked vertically: long ABI names (armeabi-v7a) don't fit
+                  // side by side on narrow phones.
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      Expanded(
+                      SizedBox(
                         child: Container(
                           padding: const EdgeInsets.all(16),
                           decoration: BoxDecoration(
@@ -974,8 +981,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                           ),
                         ),
                       ),
-                      const SizedBox(width: 12),
-                      Expanded(
+                      const SizedBox(height: 12),
+                      SizedBox(
                         child: Container(
                           padding: const EdgeInsets.all(16),
                           decoration: BoxDecoration(
@@ -1055,8 +1062,20 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       const Icon(Icons.favorite_rounded, color: Colors.redAccent, size: 16),
                       const SizedBox(width: 8),
                       Flexible(
-                        child: Text(
-                          'Thank you for using DropNet for $platformName',
+                        child: Text.rich(
+                          TextSpan(
+                            children: [
+                              const TextSpan(text: 'Thank you for using DropNet for '),
+                              const WidgetSpan(
+                                alignment: PlaceholderAlignment.middle,
+                                child: Padding(
+                                  padding: EdgeInsets.only(right: 4),
+                                  child: PlatformLogo(size: 14),
+                                ),
+                              ),
+                              TextSpan(text: platformName),
+                            ],
+                          ),
                           textAlign: TextAlign.center,
                           style: theme.textTheme.labelMedium?.copyWith(
                             fontWeight: FontWeight.w600,
@@ -1338,16 +1357,27 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       child: FilledButton(
                         onPressed: isChanged
                             ? () async {
-                                final state = ref.read(appControllerProvider);
-                                final manufacturer = state.localDeviceManufacturer.trim().isNotEmpty
-                                    ? state.localDeviceManufacturer
-                                    : 'unknown';
-                                
+                                // The plugin switches the launcher alias
+                                // immediately only when this device is on its
+                                // "blacklist"; otherwise it defers the switch
+                                // to a background service that never runs,
+                                // because the app exits right below. Match on
+                                // the OS-reported Build values: the editable
+                                // manufacturer tag (or an empty one on
+                                // ChromeOS) often didn't match, so the new
+                                // icon was silently never applied.
+                                final manufacturer = DeviceEnvironment.buildManufacturer.isNotEmpty
+                                    ? DeviceEnvironment.buildManufacturer
+                                    : ref.read(appControllerProvider).localDeviceManufacturer.trim();
+                                final brand = DeviceEnvironment.buildBrand.isNotEmpty
+                                    ? DeviceEnvironment.buildBrand
+                                    : manufacturer;
+
                                 try {
                                   await FlutterDynamicIconPlus.setAlternateIconName(
                                     iconName: iconsData[selectedIndex].alias,
-                                    blacklistManufactures: [manufacturer],
-                                    blacklistBrands: [manufacturer],
+                                    blacklistManufactures: [if (manufacturer.isNotEmpty) manufacturer else 'unknown'],
+                                    blacklistBrands: [if (brand.isNotEmpty) brand else 'unknown'],
                                   );
                                 } catch (_) {}
                                 exit(0);
@@ -1609,6 +1639,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         return Icons.window_rounded;
       case DeviceType.linux:
         return Icons.terminal_rounded;
+      case DeviceType.chromeos:
+        return Icons.laptop_chromebook_rounded;
     }
   }
 
@@ -1636,6 +1668,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         return 'Windows';
       case DeviceType.linux:
         return 'Linux';
+      case DeviceType.chromeos:
+        return 'ChromeOS';
     }
   }
 
@@ -1655,7 +1689,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         (name: 'Desktop', icon: Icons.desktop_windows_rounded, type: DeviceType.desktop),
       ]);
     } else {
-      if (Platform.isAndroid) {
+      if (Platform.isAndroid && DeviceEnvironment.isChromeOS) {
+        // Chromebook: no phone option, ChromeOS first (and preselected).
+        for (final type in chromeOSCustomDeviceIcons) {
+          allOptions.add((
+            name: _labelForDeviceType(type),
+            icon: _iconForDeviceType(type),
+            type: type,
+          ));
+        }
+      } else if (Platform.isAndroid) {
         allOptions.addAll([
           (name: 'Phone', icon: Icons.smartphone_rounded, type: DeviceType.phone),
           (name: 'Tablet', icon: Icons.tablet_mac_rounded, type: DeviceType.tablet),
@@ -1799,6 +1842,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                               children: [
                                 item.type == DeviceType.macos
                                     ? MacOSSmilingLogo(
+                                        size: 36,
+                                        color: isSelected ? colorScheme.primary : colorScheme.onSurface,
+                                      )
+                                    : item.type == DeviceType.chromeos
+                                    ? ChromeOSLogo(
                                         size: 36,
                                         color: isSelected ? colorScheme.primary : colorScheme.onSurface,
                                       )
