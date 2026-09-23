@@ -1,5 +1,9 @@
 name: Release Builds
 
+# Every upload uses `archive: false`, so each artifact is the file itself
+# (.apk, .ipa, .deb, .AppImage, .dmg, .zip) named after that file, not a
+# .zip wrapper named after the artifact.
+
 on:
   workflow_dispatch:
   push:
@@ -81,25 +85,29 @@ jobs:
       - name: Upload Universal APK
         uses: actions/upload-artifact@v7
         with:
-          name: DropNet-v${{ env.VERSION }}-Universal
+          archive: false
+          if-no-files-found: error
           path: build/app/outputs/flutter-apk/DropNet-v${{ env.VERSION }}-Universal.apk
 
       - name: Upload arm64-v8a APK
         uses: actions/upload-artifact@v7
         with:
-          name: DropNet-v${{ env.VERSION }}-arm64-v8a
+          archive: false
+          if-no-files-found: error
           path: build/app/outputs/flutter-apk/DropNet-v${{ env.VERSION }}-arm64-v8a.apk
 
       - name: Upload armeabi-v7a APK
         uses: actions/upload-artifact@v7
         with:
-          name: DropNet-v${{ env.VERSION }}-armeabi-v7a
+          archive: false
+          if-no-files-found: error
           path: build/app/outputs/flutter-apk/DropNet-v${{ env.VERSION }}-armeabi-v7a.apk
 
       - name: Upload x86_64 APK
         uses: actions/upload-artifact@v7
         with:
-          name: DropNet-v${{ env.VERSION }}-x86_64
+          archive: false
+          if-no-files-found: error
           path: build/app/outputs/flutter-apk/DropNet-v${{ env.VERSION }}-x86_64.apk
 
   build-ios:
@@ -138,7 +146,8 @@ jobs:
       - name: Upload IPA Artifact
         uses: actions/upload-artifact@v7
         with:
-          name: DropNet-v${{ env.VERSION }}-iOS
+          archive: false
+          if-no-files-found: error
           path: build/ios/iphoneos/DropNet-v${{ env.VERSION }}-iOS.ipa
 
   build-linux:
@@ -174,13 +183,15 @@ jobs:
       - name: Upload DEB Artifact
         uses: actions/upload-artifact@v7
         with:
-          name: DropNet-v${{ env.VERSION }}-Linux-amd64-deb
+          archive: false
+          if-no-files-found: error
           path: deb_build/DropNet-v${{ env.VERSION }}-Linux-amd64.deb
 
       - name: Upload AppImage Artifact
         uses: actions/upload-artifact@v7
         with:
-          name: DropNet-v${{ env.VERSION }}-Linux-x86_64-AppImage
+          archive: false
+          if-no-files-found: error
           path: DropNet-v${{ env.VERSION }}-Linux-x86_64.AppImage
 
   build-macos:
@@ -232,11 +243,13 @@ jobs:
       - name: Upload ZIP Artifact
         uses: actions/upload-artifact@v7
         with:
-          name: DropNet-v${{ env.VERSION }}-macOS-zip
+          archive: false
+          if-no-files-found: error
           path: build/macos/Build/Products/Release/DropNet-v${{ env.VERSION }}-macOS.zip
 
       - name: Upload DMG Artifact
         uses: actions/upload-artifact@v7
         with:
-          name: DropNet-v${{ env.VERSION }}-macOS-dmg
+          archive: false
+          if-no-files-found: error
           path: build/macos/Build/Products/Release/DropNet-v${{ env.VERSION }}-macOS.dmg
