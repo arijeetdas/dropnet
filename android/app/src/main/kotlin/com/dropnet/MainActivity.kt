@@ -35,6 +35,7 @@ import java.io.File
 import java.io.ByteArrayOutputStream
 import java.net.URLConnection
 import java.util.concurrent.Executors
+import java.util.zip.ZipFile
 
 class MainActivity : FlutterFragmentActivity() {
 	companion object {
@@ -1319,7 +1320,29 @@ class MainActivity : FlutterFragmentActivity() {
 			"installedVersionName" to installed?.versionName,
 			"installedVersionCode" to installedVersionCode,
 			"isOwnPackage" to (packageInfo.packageName == applicationContext.packageName),
+			"pubspecBuildNumber" to if (packageInfo.packageName == applicationContext.packageName) {
+				readPubspecBuildNumber(apkFile, versionCode)
+			} else null,
 		)
+	}
+
+	/**
+	 * The `<buildNo>` of `version: <versionName>+<buildNo>` in the pubspec.yaml
+	 * Flutter bundles inside a DropNet APK. Split-per-ABI APKs report an
+	 * ABI-prefixed version code (e.g. 2026 for build 26), so the manifest
+	 * version code can't be shown as-is. APKs built before pubspec.yaml was
+	 * bundled fall back to stripping that prefix (abiCode * 1000 + buildNo).
+	 */
+	private fun readPubspecBuildNumber(apkFile: File, versionCode: Long): Long {
+		val fromPubspec = runCatching {
+			ZipFile(apkFile).use { zip ->
+				val entry = zip.getEntry("assets/flutter_assets/pubspec.yaml") ?: return@use null
+				val text = zip.getInputStream(entry).bufferedReader().use { it.readText() }
+				Regex("""^version:\s*[^+\s]+\+(\d+)""", RegexOption.MULTILINE)
+					.find(text)?.groupValues?.get(1)?.toLongOrNull()
+			}
+		}.getOrNull()
+		return fromPubspec ?: if (versionCode >= 1000) versionCode % 1000 else versionCode
 	}
 
 	private fun installApkFile(path: String): Boolean {

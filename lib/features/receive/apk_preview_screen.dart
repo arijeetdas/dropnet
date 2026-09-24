@@ -298,7 +298,7 @@ class _ApkPreviewScreenState extends ConsumerState<ApkPreviewScreen> {
       _InfoRowData('APK Size', FileUtils.formatBytes(info.apkSize.toDouble())),
       if (info.isOwnPackage) ...[
         _InfoRowData('Status', info.buildStatus),
-        _InfoRowData('Build Number', info.versionCode.toString()),
+        _InfoRowData('Build Number', (info.pubspecBuildNumber ?? info.versionCode).toString()),
       ],
       if (info.isInstalled)
         _InfoRowData(

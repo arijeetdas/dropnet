@@ -15,6 +15,7 @@ import '../../models/device_model.dart';
 import '../../core/state/app_state.dart';
 import '../../core/utils/dialog_utils.dart';
 import '../../core/utils/file_utils.dart';
+import '../../core/utils/update_link.dart';
 import '../../core/platform/device_environment.dart';
 import '../../widgets/chromeos_logo.dart';
 import '../../widgets/macos_smiling_logo.dart';
@@ -792,7 +793,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   String _platformDisplayName() => DeviceEnvironment.platformDisplayName;
 
   Future<void> _launchUpdatesWebsite() async {
-    final uri = Uri.parse('https://dropnet.arijeet.in');
+    final state = ref.read(appControllerProvider);
+    final uri = await UpdateLink.build(cpuArchitecture: state.localDeviceCpuArchitecture);
     await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 
@@ -810,7 +812,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     // Android-only build type / CPU architecture details.
     var installedType = 'Universal';
     var recommendedType = 'Universal';
-    var bestAbi = 'unknown';
     var isUsingRecommended = false;
 
     if (isAndroid) {
@@ -834,12 +835,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       if (activeIndex == -1) activeIndex = 0;
       iconAsset = iconsData[activeIndex].asset;
 
-      final abis = state.localDeviceCpuArchitecture
-          .split(',')
-          .map((e) => e.trim())
-          .where((e) => e.isNotEmpty)
-          .toList();
-      bestAbi = abis.isNotEmpty ? abis.first : 'unknown';
       final rawInstalledType = state.installedApkType.isNotEmpty ? state.installedApkType : 'universal';
 
       // Normalize installedType typography
@@ -859,16 +854,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             : 'Universal';
       }
 
-      // Map bestAbi to recommended type string
-      if (bestAbi == 'arm64-v8a') {
-        recommendedType = 'arm64-v8a';
-      } else if (bestAbi == 'armeabi-v7a') {
-        recommendedType = 'armeabi-v7a';
-      } else if (bestAbi == 'x86_64') {
-        recommendedType = 'x86_64';
-      } else if (bestAbi == 'x86') {
-        recommendedType = 'x86';
-      }
+      // Recommended build type for this device's preferred ABI
+      recommendedType = UpdateLink.recommendedAbi(state.localDeviceCpuArchitecture) ?? 'Universal';
 
       isUsingRecommended = installedType == recommendedType && installedType != 'Universal';
     }

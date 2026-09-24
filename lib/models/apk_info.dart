@@ -18,6 +18,7 @@ class ApkInfo {
     this.isInstalled = false,
     this.installedVersionName,
     this.installedVersionCode,
+    this.pubspecBuildNumber,
   });
 
   final String path;
@@ -41,6 +42,11 @@ class ApkInfo {
   final String? installedVersionName;
   final int? installedVersionCode;
 
+  /// For DropNet's own APKs: the `<buildNo>` from `version: <name>+<buildNo>`
+  /// in the pubspec.yaml bundled inside the APK. Unlike [versionCode], it is
+  /// not inflated by Flutter's split-per-ABI prefix (e.g. 26, not 2026).
+  final int? pubspecBuildNumber;
+
   factory ApkInfo.fromMap(String path, Map<dynamic, dynamic> map) {
     return ApkInfo(
       path: path,
@@ -58,6 +64,7 @@ class ApkInfo {
                 ? Uint8List.fromList((map['iconBytes'] as List).cast<int>())
                 : null),
       isInstalled: map['isInstalled'] == true,
+      pubspecBuildNumber: (map['pubspecBuildNumber'] as num?)?.toInt(),
       installedVersionName: map['installedVersionName']?.toString(),
       installedVersionCode: (map['installedVersionCode'] as num?)?.toInt(),
     );
