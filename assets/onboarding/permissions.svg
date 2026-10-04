@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 560">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#E4F8EC"/>
+      <stop offset="0.55" stop-color="#F6FBF8"/>
+      <stop offset="1" stop-color="#E2EEFF"/>
+    </linearGradient>
+    <linearGradient id="brand" x1="0.1" y1="0.9" x2="0.9" y2="0.1">
+      <stop offset="0" stop-color="#079A7B"/>
+      <stop offset="0.55" stop-color="#2DC46B"/>
+      <stop offset="1" stop-color="#8BEC5A"/>
+    </linearGradient>
+    <radialGradient id="shine" cx="0.75" cy="0.15" r="0.75">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.3"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#3DD68C" stop-opacity="0.3"/>
+      <stop offset="1" stop-color="#3DD68C" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Backdrop -->
+  <rect width="800" height="560" rx="44" fill="url(#bg)"/>
+  <circle cx="90" cy="60" r="170" fill="#CDF2DC" opacity="0.7"/>
+  <circle cx="740" cy="540" r="200" fill="#D5E6FF" opacity="0.6"/>
+
+  <!-- Radar rings -->
+  <circle cx="400" cy="290" r="250" fill="url(#glow)"/>
+  <circle cx="400" cy="290" r="170" fill="none" stroke="#0B8A69" stroke-width="4" opacity="0.2"/>
+  <circle cx="400" cy="290" r="226" fill="none" stroke="#0B8A69" stroke-width="4" opacity="0.1"/>
+
+  <g transform="translate(400 310) scale(1.15) translate(-400 -310)">
+  <!-- Folder -->
+  <rect x="292" y="206" width="240" height="214" rx="26" fill="#0B3D2B" opacity="0.12"/>
+  <path d="M280 214a22 22 0 0 1 22-22h62l24 24h110a22 22 0 0 1 22 22v152a22 22 0 0 1-22 22H302a22 22 0 0 1-22-22z" fill="#06785E"/>
+  <rect x="304" y="210" width="192" height="80" rx="12" fill="#FFFFFF"/>
+  <rect x="324" y="228" width="104" height="9" rx="4.5" fill="#C9DCD2"/>
+  <rect x="324" y="246" width="70" height="8" rx="4" fill="#DFEAE4"/>
+  <path d="M280 262a20 20 0 0 1 20-20h200a20 20 0 0 1 20 20v128a22 22 0 0 1-22 22H302a22 22 0 0 1-22-22z" fill="url(#brand)"/>
+  <path d="M280 262a20 20 0 0 1 20-20h200a20 20 0 0 1 20 20v128a22 22 0 0 1-22 22H302a22 22 0 0 1-22-22z" fill="url(#shine)"/>
+  <!-- DropNet mark on the folder -->
+  <circle cx="400" cy="326" r="38" fill="none" stroke="#E6F7EA" stroke-width="13"/>
+  <circle cx="400" cy="326" r="13" fill="#E6F7EA"/>
+
+  <!-- Shield: safe, local-only access -->
+  <path d="M528 330C560 347 584 351 592 351V398C592 438 564 461 528 472C492 461 464 438 464 398V351C472 351 496 347 528 330Z" fill="#0B3D2B" opacity="0.14"/>
+  <path d="M522 320C554 337 578 341 586 341V388C586 428 558 451 522 462C486 451 458 428 458 388V341C466 341 490 337 522 320Z" fill="#FFFFFF"/>
+  <path d="M522 342C546 354 562 357 568 357V390C568 418 549 435 522 444C495 435 476 418 476 390V357C482 357 498 354 522 342Z" fill="#E3F6EB"/>
+  <path d="M502 392l14 14 26-30" fill="none" stroke="#0B8A69" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/>
+
+  </g>
+
+  <!-- Floating files -->
+  <g transform="rotate(-10 196 196)">
+    <rect x="166" y="170" width="64" height="64" rx="19" fill="#0B3D2B" opacity="0.1"/>
+    <rect x="162" y="164" width="64" height="64" rx="19" fill="#FFFFFF"/>
+    <circle cx="182" cy="185" r="5.5" fill="#D6337F"/>
+    <path d="M174 214l14-14 11 11 6-6 11 11" fill="none" stroke="#D6337F" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <g transform="rotate(8 200 380)">
+    <rect x="174" y="356" width="56" height="56" rx="17" fill="#0B3D2B" opacity="0.1"/>
+    <rect x="170" y="350" width="56" height="56" rx="17" fill="#FFFFFF"/>
+    <path d="M188 362h13l9 9v21h-22z" fill="none" stroke="#2F6FE0" stroke-width="3.8" stroke-linejoin="round"/>
+    <path d="M193 379h11M193 386h7" stroke="#2F6FE0" stroke-width="3.4" stroke-linecap="round"/>
+  </g>
+  <g transform="rotate(10 606 176)">
+    <rect x="580" y="154" width="56" height="56" rx="17" fill="#0B3D2B" opacity="0.1"/>
+    <rect x="576" y="148" width="56" height="56" rx="17" fill="#FFFFFF"/>
+    <rect x="588" y="166" width="21" height="19" rx="5" fill="none" stroke="#E8590C" stroke-width="3.8"/>
+    <path d="M609 172l10-6v18l-10-6" fill="none" stroke="#E8590C" stroke-width="3.8" stroke-linejoin="round"/>
+  </g>
+  <!-- Offline: no cloud -->
+  <g transform="rotate(-8 660 300)">
+    <rect x="634" y="278" width="56" height="56" rx="17" fill="#0B3D2B" opacity="0.1"/>
+    <rect x="630" y="272" width="56" height="56" rx="17" fill="#FFFFFF"/>
+    <path d="M647 312a9 9 0 0 1-1-17.9A12 12 0 0 1 669 296a8 8 0 0 1-1 16z" fill="none" stroke="#5F7A6E" stroke-width="3.6" stroke-linejoin="round"/>
+    <path d="M644 286l28 30" stroke="#D93A3A" stroke-width="4" stroke-linecap="round"/>
+  </g>
+
+  <!-- Sparkles -->
+  <path d="M640 92l5 13 13 5-13 5-5 13-5-13-13-5 13-5z" fill="#6FD957"/>
+  <path d="M130 300l4 10 10 4-10 4-4 10-4-10-10-4 10-4z" fill="#0B8A69" opacity="0.55"/>
+  <circle cx="300" cy="470" r="8" fill="#6FD957" opacity="0.7"/>
+  <circle cx="720" cy="420" r="7" fill="#2F6FE0" opacity="0.3"/>
+  <circle cx="290" cy="110" r="7" fill="#0B8A69" opacity="0.3"/>
+</svg>

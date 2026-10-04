@@ -15,6 +15,7 @@ import 'package:uuid/uuid.dart';
 import '../../models/transfer_model.dart';
 import '../security/local_tls_certificate_service.dart';
 import '../utils/file_utils.dart';
+import 'web_portal_kit.dart';
 
 class WebPeer {
   const WebPeer({
@@ -240,17 +241,18 @@ class WebServerService {
 
     final router = Router()
       ..get('/', (Request request) async {
+        final version = await WebPortalKit.versionName();
         if (_webPin.isNotEmpty) {
           final cookie = request.headers['cookie'] ?? '';
           if (!_isValidPinSession(cookie)) {
             return Response.ok(
-              _renderWebPinGatePage(),
+              _renderWebPinGatePage(version),
               headers: {'content-type': 'text/html; charset=utf-8'},
             );
           }
         }
         final html = await rootBundle.loadString('assets/web/index.html');
-        final hydrated = html.replaceFirst(
+        final hydrated = _hydratePortalPage(html, version).replaceFirst(
           '</head>',
           '<script>window.__DROPNET_TOKEN=${jsonEncode(token)};</script></head>',
         );
@@ -264,7 +266,7 @@ class WebServerService {
         final submitted = Uri.splitQueryString(body)['pin'] ?? '';
         if (!_constantTimeEquals(submitted, _webPin)) {
           return Response.ok(
-            _renderWebPinGatePage(error: true),
+            _renderWebPinGatePage(await WebPortalKit.versionName(), error: true),
             headers: {'content-type': 'text/html; charset=utf-8'},
           );
         }
@@ -543,7 +545,11 @@ class WebServerService {
             'content-disposition': 'attachment; filename="${p.basename(filePath)}"',
           },
         );
-      });
+      })
+      ..get(
+        '${WebPortalKit.assetBase}/<file>',
+        (Request request, String file) => WebPortalKit.serveAsset(file),
+      );
 
     final handler = const Pipeline().addMiddleware(logRequests()).addHandler(router.call);
     final tlsContext = await _tlsCertificates.createServerContext(
@@ -746,49 +752,33 @@ class WebServerService {
     return false;
   }
 
-  String _renderWebPinGatePage({bool error = false}) {
-    final errorHtml = error
-        ? '<p class="err">Incorrect PIN. Please try again.</p>'
-        : '';
-    return '''
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>DropNet Web — PIN Required</title>
-  <style>
-    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap');
-    :root{--bg:#030712;--card:rgba(17,24,39,0.7);--border:rgba(255,255,255,0.08);--text:#f9fafb;--muted:#9ca3af;--accent:#2dd4bf;}
-    *{box-sizing:border-box;}
-    body{font-family:'Plus Jakarta Sans',sans-serif;margin:0;background-color:var(--bg);color:var(--text);min-height:100vh;display:flex;align-items:center;justify-content:center;}
-    .card{background:var(--card);backdrop-filter:blur(20px);border-radius:28px;padding:40px;border:1px solid var(--border);box-shadow:0 25px 50px -12px rgba(0,0,0,.5);width:100%;max-width:400px;margin:24px;}
-    h1{margin:0 0 8px;font-size:1.5rem;font-weight:800;letter-spacing:-0.03em;}
-    .sub{color:var(--muted);margin:0 0 24px;font-size:.9rem;}
-    label{display:block;font-size:.85rem;color:var(--muted);margin-bottom:8px;}
-    input[type=password]{width:100%;background:rgba(255,255,255,.06);border:1px solid var(--border);border-radius:12px;padding:12px 16px;color:var(--text);font-size:1.1rem;font-family:inherit;outline:none;letter-spacing:.18em;}
-    input:focus{border-color:var(--accent);}
-    button{margin-top:16px;width:100%;background:var(--accent);color:#003d35;border:none;border-radius:12px;padding:13px;font-size:1rem;font-weight:700;font-family:inherit;cursor:pointer;transition:filter .2s;}
-    button:hover{filter:brightness(1.1);}
-    .lock{font-size:2.5rem;margin-bottom:16px;user-select:none;}
-    .err{color:#f87171;margin-top:10px;font-size:.88rem;}
-  </style>
-</head>
-<body>
-  <div class="card">
-    <div class="lock">🔒</div>
-    <h1>PIN Required</h1>
-    <p class="sub">This web server is PIN-protected. Enter the PIN to continue.</p>
-    <form method="POST" action="/verify-pin">
-      <label for="pin">PIN</label>
-      <input type="password" id="pin" name="pin" autocomplete="one-time-code" autofocus required />
-      $errorHtml
-      <button type="submit">Unlock</button>
-    </form>
-  </div>
-</body>
-</html>
-''';
+  String _renderWebPinGatePage(String version, {bool error = false}) {
+    return WebPortalKit.renderPinGate(
+      version: version,
+      section: 'Web Portal',
+      action: '/verify-pin',
+      message: 'This web portal is PIN-protected. Enter the PIN to continue.',
+      error: error,
+    );
+  }
+
+  /// Fills the shared page chrome placeholders of assets/web/index.html.
+  String _hydratePortalPage(String html, String version) {
+    final host = jsonEncode({
+      'platform': WebPortalKit.platformName,
+      'platformLogo': WebPortalKit.platformLogo(version),
+      'orb': WebPortalKit.orb(version),
+      'icon': WebPortalKit.iconUrl(version),
+    }).replaceAll('</', r'<\/');
+    return html
+        .replaceFirst('<!--DROPNET:HEAD-->', WebPortalKit.head(title: 'DropNet Web Portal', version: version))
+        .replaceFirst('<!--DROPNET:BACKDROP-->', WebPortalKit.backdrop)
+        .replaceFirst('<!--DROPNET:HEADER-->', WebPortalKit.header(version: version, section: 'Web Portal'))
+        .replaceFirst('<!--DROPNET:FOOTER-->', WebPortalKit.footer(version: version))
+        .replaceAll('<!--DROPNET:ORB-->', WebPortalKit.orb(version))
+        .replaceAll('<!--DROPNET:PLATFORM_LOGO-->', WebPortalKit.platformLogo(version))
+        .replaceAll('<!--DROPNET:PLATFORM-->', WebPortalKit.esc(WebPortalKit.platformName))
+        .replaceFirst('<!--DROPNET:HOST-->', '<script>window.__DROPNET_HOST=$host;</script>');
   }
 
   void approvePeerRequest(String id) {

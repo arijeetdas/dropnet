@@ -67,7 +67,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                       child: SizedBox(
                         height: 260,
                         child: SvgPicture.asset(
-                          'assets/onboarding/preview.svg',
+                          'assets/onboarding/welcome.svg',
                           fit: BoxFit.cover,
                         ),
                       ),

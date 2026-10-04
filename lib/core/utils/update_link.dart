@@ -42,7 +42,7 @@ class UpdateLink {
   static String? _cachedBuildNumber;
 
   /// The `<buildNo>` part of `version: <versionName>+<buildNo>` in
-  /// pubspec.yaml (e.g. `2.5.2+26` -> `26`).
+  /// pubspec.yaml (e.g. `2.5.3+27` -> `27`).
   ///
   /// Read from the bundled pubspec.yaml because the runtime build number is
   /// not reliable: Android split-per-ABI APKs report an ABI-prefixed version

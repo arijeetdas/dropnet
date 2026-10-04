@@ -10,6 +10,7 @@ import 'package:shelf_router/shelf_router.dart';
 import 'package:uuid/uuid.dart';
 
 import '../security/local_tls_certificate_service.dart';
+import 'web_portal_kit.dart';
 
 class TempShareClient {
   const TempShareClient({required this.ip, required this.connectedAt});
@@ -169,17 +170,18 @@ class TemporaryLinkShareService {
         if (!_isAccessAllowed()) {
           return Response.forbidden('Invalid or expired link');
         }
+        final version = await WebPortalKit.versionName();
         if (_pin.isNotEmpty) {
           final cookie = request.headers['cookie'] ?? '';
           if (!_isValidSession(cookie)) {
             return Response.ok(
-              _renderPinGatePage(),
+              _renderPinGatePage(version),
               headers: {'content-type': 'text/html; charset=utf-8'},
             );
           }
         }
         _trackConnection(request);
-        final html = _renderSharePage();
+        final html = _renderSharePage(version);
         return Response.ok(
           html,
           headers: {'content-type': 'text/html; charset=utf-8'},
@@ -193,7 +195,7 @@ class TemporaryLinkShareService {
         final submittedPin = Uri.splitQueryString(body)['pin'] ?? '';
         if (!_constantTimeEquals(submittedPin, _pin)) {
           return Response.ok(
-            _renderPinGatePage(error: true),
+            _renderPinGatePage(await WebPortalKit.versionName(), error: true),
             headers: {'content-type': 'text/html; charset=utf-8'},
           );
         }
@@ -243,7 +245,11 @@ class TemporaryLinkShareService {
           return Response.forbidden('Invalid or expired link');
         }
         return Response.movedPermanently('/');
-      });
+      })
+      ..get(
+        '${WebPortalKit.assetBase}/<file>',
+        (Request request, String file) => WebPortalKit.serveAsset(file),
+      );
 
     final tlsContext = await _tlsCertificates.createServerContext(
       commonName: 'DropNet Temporary Link Server',
@@ -459,314 +465,85 @@ class TemporaryLinkShareService {
     return '$stem ($count)$ext';
   }
 
-  String _renderPinGatePage({bool error = false}) {
-    final errorHtml = error
-        ? '<p class="err">Incorrect PIN. Please try again.</p>'
-        : '';
-    return '''
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>DropNet — PIN Required</title>
-  <style>
-    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap');
-    :root{--bg:#030712;--card:rgba(17,24,39,0.7);--border:rgba(255,255,255,0.08);--text:#f9fafb;--muted:#9ca3af;--accent:#2dd4bf;}
-    *{box-sizing:border-box;}
-    body{font-family:'Plus Jakarta Sans',sans-serif;margin:0;background-color:var(--bg);color:var(--text);min-height:100vh;display:flex;align-items:center;justify-content:center;}
-    .card{background:var(--card);backdrop-filter:blur(20px);border-radius:28px;padding:40px;border:1px solid var(--border);box-shadow:0 25px 50px -12px rgba(0,0,0,.5);width:100%;max-width:400px;margin:24px;}
-    h1{margin:0 0 8px;font-size:1.5rem;font-weight:800;letter-spacing:-0.03em;}
-    .sub{color:var(--muted);margin:0 0 24px;font-size:.9rem;}
-    label{display:block;font-size:.85rem;color:var(--muted);margin-bottom:8px;}
-    input[type=password]{width:100%;background:rgba(255,255,255,.06);border:1px solid var(--border);border-radius:12px;padding:12px 16px;color:var(--text);font-size:1.1rem;font-family:inherit;outline:none;letter-spacing:.18em;}
-    input:focus{border-color:var(--accent);}
-    button{margin-top:16px;width:100%;background:var(--accent);color:#003d35;border:none;border-radius:12px;padding:13px;font-size:1rem;font-weight:700;font-family:inherit;cursor:pointer;transition:filter .2s;}
-    button:hover{filter:brightness(1.1);}
-    .lock{font-size:2.5rem;margin-bottom:16px;user-select:none;}
-    .err{color:#f87171;margin-top:10px;font-size:.88rem;}
-  </style>
-</head>
-<body>
-  <div class="card">
-    <div class="lock">🔒</div>
-    <h1>PIN Required</h1>
-    <p class="sub">This share is PIN-protected. Enter the PIN to access files.</p>
-    <form method="POST" action="/verify">
-      <label for="pin">PIN</label>
-      <input type="password" id="pin" name="pin" autocomplete="one-time-code" autofocus required />
-      $errorHtml
-      <button type="submit">Unlock</button>
-    </form>
-  </div>
-</body>
-</html>
-''';
+  String _renderPinGatePage(String version, {bool error = false}) {
+    return WebPortalKit.renderPinGate(
+      version: version,
+      section: 'Temporary Share',
+      action: '/verify',
+      message: 'This share is PIN-protected. Enter the PIN to access the files.',
+      error: error,
+    );
   }
 
-  String _renderSharePage() {
-    final escape = const HtmlEscape(HtmlEscapeMode.element);
-    final suffix = _state.idSuffix.isEmpty
-        ? ''
-        : ' • ${escape.convert(_state.idSuffix)}';
+  String _renderSharePage(String version) {
+    final esc = WebPortalKit.esc;
+    final totalBytes = _entries.fold<int>(0, (sum, entry) => sum + entry.size);
+    final startedMs = _state.startedAt?.millisecondsSinceEpoch;
     final expiryMs = _state.expiresAt?.millisecondsSinceEpoch;
-    final expiryScript = expiryMs != null
-        ? '<script>!function(){var e=$expiryMs,el=document.getElementById("exp");'
-              'function t(){var r=Math.max(0,Math.round((e-Date.now())/1000)),m=Math.floor(r/60),s=r%60;'
-              'if(el)el.textContent=m+":"+String(s).padStart(2,"0");if(r>0)setTimeout(t,1000);}t();}();</script>'
+    final suffixChip = _state.idSuffix.isEmpty
+        ? ''
+        : '<span class="dn-chip dn-chip--mono">${esc(_state.idSuffix)}</span>';
+    final expiryStat = expiryMs != null
+        ? '<div><dt>Expires in</dt><dd data-countdown data-expires-at="$expiryMs" '
+              'data-started-at="${startedMs ?? ''}">--:--</dd></div>'
+        : '<div><dt>Link</dt><dd>Active</dd></div>';
+    final expiryBar = expiryMs != null
+        ? '<div class="dn-expiry" aria-hidden="true"><span data-countdown-bar></span></div>'
         : '';
-    final expiryBadge = expiryMs != null
-        ? '<span id="exp" style="font-size:.78rem;background:rgba(45,212,191,.12);color:var(--accent);'
-              'padding:3px 10px;border-radius:999px;border:1px solid rgba(45,212,191,.25);margin-left:10px;">--:--</span>'
-        : '';
-    final filesHtml = _entries
-        .map(
-          (entry) {
-            final escapedName = escape.convert(entry.displayName);
-            return '<li><div class="file-info">'
-                '<div class="file-name-row">'
-                '<span class="file-icon" aria-hidden="true">${_fileIconForName(entry.displayName)}</span>'
-                '<span class="file-name" title="$escapedName">$escapedName</span>'
-                '</div>'
-                '<span>${_fileTypeLabel(entry.displayName)} • ${_formatBytes(entry.size)}</span>'
-                '</div>'
-                '<a class="download-btn" href="/download/${entry.id}">Download</a></li>';
-          },
-        )
-        .join();
+    final filesHtml = StringBuffer();
+    for (var index = 0; index < _entries.length; index++) {
+      final entry = _entries[index];
+      final name = esc(entry.displayName);
+      final kind = WebPortalKit.fileKind(entry.displayName);
+      filesHtml.write(
+        '<li class="dn-file" style="--i:${index < 16 ? index : 16}">'
+        '<span class="dn-file-icon kind-$kind">${WebPortalKit.fileIcon(kind)}</span>'
+        '<span class="dn-file-copy">'
+        '<span class="dn-file-name" title="$name">$name</span>'
+        '<span class="dn-file-meta">${_fileTypeLabel(entry.displayName)} • ${_formatBytes(entry.size)}</span>'
+        '</span>'
+        '<a class="dn-btn dn-btn--tonal dn-btn--sm" href="/download/${entry.id}" data-download aria-label="Download $name">'
+        '<span class="dn-dl">${WebPortalKit.downloadSvg}</span><span class="dn-check">${WebPortalKit.checkSvg}</span>'
+        '<span class="dn-btn-label">Download</span></a>'
+        '</li>',
+      );
+    }
 
     return '''
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>DropNet Temporary Share</title>
-  <style>
-    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap');
-
-    :root {
-      --bg: #030712;
-      --card: rgba(17, 24, 39, 0.7);
-      --card-border: rgba(255, 255, 255, 0.08);
-      --text: #f9fafb;
-      --text-muted: #9ca3af;
-      --accent: #2dd4bf;
-      --accent-soft: rgba(45, 212, 191, 0.1);
-      --radius-xl: 28px;
-      --radius-lg: 18px;
-      --radius-md: 12px;
-      --ease: cubic-bezier(0.4, 0, 0.2, 1);
-    }
-
-    * { box-sizing: border-box; }
-
-    body { 
-      font-family: 'Plus Jakarta Sans', sans-serif; 
-      margin: 0; 
-      background-color: var(--bg);
-      background-image: 
-        radial-gradient(circle at 10% 20%, rgba(45, 212, 191, 0.05) 0%, transparent 40%),
-        radial-gradient(circle at 90% 80%, rgba(99, 102, 241, 0.05) 0%, transparent 40%);
-      background-attachment: fixed;
-      color: var(--text); 
-      line-height: 1.6;
-      min-height: 100vh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-
-    .wrap { 
-      width: 100%;
-      max-width: 600px; 
-      margin: 40px auto; 
-      padding: 24px; 
-      animation: slideUp 0.8s var(--ease);
-    }
-
-    @keyframes slideUp {
-      from { opacity: 0; transform: translateY(20px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-
-    .card { 
-      background: var(--card); 
-      backdrop-filter: blur(20px) saturate(160%);
-      -webkit-backdrop-filter: blur(20px) saturate(160%);
-      border-radius: var(--radius-xl); 
-      padding: 40px; 
-      border: 1px solid var(--card-border); 
-      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
-    }
-
-    h1 { 
-      margin: 0 0 4px 0; 
-      font-size: 1.8rem; 
-      font-weight: 800;
-      letter-spacing: -0.04em;
-      background: linear-gradient(to right, #fff, #9ca3af);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-    }
-
-    h2 {
-      font-size: 1.1rem;
-      font-weight: 600;
-      margin-top: 32px;
-      margin-bottom: 16px;
-      color: var(--text);
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-
-    h2::before {
-      content: '';
-      width: 4px;
-      height: 18px;
-      background: var(--accent);
-      border-radius: 4px;
-      display: inline-block;
-    }
-
-    .meta { 
-      color: var(--text-muted); 
-      margin-bottom: 24px; 
-      font-size: 0.95rem;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    /* File List Styling */
-    ul { 
-      padding: 0; 
-      margin: 0; 
-      list-style: none; 
-    }
-
-    li { 
-      background: rgba(255, 255, 255, 0.03);
-      border: 1px solid var(--card-border);
-      border-radius: var(--radius-lg);
-      padding: 16px 20px;
-      margin-bottom: 12px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 16px;
-      transition: all 0.3s var(--ease);
-    }
-
-    li:hover {
-      background: rgba(255, 255, 255, 0.05);
-      border-color: var(--accent);
-      transform: translateX(4px);
-    }
-
-    li div.file-info {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-      min-width: 0;
-      flex: 1;
-    }
-
-    .file-name-row {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      min-width: 0;
-    }
-
-    .file-icon {
-      width: 36px;
-      height: 36px;
-      border-radius: 12px;
-      background: var(--accent-soft);
-      border: 1px solid rgba(45, 212, 191, 0.18);
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      flex: 0 0 auto;
-    }
-
-    .file-icon svg {
-      width: 18px;
-      height: 18px;
-      stroke: var(--accent);
-      fill: none;
-      stroke-width: 1.8;
-      stroke-linecap: round;
-      stroke-linejoin: round;
-    }
-
-    .file-name {
-      min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      font-weight: 600;
-    }
-
-    li span { 
-      color: var(--text-muted); 
-      font-size: 0.8rem; 
-      font-size: 0.62rem;
-      font-weight: 800;
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
-    }
-
-    li a { 
-      background: var(--accent);
-      color: #003d35;
-      text-decoration: none; 
-      padding: 8px 18px;
-      border-radius: var(--radius-md);
-      font-size: 0.85rem;
-      font-weight: 700;
-      transition: all 0.3s var(--ease);
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      box-shadow: 0 4px 12px rgba(45, 212, 191, 0.2);
-      flex: 0 0 auto;
-    }
-
-    li a:hover { 
-      transform: translateY(-2px);
-      filter: brightness(1.1);
-      box-shadow: 0 6px 18px rgba(45, 212, 191, 0.3);
-      text-decoration: none;
-    }
-
-    /* Responsive Adjustments */
-    @media (max-width: 640px) {
-      .wrap { padding: 16px; }
-      .card { padding: 24px; }
-      li { flex-direction: column; align-items: flex-start; gap: 16px; }
-      li a { width: 100%; }
-      .file-info { width: 100%; }
-      h1 { font-size: 1.5rem; }
-    }
-  </style>
+${WebPortalKit.head(title: '${_state.deviceName} · DropNet Temporary Share', version: version)}
 </head>
-<body>
-  <div class="wrap">
-    <div class="card">
-      <h1>${escape.convert(_state.deviceName)}</h1>
-      <div class="meta">
-        <span style="display:inline-block; width:8px; height:8px; background:var(--accent); border-radius:50%; box-shadow:0 0 10px var(--accent);"></span>
-        ${escape.convert(_state.platformLabel)}$suffix$expiryBadge
+<body class="dn-page">
+  ${WebPortalKit.backdrop}
+  ${WebPortalKit.header(version: version, section: 'Temporary Share')}
+  <main class="dn-main dn-share">
+    <section class="dn-card dn-share-hero dn-rise">
+      ${WebPortalKit.orb(version)}
+      <p class="dn-eyebrow"><span class="dn-live-dot"></span>Shared with you</p>
+      <h1 class="dn-title dn-title--xl">${esc(_state.deviceName)}</h1>
+      <div class="dn-chips">
+        <span class="dn-chip">${WebPortalKit.platformLogo(version)}${esc(_state.platformLabel)}</span>
+        $suffixChip
       </div>
-      
-      <h2>Shared Files</h2>
-      <ul>$filesHtml</ul>
-    </div>
-  </div>
-  $expiryScript
+      <dl class="dn-stats">
+        <div><dt>Files</dt><dd>${_entries.length}</dd></div>
+        <div><dt>Size</dt><dd>${_formatBytes(totalBytes)}</dd></div>
+        $expiryStat
+      </dl>
+      $expiryBar
+      <p class="dn-note">${WebPortalKit.shieldSvg}<span>Files download straight from this device over your local network, encrypted with HTTPS.</span></p>
+    </section>
+    <section class="dn-card dn-share-files dn-rise" style="--d:1" aria-labelledby="filesHeading">
+      <header class="dn-section-head">
+        <h2 id="filesHeading">Shared files</h2>
+        <span class="dn-count">${_entries.length}</span>
+      </header>
+      <ul class="dn-file-list">$filesHtml</ul>
+    </section>
+  </main>
+  ${WebPortalKit.footer(version: version)}
 </body>
 </html>
 ''';
@@ -784,10 +561,6 @@ class TemporaryLinkShareService {
         ? value.toStringAsFixed(0)
         : value.toStringAsFixed(1);
     return '$fixed ${units[unitIndex]}';
-  }
-
-  String _fileIconForName(String name) {
-    return '<svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>';
   }
 
   String _fileTypeLabel(String name) {

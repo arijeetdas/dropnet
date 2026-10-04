@@ -9,6 +9,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/state/app_state.dart';
+import '../../widgets/expressive_loader.dart';
 import '../../widgets/onboarding_background.dart';
 import '../onboarding/welcome_screen.dart' show OnboardingActionButton;
 
@@ -134,7 +135,7 @@ class _PermissionScreenState extends ConsumerState<PermissionScreen> {
                       child: SizedBox(
                         height: 160,
                         child: SvgPicture.asset(
-                          'assets/onboarding/permission.svg',
+                          'assets/onboarding/permissions.svg',
                           fit: BoxFit.contain,
                         ),
                       ),
@@ -165,10 +166,12 @@ class _PermissionScreenState extends ConsumerState<PermissionScreen> {
                                 FilledButton(
                                   onPressed: _checking ? null : _requestPermission,
                                   child: _checking
-                                      ? const SizedBox(
-                                          width: 18,
-                                          height: 18,
-                                          child: CircularProgressIndicator(strokeWidth: 2),
+                                      ? SizedBox(
+                                          width: 24,
+                                          height: 24,
+                                          child: ExpressiveLoader(
+                                            color: theme.colorScheme.primary,
+                                          ),
                                         )
                                       : const Text('Grant permission'),
                                 ),
