@@ -521,16 +521,17 @@ class WebServerService {
           return Response.notFound('Not found');
         }
 
+        final size = await file.length();
         _appendRequestLog(
           kind: 'download',
           fileName: p.basename(filePath),
-          size: await file.length(),
+          size: size,
           from: _remoteIp(request),
           status: 'sent',
         );
         _appendHistory(
           fileName: p.basename(filePath),
-          size: await file.length(),
+          size: size,
           deviceName: peerName,
           direction: TransferDirection.sent,
           status: TransferStatus.completed,
@@ -542,7 +543,8 @@ class WebServerService {
           file.openRead(),
           headers: {
             'content-type': 'application/octet-stream',
-            'content-disposition': 'attachment; filename="${p.basename(filePath)}"',
+            'content-length': size.toString(),
+            'content-disposition': WebPortalKit.contentDisposition(p.basename(filePath)),
           },
         );
       })

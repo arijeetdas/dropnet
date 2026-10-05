@@ -235,8 +235,7 @@ class TemporaryLinkShareService {
           headers: {
             'content-type': 'application/octet-stream',
             'content-length': entry.size.toString(),
-            'content-disposition':
-                'attachment; filename="${Uri.encodeComponent(entry.displayName)}"',
+            'content-disposition': WebPortalKit.contentDisposition(entry.displayName),
           },
         );
       })

@@ -254,6 +254,29 @@ ${head(title: 'DropNet · PIN required', version: version)}
   }
 
   // ---------------------------------------------------------------------------
+  // File downloads.
+
+  /// `Content-Disposition` value for downloading [fileName].
+  ///
+  /// dart:io rejects any header value outside printable ASCII, so a raw
+  /// non-ASCII name (e.g. the U+202F before "AM"/"PM" in macOS screenshot
+  /// names, accents, emoji) would fail the whole response. The name goes out
+  /// as an ASCII fallback plus the RFC 6266 / RFC 5987 UTF-8 form.
+  static String contentDisposition(String fileName) {
+    final fallback = StringBuffer();
+    for (final rune in fileName.runes) {
+      final isSafe = rune >= 0x20 && rune < 0x7F && rune != 0x22 && rune != 0x5C;
+      fallback.write(isSafe ? String.fromCharCode(rune) : '_');
+    }
+    final encoded = Uri.encodeComponent(fileName)
+        .replaceAll("'", '%27')
+        .replaceAll('(', '%28')
+        .replaceAll(')', '%29')
+        .replaceAll('*', '%2A');
+    return 'attachment; filename="$fallback"; filename*=UTF-8\'\'$encoded';
+  }
+
+  // ---------------------------------------------------------------------------
   // File presentation (kept in sync with `fileKind` in assets/web/index.html).
 
   static String fileKind(String name) {
